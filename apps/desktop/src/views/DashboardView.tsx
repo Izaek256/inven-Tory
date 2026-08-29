@@ -76,7 +76,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <p style={{ color: 'var(--status-error)', marginBottom: '8px', fontWeight: 600 }}>
               {error}
             </p>
-            <button className="btn-retry" onClick={onRetry}>
+            <button type="button" className="btn-retry" onClick={onRetry}>
               Retry Load
             </button>
           </div>

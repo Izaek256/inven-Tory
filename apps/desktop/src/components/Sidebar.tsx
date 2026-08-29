@@ -23,6 +23,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
         return (
           <button
             key={item.id}
+            type="button"
             className={`nav-item ${isActive ? 'active' : ''}`}
             onClick={() => onNavigate(item.id)}
             data-testid={`nav-${item.id}`}

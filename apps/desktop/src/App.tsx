@@ -23,9 +23,12 @@ export function App(): React.ReactElement {
     try {
       const data = await getStores();
       setStores(data);
-      if (data.length > 0 && !activeStoreId) {
-        setActiveStoreId(data[0].id);
-      }
+      setActiveStoreId((prevActive) => {
+        if (data.length > 0 && !prevActive) {
+          return data[0].id;
+        }
+        return prevActive;
+      });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[App] Failed to load stores:', err);
@@ -33,7 +36,7 @@ export function App(): React.ReactElement {
     } finally {
       setLoading(false);
     }
-  }, [activeStoreId]);
+  }, []);
 
   useEffect(() => {
     fetchStores();
@@ -52,6 +55,12 @@ export function App(): React.ReactElement {
           );
           const duration = measure.duration;
           setInteractiveTimeMs(duration);
+
+          // Clear performance entries so future reloads/retries do not re-measure or leak entries
+          performance.clearMarks('app-init-start');
+          performance.clearMarks('app-interactive');
+          performance.clearMeasures('cold-start-to-interactive');
+
           // eslint-disable-next-line no-console
           console.info(`[PERF] Cold start to interactive: ${duration.toFixed(2)}ms`);
 

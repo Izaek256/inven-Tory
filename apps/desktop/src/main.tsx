@@ -9,7 +9,12 @@ if (typeof performance !== 'undefined' && performance.mark) {
   console.info('[PERF] Instrumentation started: app-init-start');
 }
 
-ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error("Root element '#root' not found in DOM");
+}
+
+ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <App />
   </React.StrictMode>,
