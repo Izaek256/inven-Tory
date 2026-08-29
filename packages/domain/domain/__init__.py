@@ -7,8 +7,27 @@ ARCHITECTURAL CONSTRAINT: This package must have zero imports from
 FastAPI, SQLAlchemy, or any other infrastructure framework. It is
 the innermost ring of the clean architecture and must remain
 independently testable without any database or web framework present.
-
-Entities and rules are implemented in later issues:
-    Issue 02: Core domain entities (Store, Product, InventoryTransaction, etc.)
-    Issue 03: SQLite schema uses these entities (but not the reverse)
 """
+
+from domain.entities import InventoryTransaction, MovementType, StockBucket, SyncStatus
+from domain.rules import (
+    NegativeStockError,
+    create_reversal,
+    project_balance,
+    project_balances_by_store,
+    project_global_balance,
+    validate_transaction,
+)
+
+__all__ = [
+    "InventoryTransaction",
+    "MovementType",
+    "NegativeStockError",
+    "StockBucket",
+    "SyncStatus",
+    "create_reversal",
+    "project_balance",
+    "project_balances_by_store",
+    "project_global_balance",
+    "validate_transaction",
+]
