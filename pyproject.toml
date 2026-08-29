@@ -38,7 +38,7 @@ ignore = []
 "**/tests/**/*.py" = ["ANN"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["app", "domain"]
+known-first-party = ["app", "domain", "storage"]
 
 [tool.black]
 target-version = ["py312"]
@@ -62,6 +62,7 @@ exclude = '''
 testpaths = [
     "services/api/tests",
     "packages/domain/tests",
+    "packages/storage/tests",
 ]
 addopts = "-v --tb=short"
 python_files = "test_*.py"

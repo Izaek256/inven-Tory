@@ -13,7 +13,8 @@
     "lint": "npm run lint --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "format": "npm run format --workspaces --if-present",
-    "format:check": "npm run format:check --workspaces --if-present"
+    "format:check": "npm run format:check --workspaces --if-present",
+    "seed": "python3 -m storage.seed || .venv/bin/python -m storage.seed"
   },
   "engines": {
     "node": ">=20.0.0",

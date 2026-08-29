@@ -24,10 +24,10 @@ jobs:
           pip install ruff black
 
       - name: Run Ruff
-        run: ruff check services/ packages/domain/
+        run: ruff check services/ packages/
 
       - name: Run Black
-        run: black --check services/ packages/domain/
+        run: black --check services/ packages/
 
   test-python:
     name: Test Python (pytest)
@@ -44,6 +44,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e "packages/domain[dev]"
+          pip install -e "packages/storage[dev]"
           pip install -e "services/api[dev]"
 
       - name: Run pytest
