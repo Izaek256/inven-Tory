@@ -1,11 +1,13 @@
 """
 Domain entities sub-package.
-
-Entity classes are added in Issue 02:
-    Store, Device, User, Role, Permission,
-    Product, StockBalance, InventoryTransaction,
-    Transfer, StockCount, OutboxEvent, SyncReceipt,
-    AuditEvent, Supplier, Customer,
-    PurchaseOrder, PurchaseOrderItem,
-    Notification, ProductBatch, ProductImage.
 """
+
+from domain.entities.enums import MovementType, StockBucket, SyncStatus
+from domain.entities.inventory_transaction import InventoryTransaction
+
+__all__ = [
+    "InventoryTransaction",
+    "MovementType",
+    "StockBucket",
+    "SyncStatus",
+]
