@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inven-tory-domain"
+version = "1.1.0"
+description = "INVENTORY Tory — shared domain entities and business rules (pure Python, no framework deps)"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "See repository LICENSE" }
+dependencies = [
+    # No framework dependencies allowed in the domain package.
+    # The domain is pure Python; FastAPI / SQLAlchemy are infrastructure concerns.
+    "python-ulid>=2.7.0",  # ULID generation for transaction IDs (SYNC-001)
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "ruff>=0.5.0",
+    "black>=24.0.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["domain*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.black]
+target-version = ["py312"]
+line-length = 100

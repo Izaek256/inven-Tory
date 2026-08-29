@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "inven-tory-api"
+version = "1.1.0"
+description = "INVENTORY Tory — FastAPI central API service"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "See repository LICENSE" }
+dependencies = [
+    # Web framework
+    "fastapi>=0.112.0",
+    "uvicorn[standard]>=0.30.0",
+    # Data validation
+    "pydantic>=2.8.0",
+    "pydantic-settings>=2.4.0",
+    # Database
+    "sqlalchemy[asyncio]>=2.0.31",
+    "asyncpg>=0.29.0",       # PostgreSQL async driver
+    "alembic>=1.13.0",       # Migrations
+    # Auth
+    "passlib[bcrypt]>=1.7.4",
+    "python-jose[cryptography]>=3.3.0",
+    # HTTP client (for internal calls)
+    "httpx>=0.27.0",
+    # Utilities
+    "python-multipart>=0.0.9",  # Form/file upload
+    "python-dotenv>=1.0.0",
+    # Domain package (editable install from local path)
+    "inven-tory-domain",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.23.0",
+    "httpx>=0.27.0",         # TestClient
+    "ruff>=0.5.0",
+    "black>=24.0.0",
+    "mypy>=1.11.0",
+    "types-passlib",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
+
+# Ruff and black config inherited from root pyproject.toml when run from root.
+# Repeated here so `ruff check .` works when run from services/api/ directly.
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.black]
+target-version = ["py312"]
+line-length = 100

@@ -1,0 +1,25 @@
+{
+  "name": "inven-tory",
+  "version": "1.1.0",
+  "private": true,
+  "description": "INVENTORY Tory v1.1.0 — Offline-First, Multi-Store Inventory Management System",
+  "workspaces": [
+    "apps/desktop",
+    "apps/web",
+    "apps/mobile",
+    "packages/shared-types"
+  ],
+  "scripts": {
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "format": "npm run format --workspaces --if-present",
+    "format:check": "npm run format:check --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.0"
+  }
+}

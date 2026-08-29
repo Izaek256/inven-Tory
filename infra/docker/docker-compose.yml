@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: invtory-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: invtory
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: invtory
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invtory -d invtory"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: invtory-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://invtory:changeme@postgres:5432/invtory
+      ENVIRONMENT: development
+      LOG_LEVEL: INFO
+      SECRET_KEY: dev-secret-change-in-production
+      CORS_ORIGINS_RAW: "http://localhost:3000,http://localhost:3001,http://localhost:1420"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount source for live reload in development
+      - ../../services/api:/app/services/api
+      - ../../packages/domain:/app/packages/domain
+
+volumes:
+  postgres_data:
+    name: invtory-postgres-data
