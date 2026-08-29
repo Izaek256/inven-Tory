@@ -385,7 +385,6 @@ def test_section_10_4_four_day_offline_scenario() -> None:
     - Day 3: Customer return +20, Damage transfer -10 to DAMAGED bucket
     - Day 4: Physical count reconciliation adjustment -10
     Local projection shows correct balance (2,100 starting + 500 - 120 + 20 - 10 - 10 = 2,480).
-    When sync completes (status -> ACCEPTED), central ledger projection matches local projection.
     """
     day1 = datetime.now(UTC) - timedelta(days=4)
     day2 = datetime.now(UTC) - timedelta(days=3)
