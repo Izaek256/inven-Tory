@@ -53,9 +53,14 @@ class InventoryTransaction:
         """Enforce field type integrity upon initialization."""
         if isinstance(self.quantity_delta, bool) or not isinstance(self.quantity_delta, int):
             raise TypeError("quantity_delta must be an integer")
-        if isinstance(self.movement_type, str) and not isinstance(self.movement_type, MovementType):
+        if isinstance(self.movement_type, str):
             object.__setattr__(self, "movement_type", MovementType(self.movement_type))
-        if isinstance(self.stock_bucket, str) and not isinstance(self.stock_bucket, StockBucket):
+        elif not isinstance(self.movement_type, MovementType):
+            raise TypeError("movement_type must be a MovementType or str")
+
+        if isinstance(self.stock_bucket, str):
             object.__setattr__(self, "stock_bucket", StockBucket(self.stock_bucket))
+        elif not isinstance(self.stock_bucket, StockBucket):
+            raise TypeError("stock_bucket must be a StockBucket or str")
         if isinstance(self.sync_status, str) and not isinstance(self.sync_status, SyncStatus):
             object.__setattr__(self, "sync_status", SyncStatus(self.sync_status))
