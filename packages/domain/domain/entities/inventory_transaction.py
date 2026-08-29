@@ -51,7 +51,7 @@ class InventoryTransaction:
 
     def __post_init__(self) -> None:
         """Enforce field type integrity upon initialization."""
-        if not isinstance(self.quantity_delta, int):
+        if isinstance(self.quantity_delta, bool) or not isinstance(self.quantity_delta, int):
             raise TypeError("quantity_delta must be an integer")
         if isinstance(self.movement_type, str) and not isinstance(self.movement_type, MovementType):
             object.__setattr__(self, "movement_type", MovementType(self.movement_type))
