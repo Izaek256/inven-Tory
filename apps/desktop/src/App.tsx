@@ -48,7 +48,7 @@ export function App(): React.ReactElement {
           const measure = performance.measure(
             'cold-start-to-interactive',
             'app-init-start',
-            'app-interactive'
+            'app-interactive',
           );
           const duration = measure.duration;
           setInteractiveTimeMs(duration);
@@ -59,7 +59,7 @@ export function App(): React.ReactElement {
           if (duration > 3000) {
             // eslint-disable-next-line no-console
             console.warn(
-              `[PERF-WARN] Cold start (${duration.toFixed(2)}ms) exceeded 3000ms budget (NFR-PERF-001)`
+              `[PERF-WARN] Cold start (${duration.toFixed(2)}ms) exceeded 3000ms budget (NFR-PERF-001)`,
             );
           } else {
             // eslint-disable-next-line no-console
@@ -77,12 +77,7 @@ export function App(): React.ReactElement {
     switch (currentView) {
       case 'dashboard':
         return (
-          <DashboardView
-            stores={stores}
-            loading={loading}
-            error={error}
-            onRetry={fetchStores}
-          />
+          <DashboardView stores={stores} loading={loading} error={error} onRetry={fetchStores} />
         );
       case 'products':
         return <ProductsView />;
@@ -92,12 +87,7 @@ export function App(): React.ReactElement {
         return <SettingsView />;
       default:
         return (
-          <DashboardView
-            stores={stores}
-            loading={loading}
-            error={error}
-            onRetry={fetchStores}
-          />
+          <DashboardView stores={stores} loading={loading} error={error} onRetry={fetchStores} />
         );
     }
   };

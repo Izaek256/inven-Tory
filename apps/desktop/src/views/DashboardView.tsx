@@ -37,7 +37,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
         <div className="stat-card">
           <div className="stat-label">Active Stores</div>
-          <div className="stat-value" style={{ color: 'var(--status-online)' }} data-testid="stat-active-stores">
+          <div
+            className="stat-value"
+            style={{ color: 'var(--status-online)' }}
+            data-testid="stat-active-stores"
+          >
             {loading ? '...' : activeCount}
           </div>
         </div>
@@ -102,14 +106,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                       {store.code}
                     </td>
                     <td style={{ fontWeight: 500 }}>{store.name}</td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    <td
+                      style={{
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
                       {store.id}
                     </td>
-                    <td style={{ color: 'var(--text-muted)' }}>
-                      {store.address || 'N/A'}
-                    </td>
+                    <td style={{ color: 'var(--text-muted)' }}>{store.address || 'N/A'}</td>
                     <td>
-                      <span className={`badge ${store.is_active ? 'badge-active' : 'badge-inactive'}`}>
+                      <span
+                        className={`badge ${store.is_active ? 'badge-active' : 'badge-inactive'}`}
+                      >
                         {store.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </td>

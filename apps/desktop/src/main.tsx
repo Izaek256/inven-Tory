@@ -12,5 +12,5 @@ if (typeof performance !== 'undefined' && performance.mark) {
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <App />
-  </React.StrictMode>
+  </React.StrictMode>,
 );
