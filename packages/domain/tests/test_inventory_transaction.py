@@ -158,4 +158,3 @@ def test_inventory_transaction_invalid_enum_strings_rejection() -> None:
             sync_status="UNKNOWN_STATUS",  # type: ignore[arg-type]
             **base_kwargs,
         )
-

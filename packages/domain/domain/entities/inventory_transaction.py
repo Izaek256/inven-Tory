@@ -85,4 +85,3 @@ class InventoryTransaction:
             "sync_status",
             _coerce_and_validate_enum(self.sync_status, SyncStatus, "sync_status"),
         )
-
