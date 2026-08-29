@@ -57,10 +57,17 @@ def test_migrations_fresh_and_idempotence(tmp_path):
     outbox_indexes = {idx["name"] for idx in inspector.get_indexes("outbox_events")}
     assert "ix_outbox_status_next_attempt" in outbox_indexes
 
+    # Dispose initial engine connection pool before re-running migrations
+    engine.dispose()
+
     # 2. Re-run migration twice to verify idempotency (Acceptance Criteria)
     run_migrations(db_url)
     run_migrations(db_url)
 
-    # Verify schema is unchanged after duplicate runs
-    tables_after = inspector.get_table_names()
+    # Verify schema is unchanged using a fresh engine and inspector
+    engine_after = get_engine(db_url)
+    inspector_after = inspect(engine_after)
+    tables_after = inspector_after.get_table_names()
     assert expected_tables.issubset(set(tables_after))
+
+    engine_after.dispose()

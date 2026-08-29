@@ -5,8 +5,9 @@ Alembic environment script for local SQLite migrations.
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, event, pool
 
+from storage.db import set_sqlite_pragmas
 from storage.models import Base
 
 config = context.config
@@ -39,6 +40,9 @@ def run_migrations_online() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+
+    if connectable.dialect.name == "sqlite":
+        event.listen(connectable, "connect", set_sqlite_pragmas)
 
     with connectable.connect() as connection:
         context.configure(

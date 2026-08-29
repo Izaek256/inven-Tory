@@ -86,7 +86,7 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
             {
                 "id": "USER-ADMIN-01",
                 "username": "admin",
-                "email": "admin@inventtory.local",
+                "email": "admin@inventory.local",
                 "full_name": "System Administrator",
                 "role": "ADMIN",
                 "hashed_password": "pbkdf2:sha256:dummyhashadmin",
@@ -94,7 +94,7 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
             {
                 "id": "USER-MGR-01",
                 "username": "manager_alpha",
-                "email": "manager.alpha@inventtory.local",
+                "email": "manager.alpha@inventory.local",
                 "full_name": "Alpha Store Manager",
                 "role": "MANAGER",
                 "hashed_password": "pbkdf2:sha256:dummyhashmgr",
@@ -102,7 +102,7 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
             {
                 "id": "USER-CASHIER-01",
                 "username": "cashier_alpha",
-                "email": "cashier.alpha@inventtory.local",
+                "email": "cashier.alpha@inventory.local",
                 "full_name": "Alpha Cashier",
                 "role": "CASHIER",
                 "hashed_password": "pbkdf2:sha256:dummyhashcashier",

@@ -12,7 +12,6 @@ class Base(DeclarativeBase):
     """Base declarative class for local SQLite models."""
 
 
-@event.listens_for(Engine, "connect")
 def set_sqlite_pragmas(dbapi_connection: Any, connection_record: Any) -> None:
     """Enforce WAL mode and foreign key constraints on SQLite connections."""
     cursor = dbapi_connection.cursor()
@@ -27,11 +26,16 @@ def get_engine(db_url: str = "sqlite:///inven_tory_local.db") -> Engine:
     if db_url.startswith("sqlite"):
         connect_args["check_same_thread"] = False
 
-    return create_engine(
+    engine = create_engine(
         db_url,
         connect_args=connect_args,
         echo=False,
     )
+
+    if db_url.startswith("sqlite"):
+        event.listen(engine, "connect", set_sqlite_pragmas)
+
+    return engine
 
 
 def get_sessionmaker(engine: Engine) -> sessionmaker[Session]:
