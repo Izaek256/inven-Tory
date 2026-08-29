@@ -25,4 +25,4 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # SQLite — implemented in Issue 03
-# rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
