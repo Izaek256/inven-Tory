@@ -1,0 +1,28 @@
+[package]
+name = "inven-tory-desktop"
+version = "1.1.0"
+description = "INVENTORY Tory desktop app"
+authors = ["INVENTORY Tory Team"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "inven_tory_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[[bin]]
+name = "inven-tory-desktop"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# SQLite — implemented in Issue 03
+# rusqlite = { version = "0.31", features = ["bundled"] }

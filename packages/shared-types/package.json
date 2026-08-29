@@ -1,0 +1,22 @@
+{
+  "name": "@inven-tory/shared-types",
+  "version": "1.1.0",
+  "private": true,
+  "description": "INVENTORY Tory — shared TypeScript type definitions used across desktop, web and mobile",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "eslint src --ext .ts --report-unused-disable-directives --max-warnings 0",
+    "format": "prettier --write src",
+    "format:check": "prettier --check src",
+    "test": "echo 'No tests in shared-types (type-only package)' && exit 0"
+  },
+  "devDependencies": {
+    "@typescript-eslint/eslint-plugin": "^7.0.0",
+    "@typescript-eslint/parser": "^7.0.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.3.0",
+    "typescript": "^5.5.0"
+  }
+}
