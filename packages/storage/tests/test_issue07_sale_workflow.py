@@ -310,9 +310,7 @@ def test_at001_sale_decreases_balance_and_creates_pending_transaction(tmp_path) 
     # --- Assert: SALE transaction exists and is PENDING ---
     with session_factory() as session:
         tx = session.scalar(
-            select(InventoryTransaction).where(
-                InventoryTransaction.transaction_id == "TX-SALE-001"
-            )
+            select(InventoryTransaction).where(InventoryTransaction.transaction_id == "TX-SALE-001")
         )
         assert tx is not None, "SALE transaction must exist in ledger"
         assert tx.movement_type == "SALE"
@@ -357,9 +355,9 @@ def test_at012_strict_mode_rejects_excess_sale_and_shows_available_quantity(tmp_
 
     error_msg = str(exc_info.value)
     # The domain-layer error must mention the negative projection (FR-MOV-008)
-    assert "negative" in error_msg.lower(), (
-        f"Error must mention 'negative' for strict-mode rejection, got: {error_msg!r}"
-    )
+    assert (
+        "negative" in error_msg.lower()
+    ), f"Error must mention 'negative' for strict-mode rejection, got: {error_msg!r}"
 
     # Balance must be unchanged after the rejection
     with session_factory() as session:
@@ -371,16 +369,14 @@ def test_at012_strict_mode_rejects_excess_sale_and_shows_available_quantity(tmp_
             )
         )
         assert balance is not None
-        assert balance.quantity == 6, (
-            f"Balance must remain 6 after rejected sale, got {balance.quantity}"
-        )
+        assert (
+            balance.quantity == 6
+        ), f"Balance must remain 6 after rejected sale, got {balance.quantity}"
 
     # No SALE transaction must have been inserted
     with session_factory() as session:
         sale_txs = session.scalars(
-            select(InventoryTransaction).where(
-                InventoryTransaction.movement_type == "SALE"
-            )
+            select(InventoryTransaction).where(InventoryTransaction.movement_type == "SALE")
         ).all()
         assert len(sale_txs) == 0, "No SALE transaction should exist after a rejected sale"
 
@@ -431,9 +427,9 @@ def test_at012_valid_sale_then_excess_rejected(tmp_path) -> None:
             )
         )
         assert balance is not None
-        assert balance.quantity == 1, (
-            f"Balance must remain 1 after excess rejection, got {balance.quantity}"
-        )
+        assert (
+            balance.quantity == 1
+        ), f"Balance must remain 1 after excess rejection, got {balance.quantity}"
 
 
 def test_non_strict_mode_allows_excess_sale(tmp_path) -> None:
@@ -447,15 +443,11 @@ def test_non_strict_mode_allows_excess_sale(tmp_path) -> None:
     _receive_stock(session_factory, store_id, product_id, 2, "TX-RECEIPT-NS")
 
     # Sell 5 in non-strict mode - no exception
-    _sell_stock(
-        session_factory, store_id, product_id, 5, "TX-SALE-NS", strict_mode=False
-    )
+    _sell_stock(session_factory, store_id, product_id, 5, "TX-SALE-NS", strict_mode=False)
 
     with session_factory() as session:
         tx = session.scalar(
-            select(InventoryTransaction).where(
-                InventoryTransaction.transaction_id == "TX-SALE-NS"
-            )
+            select(InventoryTransaction).where(InventoryTransaction.transaction_id == "TX-SALE-NS")
         )
         assert tx is not None
         assert tx.sync_status == "PENDING"
