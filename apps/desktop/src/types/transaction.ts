@@ -44,3 +44,15 @@ export interface StockBalance {
   quantity: number;
   updated_at: string;
 }
+
+export interface ReturnStockInput {
+  store_id: string;
+  product_id: string;
+  return_type: 'CUSTOMER' | 'SUPPLIER';
+  stock_bucket: StockBucket;
+  quantity: number;
+  reference_number?: string;
+  reason?: string;
+  user_id: string;
+  device_id: string;
+}
