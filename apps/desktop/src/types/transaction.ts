@@ -1,4 +1,5 @@
-export type MovementType = 'RECEIPT' | 'SALE' | 'RETURN' | 'TRANSFER' | 'ADJUSTMENT' | 'DAMAGE' | 'COUNT' | 'OTHER';
+export type MovementType =
+  'RECEIPT' | 'SALE' | 'RETURN' | 'TRANSFER' | 'ADJUSTMENT' | 'DAMAGE' | 'COUNT' | 'OTHER';
 export type StockBucket = 'AVAILABLE' | 'DAMAGED' | 'QUARANTINE' | 'IN_TRANSIT';
 export type SyncStatus = 'PENDING' | 'SENT' | 'ACCEPTED' | 'REJECTED';
 

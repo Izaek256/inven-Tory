@@ -25,7 +25,7 @@ export const ReceiveStockView: React.FC = () => {
   const deviceId = 'DEV-DEMO';
 
   useEffect(() => {
-    const loadStores = async () => {
+    const loadStores = async (): Promise<void> => {
       try {
         const data = await getStores();
         setStores(data.filter((s) => s.is_active));
@@ -46,17 +46,17 @@ export const ReceiveStockView: React.FC = () => {
           const results = await searchProducts(productQuery);
           setSearchResults(results.filter((p) => p.is_active));
         } catch (err) {
-          console.error('Failed to search products:', err);
+          // Silently fail - search errors shouldn't block the UI
         }
       } else {
         setSearchResults([]);
       }
     }, 300);
 
-    return () => clearTimeout(searchProductsDebounced);
+    return (): void => clearTimeout(searchProductsDebounced);
   }, [productQuery]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
     setSuccess(false);
@@ -104,13 +104,13 @@ export const ReceiveStockView: React.FC = () => {
     }
   };
 
-  const handleProductSelect = (product: Product) => {
+  const handleProductSelect = (product: Product): void => {
     setSelectedProduct(product);
     setProductQuery(product.name);
     setSearchResults([]);
   };
 
-  const clearProduct = () => {
+  const clearProduct = (): void => {
     setSelectedProduct(null);
     setProductQuery('');
     setSearchResults([]);
@@ -124,14 +124,37 @@ export const ReceiveStockView: React.FC = () => {
       </div>
 
       {success && (
-        <div className="success-banner" style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#dcfce7', border: '1px solid #22c55e', borderRadius: '6px', color: '#166534', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <div
+          className="success-banner"
+          style={{
+            marginBottom: '16px',
+            padding: '12px',
+            backgroundColor: '#dcfce7',
+            border: '1px solid #22c55e',
+            borderRadius: '6px',
+            color: '#166534',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
           <Check size={20} />
           <span>Stock received successfully. Transaction recorded and balance updated.</span>
         </div>
       )}
 
       {error && (
-        <div className="error-banner" style={{ marginBottom: '16px', padding: '12px', backgroundColor: '#fee2e2', border: '1px solid #ef4444', borderRadius: '6px', color: '#991b1b' }}>
+        <div
+          className="error-banner"
+          style={{
+            marginBottom: '16px',
+            padding: '12px',
+            backgroundColor: '#fee2e2',
+            border: '1px solid #ef4444',
+            borderRadius: '6px',
+            color: '#991b1b',
+          }}
+        >
           {error}
         </div>
       )}
@@ -139,7 +162,10 @@ export const ReceiveStockView: React.FC = () => {
       <form onSubmit={handleSubmit} className="transaction-form">
         {/* Store Selection */}
         <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label htmlFor="store-select" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+          <label
+            htmlFor="store-select"
+            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
+          >
             Store *
           </label>
           <select
@@ -165,7 +191,10 @@ export const ReceiveStockView: React.FC = () => {
 
         {/* Product Search */}
         <div className="form-group" style={{ marginBottom: '20px', position: 'relative' }}>
-          <label htmlFor="product-search" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+          <label
+            htmlFor="product-search"
+            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
+          >
             Product *
           </label>
           <div style={{ position: 'relative' }}>
@@ -270,7 +299,10 @@ export const ReceiveStockView: React.FC = () => {
 
         {/* Quantity */}
         <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label htmlFor="quantity" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+          <label
+            htmlFor="quantity"
+            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
+          >
             Quantity *
           </label>
           <input
@@ -292,7 +324,10 @@ export const ReceiveStockView: React.FC = () => {
 
         {/* Reference Number */}
         <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label htmlFor="reference-number" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+          <label
+            htmlFor="reference-number"
+            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
+          >
             Receipt / Reference Number
           </label>
           <input
@@ -313,7 +348,10 @@ export const ReceiveStockView: React.FC = () => {
 
         {/* Supplier (Optional) */}
         <div className="form-group" style={{ marginBottom: '24px' }}>
-          <label htmlFor="supplier" style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+          <label
+            htmlFor="supplier"
+            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
+          >
             Supplier (Optional)
           </label>
           <input
