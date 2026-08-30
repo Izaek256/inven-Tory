@@ -89,29 +89,29 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     return matchesSearch && matchesCategory && matchesActive;
   });
 
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = (): void => {
     setActionError(null);
     setEditingProduct(null);
     setProductModalOpen(true);
   };
 
-  const handleOpenEditModal = (product: Product) => {
+  const handleOpenEditModal = (product: Product): void => {
     setActionError(null);
     setEditingProduct(product);
     setProductModalOpen(true);
   };
 
-  const handleCreateProduct = async (input: CreateProductInput) => {
+  const handleCreateProduct = async (input: CreateProductInput): Promise<void> => {
     await createProduct(input);
     fetchProductsList();
   };
 
-  const handleUpdateProduct = async (input: UpdateProductInput) => {
+  const handleUpdateProduct = async (input: UpdateProductInput): Promise<void> => {
     await updateProduct(input);
     fetchProductsList();
   };
 
-  const handleToggleActive = async (product: Product) => {
+  const handleToggleActive = async (product: Product): Promise<void> => {
     try {
       setActionError(null);
       await toggleProductActive(product.id, !product.is_active);

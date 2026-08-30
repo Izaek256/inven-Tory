@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Store {
@@ -108,17 +109,8 @@ fn get_db_path() -> PathBuf {
 }
 
 fn now_iso() -> String {
-    let duration = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let secs = duration.as_secs();
-    // Simplified ISO-8601 UTC timestamp generator
-    let _days = secs / 86400;
-    let rem_secs = secs % 86400;
-    let hours = rem_secs / 3600;
-    let minutes = (rem_secs % 3600) / 60;
-    let seconds = rem_secs % 60;
-    format!("2026-08-29T{:02}:{:02}:{:02}Z", hours, minutes, seconds)
+    let now: DateTime<Utc> = Utc::now();
+    now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
 
 fn generate_id(prefix: &str) -> String {

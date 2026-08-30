@@ -27,16 +27,16 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
   const resultsContainerRef = useRef<HTMLDivElement>(null);
 
   // Auto-focus input element on mount (Keyboard-first / Barcode scanner friendly per Section 18)
-  useEffect(() => {
+  useEffect((): void => {
     if (autoFocus && inputRef.current) {
       inputRef.current.focus();
     }
   }, [autoFocus]);
 
   // Execute live search against local DB data (FR-PROD-003)
-  useEffect(() => {
+  useEffect((): (() => void) => {
     let isCancelled = false;
-    const fetchResults = async () => {
+    const fetchResults = async (): Promise<void> => {
       setLoading(true);
       try {
         const matches = await searchProducts(query);
@@ -64,7 +64,7 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
   }, [query]);
 
   // Keep highlighted item visible in scroll view
-  useEffect(() => {
+  useEffect((): void => {
     if (resultsContainerRef.current && results.length > 0) {
       const selectedElem = resultsContainerRef.current.children[selectedIndex] as HTMLElement;
       if (selectedElem && typeof selectedElem.scrollIntoView === 'function') {
@@ -74,7 +74,7 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
   }, [selectedIndex, results]);
 
   // Keyboard navigation handler (ArrowDown, ArrowUp, Enter, Escape)
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setSelectedIndex((prev) => (results.length > 0 ? (prev + 1) % results.length : 0));
@@ -95,7 +95,7 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
     }
   };
 
-  const handleSelect = (product: Product) => {
+  const handleSelect = (product: Product): void => {
     onSelectProduct(product);
   };
 

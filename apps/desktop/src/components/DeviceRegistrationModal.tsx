@@ -26,7 +26,7 @@ export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = (
 
   if (!isOpen || !store) return null;
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
     setSuccessMessage(null);

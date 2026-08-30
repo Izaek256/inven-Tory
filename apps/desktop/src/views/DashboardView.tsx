@@ -38,35 +38,35 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   // Provisional role restriction check (TODO issue-13)
   const isAuthorized = userRole === 'ADMIN' || userRole === 'MANAGER';
 
-  const handleOpenCreateModal = () => {
+  const handleOpenCreateModal = (): void => {
     setActionError(null);
     setEditingStore(null);
     setStoreModalOpen(true);
   };
 
-  const handleOpenEditModal = (store: Store) => {
+  const handleOpenEditModal = (store: Store): void => {
     setActionError(null);
     setEditingStore(store);
     setStoreModalOpen(true);
   };
 
-  const handleOpenDeviceModal = (store: Store) => {
+  const handleOpenDeviceModal = (store: Store): void => {
     setActionError(null);
     setTargetDeviceStore(store);
     setDeviceModalOpen(true);
   };
 
-  const handleCreateStore = async (input: CreateStoreInput) => {
+  const handleCreateStore = async (input: CreateStoreInput): Promise<void> => {
     await createStore(input);
     onRetry();
   };
 
-  const handleUpdateStore = async (input: UpdateStoreInput) => {
+  const handleUpdateStore = async (input: UpdateStoreInput): Promise<void> => {
     await updateStore(input);
     onRetry();
   };
 
-  const handleToggleActive = async (store: Store) => {
+  const handleToggleActive = async (store: Store): Promise<void> => {
     try {
       setActionError(null);
       await toggleStoreActive(store.id, !store.is_active);
@@ -76,7 +76,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   };
 
-  const handleRegisterDevice = async (storeId: string, deviceName: string) => {
+  const handleRegisterDevice = async (storeId: string, deviceName: string): Promise<void> => {
     await registerDevice(storeId, deviceName);
   };
 

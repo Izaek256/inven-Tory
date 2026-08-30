@@ -204,7 +204,7 @@ export async function updateProduct(input: UpdateProductInput): Promise<Product>
 export async function toggleProductActive(id: string, is_active: boolean): Promise<Product> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product>('toggle_product_active', { id, isActive: is_active });
+      return await invoke<Product>('toggle_product_active', { id, is_active });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriProductService] Error invoking toggle_product_active:', err);
