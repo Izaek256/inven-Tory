@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ArrowDownCircle, X, Check } from 'lucide-react';
+import { Package, ArrowUpCircle, X, Check, AlertCircle } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
 import { searchProducts } from '../services/tauriProductService';
-import { receiveStock } from '../services/tauriTransactionService';
+import { sellStock, getStockBalance } from '../services/tauriTransactionService';
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { CreateTransactionInput } from '../types/transaction';
 
-export const ReceiveStockView: React.FC = () => {
+export const SaleStockView: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>('');
   const [productQuery, setProductQuery] = useState<string>('');
@@ -15,10 +15,10 @@ export const ReceiveStockView: React.FC = () => {
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [quantity, setQuantity] = useState<number>(1);
   const [referenceNumber, setReferenceNumber] = useState<string>('');
-  const [supplier, setSupplier] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
+  const [availableQuantity, setAvailableQuantity] = useState<number | null>(null);
 
   // Mock user/device IDs - in real app these come from auth/session
   const userId = 'USER-DEMO';
@@ -80,15 +80,14 @@ export const ReceiveStockView: React.FC = () => {
       const input: CreateTransactionInput = {
         store_id: selectedStoreId,
         product_id: selectedProduct.id,
-        movement_type: 'RECEIPT',
+        movement_type: 'SALE',
         quantity,
         reference_number: referenceNumber || undefined,
-        supplier: supplier || undefined,
         user_id: userId,
         device_id: deviceId,
       };
 
-      await receiveStock(input);
+      await sellStock(input);
       setSuccess(true);
 
       // Reset form
@@ -96,12 +95,24 @@ export const ReceiveStockView: React.FC = () => {
       setSelectedProduct(null);
       setQuantity(1);
       setReferenceNumber('');
-      setSupplier('');
       setSearchResults([]);
+      setAvailableQuantity(null);
     } catch (err) {
+      // Pass the raw error through — the Tauri sell_stock command already formats the
+      // AT-012 message as "Insufficient stock. Available quantity: X. Cannot sell Y units."
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const loadAvailableQuantity = async (storeId: string, product: Product): Promise<void> => {
+    try {
+      const balance = await getStockBalance(storeId, product.id);
+      setAvailableQuantity(balance.quantity);
+    } catch (_err) {
+      // Non-fatal: fall back to showing no quantity
+      setAvailableQuantity(null);
     }
   };
 
@@ -109,24 +120,36 @@ export const ReceiveStockView: React.FC = () => {
     setSelectedProduct(product);
     setProductQuery(product.name);
     setSearchResults([]);
+    // Fetch real AVAILABLE quantity from local SQLite (AT-012)
+    loadAvailableQuantity(selectedStoreId, product);
   };
+
+  // Refresh available quantity when the user switches store with a product already selected
+  useEffect(() => {
+    if (selectedProduct && selectedStoreId) {
+      loadAvailableQuantity(selectedStoreId, selectedProduct);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedStoreId]);
 
   const clearProduct = (): void => {
     setSelectedProduct(null);
     setProductQuery('');
     setSearchResults([]);
+    setAvailableQuantity(null);
   };
 
   return (
-    <div className="receive-stock-view" data-testid="receive-stock-view">
+    <div className="sale-stock-view" data-testid="sale-stock-view">
       <div className="view-header">
-        <h2 className="view-title">Receive Stock</h2>
-        <p className="view-subtitle">Record incoming inventory (FR-MOV-001, Section 13.1)</p>
+        <h2 className="view-title">Sale / Issue Stock</h2>
+        <p className="view-subtitle">Record sales and stock removals (FR-MOV-002, Section 13.2)</p>
       </div>
 
       {success && (
         <div
           className="success-banner"
+          data-testid="sale-success-banner"
           style={{
             marginBottom: '16px',
             padding: '12px',
@@ -140,13 +163,14 @@ export const ReceiveStockView: React.FC = () => {
           }}
         >
           <Check size={20} />
-          <span>Stock received successfully. Transaction recorded and balance updated.</span>
+          <span>Stock sold successfully. Transaction recorded and balance updated.</span>
         </div>
       )}
 
       {error && (
         <div
           className="error-banner"
+          data-testid="sale-error-banner"
           style={{
             marginBottom: '16px',
             padding: '12px',
@@ -154,9 +178,13 @@ export const ReceiveStockView: React.FC = () => {
             border: '1px solid #ef4444',
             borderRadius: '6px',
             color: '#991b1b',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
           }}
         >
-          {error}
+          <AlertCircle size={20} />
+          <span>{error}</span>
         </div>
       )}
 
@@ -171,6 +199,7 @@ export const ReceiveStockView: React.FC = () => {
           </label>
           <select
             id="store-select"
+            data-testid="store-select"
             value={selectedStoreId}
             onChange={(e) => setSelectedStoreId(e.target.value)}
             required
@@ -201,6 +230,7 @@ export const ReceiveStockView: React.FC = () => {
           <div style={{ position: 'relative' }}>
             <input
               id="product-search"
+              data-testid="product-search-input"
               type="text"
               value={productQuery}
               onChange={(e) => setProductQuery(e.target.value)}
@@ -256,6 +286,7 @@ export const ReceiveStockView: React.FC = () => {
               {searchResults.map((product) => (
                 <div
                   key={product.id}
+                  data-testid={`product-result-${product.id}`}
                   onClick={() => handleProductSelect(product)}
                   style={{
                     padding: '12px',
@@ -275,7 +306,7 @@ export const ReceiveStockView: React.FC = () => {
             </div>
           )}
 
-          {/* Selected Product Display */}
+          {/* Selected Product Display with Available Quantity */}
           {selectedProduct && (
             <div
               style={{
@@ -291,9 +322,17 @@ export const ReceiveStockView: React.FC = () => {
               }}
             >
               <Package size={16} style={{ color: '#16a34a' }} />
-              <span>
+              <span data-testid="selected-product-name">
                 {selectedProduct.name} ({selectedProduct.sku})
               </span>
+              {availableQuantity !== null && (
+                <span
+                  data-testid="available-quantity-display"
+                  style={{ marginLeft: 'auto', fontWeight: '500', color: '#16a34a' }}
+                >
+                  Available: {availableQuantity}
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -308,6 +347,7 @@ export const ReceiveStockView: React.FC = () => {
           </label>
           <input
             id="quantity"
+            data-testid="quantity-input"
             type="number"
             min="1"
             value={quantity}
@@ -321,10 +361,25 @@ export const ReceiveStockView: React.FC = () => {
               fontSize: '14px',
             }}
           />
+          {availableQuantity !== null && quantity > availableQuantity && (
+            <div
+              style={{
+                marginTop: '4px',
+                fontSize: '12px',
+                color: '#dc2626',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+              }}
+            >
+              <AlertCircle size={12} />
+              <span>Warning: Quantity exceeds available stock ({availableQuantity})</span>
+            </div>
+          )}
         </div>
 
         {/* Reference Number */}
-        <div className="form-group" style={{ marginBottom: '20px' }}>
+        <div className="form-group" style={{ marginBottom: '24px' }}>
           <label
             htmlFor="reference-number"
             style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
@@ -336,7 +391,7 @@ export const ReceiveStockView: React.FC = () => {
             type="text"
             value={referenceNumber}
             onChange={(e) => setReferenceNumber(e.target.value)}
-            placeholder="e.g., R-1002, INV-2024-001"
+            placeholder="e.g., S-1002, INV-2024-001"
             style={{
               width: '100%',
               padding: '10px',
@@ -345,44 +400,18 @@ export const ReceiveStockView: React.FC = () => {
               fontSize: '14px',
             }}
           />
-        </div>
-
-        {/* Supplier (Optional) */}
-        <div className="form-group" style={{ marginBottom: '24px' }}>
-          <label
-            htmlFor="supplier"
-            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
-          >
-            Supplier (Optional)
-          </label>
-          <input
-            id="supplier"
-            type="text"
-            value={supplier}
-            onChange={(e) => setSupplier(e.target.value)}
-            placeholder="e.g., Acme Electronics"
-            style={{
-              width: '100%',
-              padding: '10px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px',
-              fontSize: '14px',
-            }}
-          />
-          <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-            Free-text reference only. Full supplier entity coming in Issue 21.
-          </div>
         </div>
 
         {/* Submit Button */}
         <div className="form-actions" style={{ display: 'flex', gap: '12px' }}>
           <button
             type="submit"
+            data-testid="submit-sale-btn"
             disabled={isSubmitting}
             style={{
               flex: 1,
               padding: '12px',
-              backgroundColor: isSubmitting ? '#9ca3af' : '#22c55e',
+              backgroundColor: isSubmitting ? '#9ca3af' : '#ef4444',
               color: 'white',
               border: 'none',
               borderRadius: '6px',
@@ -399,8 +428,8 @@ export const ReceiveStockView: React.FC = () => {
               'Processing...'
             ) : (
               <>
-                <ArrowDownCircle size={18} />
-                Receive Stock
+                <ArrowUpCircle size={18} />
+                Sell Stock
               </>
             )}
           </button>
