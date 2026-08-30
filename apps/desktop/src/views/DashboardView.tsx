@@ -1,12 +1,21 @@
-import React from 'react';
-import { Store } from '../types/store';
-import { Store as StoreIcon } from 'lucide-react';
+import React, { useState } from 'react';
+import { Store, CreateStoreInput, UpdateStoreInput } from '../types/store';
+import {
+  createStore,
+  updateStore,
+  toggleStoreActive,
+  registerDevice,
+} from '../services/tauriStoreService';
+import { StoreModal } from '../components/StoreModal';
+import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal';
+import { Store as StoreIcon, Plus, Edit2, Power, Smartphone, AlertTriangle } from 'lucide-react';
 
 interface DashboardViewProps {
   stores: Store[];
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  userRole?: string; // Provisional role restriction — TODO(issue-13)
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -14,17 +23,102 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   loading,
   error,
   onRetry,
+  userRole = 'ADMIN', // Default to ADMIN for dev, editable in settings
 }) => {
+  const [storeModalOpen, setStoreModalOpen] = useState(false);
+  const [editingStore, setEditingStore] = useState<Store | null>(null);
+
+  const [deviceModalOpen, setDeviceModalOpen] = useState(false);
+  const [targetDeviceStore, setTargetDeviceStore] = useState<Store | null>(null);
+
+  const [actionError, setActionError] = useState<string | null>(null);
+
   const activeCount = stores.filter((s) => s.is_active).length;
+
+  // Provisional role restriction check (TODO issue-13)
+  const isAuthorized = userRole === 'ADMIN' || userRole === 'MANAGER';
+
+  const handleOpenCreateModal = (): void => {
+    setActionError(null);
+    setEditingStore(null);
+    setStoreModalOpen(true);
+  };
+
+  const handleOpenEditModal = (store: Store): void => {
+    setActionError(null);
+    setEditingStore(store);
+    setStoreModalOpen(true);
+  };
+
+  const handleOpenDeviceModal = (store: Store): void => {
+    setActionError(null);
+    setTargetDeviceStore(store);
+    setDeviceModalOpen(true);
+  };
+
+  const handleCreateStore = async (input: CreateStoreInput): Promise<void> => {
+    await createStore(input);
+    onRetry();
+  };
+
+  const handleUpdateStore = async (input: UpdateStoreInput): Promise<void> => {
+    await updateStore(input);
+    onRetry();
+  };
+
+  const handleToggleActive = async (store: Store): Promise<void> => {
+    try {
+      setActionError(null);
+      await toggleStoreActive(store.id, !store.is_active);
+      onRetry();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleRegisterDevice = async (storeId: string, deviceName: string): Promise<void> => {
+    await registerDevice(storeId, deviceName);
+  };
 
   return (
     <div className="dashboard-view" data-testid="dashboard-view">
       <div className="view-header">
-        <h2 className="view-title">Dashboard</h2>
-        <p className="view-subtitle">
-          SQLite Database Smoke Test — Seeded store locations loaded from local storage
-        </p>
+        <div>
+          <h2 className="view-title">Dashboard & Store Locations</h2>
+          <p className="view-subtitle">
+            Local SQLite multi-store management and device assignment (FR-STORE-001–003)
+          </p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {!isAuthorized && (
+            <span
+              className="badge badge-inactive"
+              title="Client-side role restriction (provisional) — TODO(issue-13)"
+            >
+              <AlertTriangle size={12} /> Restricted Role ({userRole})
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={handleOpenCreateModal}
+            disabled={!isAuthorized}
+            data-testid="add-store-btn"
+          >
+            <Plus size={16} /> Add Store
+          </button>
+        </div>
       </div>
+
+      {actionError && (
+        <div
+          className="alert alert-danger"
+          style={{ marginBottom: '16px' }}
+          data-testid="dashboard-action-error"
+        >
+          <span>{actionError}</span>
+        </div>
+      )}
 
       {/* Summary Cards */}
       <div className="grid-stats">
@@ -62,7 +156,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             <h3 className="table-title">Registered Store Locations</h3>
           </div>
           <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            IPC Command: get_stores
+            FR-STORE-001 Store Management
           </span>
         </div>
 
@@ -83,9 +177,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         ) : stores.length === 0 ? (
           <div className="empty-state" data-testid="empty-state">
             <p>No stores found in local SQLite database.</p>
-            <p style={{ fontSize: '12px', marginTop: '4px' }}>
-              Run python seed script: <code>python -m storage.seed</code>
-            </p>
+            <button
+              type="button"
+              className="btn btn-primary"
+              style={{ marginTop: '12px' }}
+              onClick={handleOpenCreateModal}
+            >
+              Create First Store
+            </button>
           </div>
         ) : (
           <div className="table-container">
@@ -97,6 +196,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                   <th>ID</th>
                   <th>Address</th>
                   <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -123,6 +223,40 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         {store.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <div className="table-actions">
+                        <button
+                          type="button"
+                          className="btn-action"
+                          title="Register Local Device Stub (FR-STORE-003)"
+                          onClick={() => handleOpenDeviceModal(store)}
+                          disabled={!isAuthorized}
+                          data-testid={`register-device-btn-${store.id}`}
+                        >
+                          <Smartphone size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-action"
+                          title="Edit Store"
+                          onClick={() => handleOpenEditModal(store)}
+                          disabled={!isAuthorized}
+                          data-testid={`edit-store-btn-${store.id}`}
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          className={`btn-action ${store.is_active ? 'active-on' : 'active-off'}`}
+                          title={store.is_active ? 'Deactivate Store' : 'Activate Store'}
+                          onClick={() => handleToggleActive(store)}
+                          disabled={!isAuthorized}
+                          data-testid={`toggle-store-btn-${store.id}`}
+                        >
+                          <Power size={14} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -130,6 +264,22 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         )}
       </div>
+
+      {/* Modals */}
+      <StoreModal
+        isOpen={storeModalOpen}
+        store={editingStore}
+        onClose={() => setStoreModalOpen(false)}
+        onSubmitCreate={handleCreateStore}
+        onSubmitUpdate={handleUpdateStore}
+      />
+
+      <DeviceRegistrationModal
+        isOpen={deviceModalOpen}
+        store={targetDeviceStore}
+        onClose={() => setDeviceModalOpen(false)}
+        onRegisterDevice={handleRegisterDevice}
+      />
     </div>
   );
 };
