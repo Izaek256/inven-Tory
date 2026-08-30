@@ -56,3 +56,14 @@ export interface ReturnStockInput {
   user_id: string;
   device_id: string;
 }
+
+export interface MoveStockBucketInput {
+  store_id: string;
+  product_id: string;
+  from_bucket: StockBucket;
+  to_bucket: StockBucket;
+  quantity: number;
+  reason: string;
+  user_id: string;
+  device_id: string;
+}
