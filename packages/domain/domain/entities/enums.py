@@ -28,12 +28,17 @@ class StockBucket(str, Enum):
 
 
 class SyncStatus(str, Enum):
-    """Synchronization lifecycle state of an event (Section 9.1)."""
+    """Synchronization lifecycle state of an event (Section 9.1 & 10.3)."""
 
     PENDING = "PENDING"
-    SENT = "SENT"
+    SENDING = "SENDING"
+    SENT = "SENT"  # Backward compatibility alias for SENDING
     ACCEPTED = "ACCEPTED"
-    REJECTED = "REJECTED"
+    SYNCED = "SYNCED"
+    REJECTED = "REJECTED"  # Backward compatibility alias for PERMANENT_REJECTION
+    RETRYABLE_ERROR = "RETRYABLE_ERROR"
+    PERMANENT_REJECTION = "PERMANENT_REJECTION"
+    EXCEPTION_REVIEW = "EXCEPTION_REVIEW"
 
 
 class TransferStatus(str, Enum):

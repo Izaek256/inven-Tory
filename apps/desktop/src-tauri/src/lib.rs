@@ -130,6 +130,17 @@ pub struct MoveStockBucketInput {
     pub device_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AdjustStockInput {
+    pub store_id: String,
+    pub product_id: String,
+    pub quantity_delta: i32,
+    pub reason: String,
+    pub count_reference: Option<String>,
+    pub user_id: String,
+    pub device_id: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transfer {
     pub id: String,
@@ -1469,6 +1480,26 @@ pub mod commands {
         )
         .map_err(|e| format!("Failed to update source stock balance: {}", e))?;
 
+        let outbox_id = generate_id("OB");
+        let outbox_event_id = format!("EVT-{}", tx_id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "transaction_id": tx_id,
+            "store_id": transfer.source_store_id,
+            "product_id": transfer.product_id,
+            "movement_type": "TRANSFER",
+            "stock_bucket": "AVAILABLE",
+            "quantity_delta": quantity_delta,
+            "transfer_id": transfer_id,
+            "reference_number": format!("TRF-DISP-{}", transfer_id)
+        }))
+        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
+            params![outbox_id, outbox_event_id, payload, now],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
         Ok(Transfer {
             status: "DISPATCHED".to_string(),
             updated_at: now,
@@ -1554,6 +1585,26 @@ pub mod commands {
         )
         .map_err(|e| format!("Failed to update destination stock balance: {}", e))?;
 
+        let outbox_id = generate_id("OB");
+        let outbox_event_id = format!("EVT-{}", tx_id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "transaction_id": tx_id,
+            "store_id": transfer.destination_store_id,
+            "product_id": transfer.product_id,
+            "movement_type": "TRANSFER",
+            "stock_bucket": "AVAILABLE",
+            "quantity_delta": quantity_delta,
+            "transfer_id": transfer_id,
+            "reference_number": format!("TRF-RECV-{}", transfer_id)
+        }))
+        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
+            params![outbox_id, outbox_event_id, payload, now],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
         Ok(Transfer {
             status: "RECEIVED".to_string(),
             updated_at: now,
@@ -1631,6 +1682,26 @@ pub mod commands {
                 ],
             )
             .map_err(|e| format!("Failed to restore source stock balance: {}", e))?;
+
+            let outbox_id = generate_id("OB");
+            let outbox_event_id = format!("EVT-{}", comp_tx_id);
+            let payload = serde_json::to_string(&serde_json::json!({
+                "transaction_id": comp_tx_id,
+                "store_id": transfer.source_store_id,
+                "product_id": transfer.product_id,
+                "movement_type": "TRANSFER",
+                "stock_bucket": "AVAILABLE",
+                "quantity_delta": transfer.quantity,
+                "transfer_id": transfer_id,
+                "reference_number": format!("TRF-CNCL-{}", transfer_id)
+            }))
+            .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+            conn.execute(
+                "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
+                params![outbox_id, outbox_event_id, payload, now],
+            )
+            .map_err(|e| format!("Failed to create outbox event: {}", e))?;
         }
 
         conn.execute(
@@ -1704,6 +1775,127 @@ pub mod commands {
             ..transfer
         })
     }
+
+    #[tauri::command]
+    pub fn adjust_stock(input: AdjustStockInput) -> Result<InventoryTransaction, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let reason_clean = input.reason.trim().to_string();
+        if reason_clean.is_empty() {
+            return Err("Adjustment reason is required.".to_string());
+        }
+
+        if input.quantity_delta < 0 {
+            let mut check_stmt = conn
+                .prepare("SELECT quantity FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = 'AVAILABLE'")
+                .map_err(|e| format!("SQL error checking balance: {}", e))?;
+
+            let current_balance: i32 = check_stmt
+                .query_row(params![input.store_id, input.product_id], |r| r.get(0))
+                .unwrap_or(0);
+
+            let new_balance = current_balance + input.quantity_delta;
+            if new_balance < 0 {
+                return Err(format!(
+                    "Adjustment would drive stock negative ({}) for store '{}', product '{}'. Cannot apply delta {}.",
+                    new_balance, input.store_id, input.product_id, input.quantity_delta
+                ));
+            }
+        }
+
+        let tx_id = generate_id("TX-ADJ");
+        let now = now_iso();
+        let ref_num = input.count_reference.or_else(|| Some(format!("COUNT-ADJ-{}", now)));
+
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, sync_status) VALUES (?1, ?2, ?3, 'ADJUSTMENT', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'PENDING')",
+            params![
+                tx_id,
+                input.store_id,
+                input.product_id,
+                input.quantity_delta,
+                now,
+                now,
+                input.user_id,
+                input.device_id,
+                ref_num,
+                reason_clean,
+            ],
+        )
+        .map_err(|e| format!("Failed to insert adjustment transaction: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, 'AVAILABLE', ?4, ?5) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?4, updated_at = ?5",
+            params![
+                format!("SB-{}-{}-AVAILABLE", input.store_id, input.product_id),
+                input.store_id,
+                input.product_id,
+                input.quantity_delta,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update stock balance: {}", e))?;
+
+        let outbox_id = generate_id("OB");
+        let outbox_event_id = format!("EVT-{}", tx_id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "transaction_id": tx_id,
+            "store_id": input.store_id,
+            "product_id": input.product_id,
+            "movement_type": "ADJUSTMENT",
+            "stock_bucket": "AVAILABLE",
+            "quantity_delta": input.quantity_delta,
+            "reason_code": reason_clean,
+            "reference_number": ref_num
+        })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
+            params![outbox_id, outbox_event_id, payload, now],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        Ok(InventoryTransaction {
+            transaction_id: tx_id,
+            store_id: input.store_id,
+            product_id: input.product_id,
+            movement_type: "ADJUSTMENT".to_string(),
+            stock_bucket: "AVAILABLE".to_string(),
+            quantity_delta: input.quantity_delta,
+            occurred_at: now.clone(),
+            recorded_at: now,
+            user_id: input.user_id,
+            device_id: input.device_id,
+            reference_number: ref_num,
+            reason_code: Some(reason_clean),
+            transfer_id: None,
+            purchase_order_id: None,
+            batch_id: None,
+            client_sequence: None,
+            sync_status: "PENDING".to_string(),
+            server_accepted_at: None,
+            original_transaction_id: None,
+        })
+    }
+
+    #[tauri::command]
+    pub fn get_pending_outbox_count() -> Result<i32, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT COUNT(*) FROM outbox_events WHERE status IN ('PENDING', 'SENDING', 'RETRYABLE_ERROR')")
+            .map_err(|e| format!("SQL error counting outbox events: {}", e))?;
+
+        let count: i32 = stmt
+            .query_row([], |row| row.get(0))
+            .map_err(|e| format!("Failed to query pending outbox count: {}", e))?;
+
+        Ok(count)
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1728,12 +1920,14 @@ pub fn run() {
             commands::get_stock_balance_for_bucket,
             commands::return_stock,
             commands::move_stock_bucket,
+            commands::adjust_stock,
             commands::get_transfers,
             commands::create_transfer,
             commands::dispatch_transfer,
             commands::receive_transfer,
             commands::cancel_transfer,
             commands::mark_transfer_exception,
+            commands::get_pending_outbox_count,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

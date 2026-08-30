@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
+import { getPendingOutboxCount } from '../services/tauriTransactionService';
 
 interface HeaderProps {
   stores: Store[];
@@ -14,11 +15,10 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectStore,
   interactiveTimeMs,
 }) => {
-  // TODO(issue-12): Real online status detection and WebSocket/Sync server state
-  const [isOnline, setIsOnline] = useState<boolean>(true);
-
-  // TODO(issue-12): Real pending sync outbox count from outbox_events table
-  const pendingSyncCount = 0;
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
 
   useEffect(() => {
     const handleOnline = (): void => setIsOnline(true);
@@ -27,7 +27,24 @@ export const Header: React.FC<HeaderProps> = ({
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    let isMounted = true;
+    const fetchPendingCount = async (): Promise<void> => {
+      try {
+        const count = await getPendingOutboxCount();
+        if (isMounted) {
+          setPendingSyncCount(count);
+        }
+      } catch {
+        // Ignore background polling errors
+      }
+    };
+
+    fetchPendingCount();
+    const interval = setInterval(fetchPendingCount, 1000);
+
     return (): void => {
+      isMounted = false;
+      clearInterval(interval);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
@@ -42,20 +59,20 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="header-controls">
-        {/* Offline / Online Status Badge — TODO(issue-12) */}
+        {/* Offline / Online Status Badge */}
         <div
           className={`status-pill ${isOnline ? 'status-online' : 'status-offline'}`}
-          title="TODO(issue-12): Real sync status monitoring"
+          title={isOnline ? 'Network connection active' : 'Operating in offline mode'}
           data-testid="status-indicator"
         >
           <span className="status-dot"></span>
           <span>{isOnline ? 'Online' : 'Offline Mode'}</span>
         </div>
 
-        {/* Pending Sync Count Badge — TODO(issue-12) */}
+        {/* Pending Sync Count Badge */}
         <div
           className="pending-sync-badge"
-          title="TODO(issue-12): Pending outbox sync event count"
+          title={`Pending sync outbox events: ${pendingSyncCount}`}
           data-testid="pending-sync-badge"
         >
           <span>Pending Sync:</span>
