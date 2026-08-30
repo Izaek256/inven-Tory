@@ -15,11 +15,11 @@ import json
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
-
 from domain.entities.enums import MovementType, StockBucket, SyncStatus
 from domain.entities.inventory_transaction import InventoryTransaction as DomainTransaction
 from domain.rules.ledger import NegativeStockError, validate_transaction
+from sqlalchemy import select
+
 from storage.db import Base, get_engine, get_sessionmaker
 from storage.models import (
     Device,
@@ -30,7 +30,6 @@ from storage.models import (
     Store,
     User,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
