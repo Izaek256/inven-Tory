@@ -1,7 +1,7 @@
 import React from 'react';
-import { LayoutDashboard, Package, ArrowLeftRight, Settings } from 'lucide-react';
+import { LayoutDashboard, Package, ArrowLeftRight, ArrowDownCircle, Settings } from 'lucide-react';
 
-export type NavView = 'dashboard' | 'products' | 'transactions' | 'settings';
+export type NavView = 'dashboard' | 'products' | 'transactions' | 'receive_stock' | 'settings';
 
 interface SidebarProps {
   currentView: NavView;
@@ -12,6 +12,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
   const navItems: { id: NavView; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
     { id: 'products', label: 'Products', icon: <Package size={18} /> },
+    { id: 'receive_stock', label: 'Receive Stock', icon: <ArrowDownCircle size={18} /> },
     { id: 'transactions', label: 'Transactions', icon: <ArrowLeftRight size={18} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];

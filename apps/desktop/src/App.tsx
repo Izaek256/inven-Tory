@@ -4,6 +4,7 @@ import { Sidebar, NavView } from './components/Sidebar';
 import { DashboardView } from './views/DashboardView';
 import { ProductsView } from './views/ProductsView';
 import { TransactionsView } from './views/TransactionsView';
+import { ReceiveStockView } from './views/ReceiveStockView';
 import { SettingsView } from './views/SettingsView';
 import { getStores } from './services/tauriStoreService';
 import { Store } from './types/store';
@@ -90,6 +91,8 @@ export function App(): React.ReactElement {
         );
       case 'products':
         return <ProductsView />;
+      case 'receive_stock':
+        return <ReceiveStockView />;
       case 'transactions':
         return <TransactionsView />;
       case 'settings':
