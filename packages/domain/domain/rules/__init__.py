@@ -3,7 +3,9 @@ Domain rules sub-package.
 """
 
 from domain.rules.ledger import (
+    MissingAdjustmentReasonError,
     NegativeStockError,
+    create_adjustment_transaction,
     create_reversal,
     project_balance,
     project_balances_by_store,
@@ -21,7 +23,9 @@ from domain.rules.transfer_rules import (
 
 __all__ = [
     "InvalidTransferStateTransitionError",
+    "MissingAdjustmentReasonError",
     "NegativeStockError",
+    "create_adjustment_transaction",
     "create_cancel_compensation_transaction",
     "create_dispatch_transaction",
     "create_receive_transaction",

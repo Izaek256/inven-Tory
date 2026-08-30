@@ -5,6 +5,7 @@ import {
   StockBalance,
   ReturnStockInput,
   MoveStockBucketInput,
+  AdjustStockInput,
   StockBucket,
 } from '../types/transaction';
 import { isTauriEnvironment } from './tauriStoreService';
@@ -440,3 +441,66 @@ export async function getStockBalanceForBucket(
  * Keyed by "store_id::product_id" or "store_id::product_id::bucket".
  */
 export const MOCK_STOCK_BALANCES = new Map<string, number>();
+
+/**
+ * Physical count reconciliation — create an ADJUSTMENT transaction (FR-MOV-006, Section 13.4, AT-008).
+ *
+ * quantity_delta = counted_quantity − system_quantity.
+ * Negative delta reduces AVAILABLE stock; positive increases it.
+ * Requires a non-empty reason and provisional elevated-permission flag (server enforcement: Issue 13/14).
+ */
+export async function adjustStock(input: AdjustStockInput): Promise<InventoryTransaction> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<InventoryTransaction>('adjust_stock', { input });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking adjust_stock:', err);
+      throw new Error(String(err));
+    }
+  }
+
+  // Mock implementation for web/test
+  if (!input.reason || !input.reason.trim()) {
+    throw new Error('Adjustment reason is required.');
+  }
+
+  const currentBalance = getMockBalance(input.store_id, input.product_id, 'AVAILABLE');
+  const newBalance = currentBalance + input.quantity_delta;
+
+  if (newBalance < 0) {
+    throw new Error(
+      `Adjustment would drive stock negative (${newBalance}) for store '${input.store_id}', ` +
+        `product '${input.product_id}'. Cannot apply delta ${input.quantity_delta}.`,
+    );
+  }
+
+  setMockBalance(input.store_id, input.product_id, 'AVAILABLE', newBalance);
+
+  const now = new Date().toISOString();
+  const transactionId = `TX-ADJ-${Date.now()}`;
+
+  const transaction: InventoryTransaction = {
+    transaction_id: transactionId,
+    store_id: input.store_id,
+    product_id: input.product_id,
+    movement_type: 'ADJUSTMENT',
+    stock_bucket: 'AVAILABLE',
+    quantity_delta: input.quantity_delta,
+    occurred_at: now,
+    recorded_at: now,
+    user_id: input.user_id,
+    device_id: input.device_id,
+    reference_number: input.count_reference ?? null,
+    reason_code: input.reason.trim(),
+    transfer_id: null,
+    purchase_order_id: null,
+    batch_id: null,
+    client_sequence: null,
+    sync_status: 'PENDING',
+    server_accepted_at: null,
+    original_transaction_id: null,
+  };
+
+  return transaction;
+}

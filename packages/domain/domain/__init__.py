@@ -11,7 +11,9 @@ independently testable without any database or web framework present.
 
 from domain.entities import InventoryTransaction, MovementType, StockBucket, SyncStatus
 from domain.rules import (
+    MissingAdjustmentReasonError,
     NegativeStockError,
+    create_adjustment_transaction,
     create_reversal,
     project_balance,
     project_balances_by_store,
@@ -21,10 +23,12 @@ from domain.rules import (
 
 __all__ = [
     "InventoryTransaction",
+    "MissingAdjustmentReasonError",
     "MovementType",
     "NegativeStockError",
     "StockBucket",
     "SyncStatus",
+    "create_adjustment_transaction",
     "create_reversal",
     "project_balance",
     "project_balances_by_store",
