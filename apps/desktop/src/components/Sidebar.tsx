@@ -9,12 +9,7 @@ import {
 } from 'lucide-react';
 
 export type NavView =
-  | 'dashboard'
-  | 'products'
-  | 'transactions'
-  | 'receive_stock'
-  | 'sale_stock'
-  | 'settings';
+  'dashboard' | 'products' | 'transactions' | 'receive_stock' | 'sale_stock' | 'settings';
 
 interface SidebarProps {
   currentView: NavView;

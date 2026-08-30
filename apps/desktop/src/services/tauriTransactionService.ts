@@ -158,10 +158,7 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
  * Get the current AVAILABLE stock balance for a product in a store (Section 9.4).
  * Used by the Sale screen to display and validate real local stock (AT-012).
  */
-export async function getStockBalance(
-  storeId: string,
-  productId: string,
-): Promise<StockBalance> {
+export async function getStockBalance(storeId: string, productId: string): Promise<StockBalance> {
   if (isTauriEnvironment()) {
     try {
       const quantity = await invoke<number>('get_stock_balance', {

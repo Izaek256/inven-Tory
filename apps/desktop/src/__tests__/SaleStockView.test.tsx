@@ -14,6 +14,7 @@ import { SaleStockView } from '../views/SaleStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
+import { InventoryTransaction } from '../types/transaction';
 
 const MOCK_STORES = [
   {
@@ -44,7 +45,7 @@ const MOCK_PRODUCT = {
   updated_at: '2026-08-01T00:00:00Z',
 };
 
-function makeSaleTx(overrides = {}) {
+function makeSaleTx(overrides: Partial<InventoryTransaction> = {}): InventoryTransaction {
   return {
     transaction_id: 'TX-SALE-001',
     store_id: 'STORE-A',
@@ -69,8 +70,8 @@ function makeSaleTx(overrides = {}) {
   };
 }
 
-describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
-  beforeEach(() => {
+describe('SaleStockView — Issue 07 Acceptance Criteria', (): void => {
+  beforeEach((): void => {
     vi.restoreAllMocks();
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
@@ -85,45 +86,45 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
     });
   });
 
-  async function setupFilledForm(qty: number = 1) {
+  async function setupFilledForm(qty: number = 1): Promise<void> {
     render(<SaleStockView />);
 
     // Wait for stores to load and select first store
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('store-select')).toBeInTheDocument();
     });
 
-    act(() => {
+    act((): void => {
       fireEvent.change(screen.getByTestId('store-select'), {
         target: { value: 'STORE-A' },
       });
     });
 
     // Search for a product
-    act(() => {
+    act((): void => {
       fireEvent.change(screen.getByTestId('product-search-input'), {
         target: { value: 'Hisense' },
       });
     });
 
     // Wait for results and select the product
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('product-result-PROD-001')).toBeInTheDocument();
     });
 
-    act(() => {
+    act((): void => {
       fireEvent.click(screen.getByTestId('product-result-PROD-001'));
     });
 
     // Wait for the balance to load and confirm product is selected
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('selected-product-name')).toHaveTextContent(
         'Hisense 120L Refrigerator',
       );
     });
 
     // Set quantity
-    act(() => {
+    act((): void => {
       fireEvent.change(screen.getByTestId('quantity-input'), {
         target: { value: String(qty) },
       });
@@ -134,17 +135,17 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
   // AT-001: sell 1 unit when 6 available → success banner, tx PENDING
   // -------------------------------------------------------------------------
 
-  it('AT-001: sells 1 unit successfully and shows success confirmation', async () => {
+  it('AT-001: sells 1 unit successfully and shows success confirmation', async (): Promise<void> => {
     vi.spyOn(tauriTransactionService, 'sellStock').mockResolvedValueOnce(makeSaleTx());
 
     await setupFilledForm(1);
 
     // Submit
-    await act(async () => {
+    await act(async (): Promise<void> => {
       fireEvent.click(screen.getByTestId('submit-sale-btn'));
     });
 
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('sale-success-banner')).toBeInTheDocument();
     });
 
@@ -160,39 +161,39 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
     expect(callArg.movement_type).toBe('SALE');
   });
 
-  it('AT-001: available quantity is fetched from the service and displayed (shows 6)', async () => {
+  it('AT-001: available quantity is fetched from the service and displayed (shows 6)', async (): Promise<void> => {
     render(<SaleStockView />);
 
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('store-select')).toBeInTheDocument();
     });
 
-    act(() => {
+    act((): void => {
       fireEvent.change(screen.getByTestId('store-select'), {
         target: { value: 'STORE-A' },
       });
     });
 
-    act(() => {
+    act((): void => {
       fireEvent.change(screen.getByTestId('product-search-input'), {
         target: { value: 'Hisense' },
       });
     });
 
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('product-result-PROD-001')).toBeInTheDocument();
     });
 
-    act(() => {
+    act((): void => {
       fireEvent.click(screen.getByTestId('product-result-PROD-001'));
     });
 
     // After product selection, getStockBalance is called and the UI shows available qty
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(tauriTransactionService.getStockBalance).toHaveBeenCalledWith('STORE-A', 'PROD-001');
     });
 
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('available-quantity-display')).toHaveTextContent('6');
     });
   });
@@ -201,7 +202,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
   // AT-012: sell more than available → strict-mode rejection with available qty
   // -------------------------------------------------------------------------
 
-  it('AT-012: rejects sale when quantity exceeds available and shows available quantity in error', async () => {
+  it('AT-012: rejects sale when quantity exceeds available and shows available quantity in error', async (): Promise<void> => {
     // sellStock rejects with the strict-mode message (mirrors Rust sell_stock and mock service)
     vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
       new Error('Insufficient stock. Available quantity: 6. Cannot sell 10 units.'),
@@ -209,11 +210,11 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
 
     await setupFilledForm(10);
 
-    await act(async () => {
+    await act(async (): Promise<void> => {
       fireEvent.click(screen.getByTestId('submit-sale-btn'));
     });
 
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('sale-error-banner')).toBeInTheDocument();
     });
 
@@ -223,18 +224,18 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
     expect(errorText).not.toMatch(/undefined/i);
   });
 
-  it('AT-012: no success banner is shown when sale is rejected', async () => {
+  it('AT-012: no success banner is shown when sale is rejected', async (): Promise<void> => {
     vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
       new Error('Insufficient stock. Available quantity: 6. Cannot sell 10 units.'),
     );
 
     await setupFilledForm(10);
 
-    await act(async () => {
+    await act(async (): Promise<void> => {
       fireEvent.click(screen.getByTestId('submit-sale-btn'));
     });
 
-    await waitFor(() => {
+    await waitFor((): void => {
       expect(screen.getByTestId('sale-error-banner')).toBeInTheDocument();
     });
 
@@ -245,7 +246,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', () => {
   // Navigation
   // -------------------------------------------------------------------------
 
-  it('sale_stock nav item is present in the sidebar', async () => {
+  it('sale_stock nav item is present in the sidebar', async (): Promise<void> => {
     const { getByTestId } = render(<SaleStockView />);
     // The view itself renders — the nav check is at App-level; just confirm no crash
     expect(getByTestId('sale-stock-view')).toBeInTheDocument();
