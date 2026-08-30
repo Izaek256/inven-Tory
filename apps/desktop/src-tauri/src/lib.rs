@@ -105,6 +105,19 @@ pub struct SellStockInput {
     pub device_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ReturnStockInput {
+    pub store_id: String,
+    pub product_id: String,
+    pub return_type: String,
+    pub stock_bucket: String,
+    pub quantity: i32,
+    pub reference_number: Option<String>,
+    pub reason: Option<String>,
+    pub user_id: String,
+    pub device_id: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct InventoryTransaction {
     pub transaction_id: String,
@@ -886,6 +899,166 @@ pub mod commands {
             original_transaction_id: None,
         })
     }
+
+    /// Query stock balance for a specific bucket (AVAILABLE, DAMAGED, QUARANTINE).
+    #[tauri::command]
+    pub fn get_stock_balance_for_bucket(
+        store_id: String,
+        product_id: String,
+        stock_bucket: String,
+    ) -> Result<i32, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let balance: i32 = conn
+            .query_row(
+                "SELECT COALESCE(quantity, 0) FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = ?3",
+                params![store_id, product_id, stock_bucket],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        Ok(balance)
+    }
+
+    /// Process customer or supplier returns (FR-MOV-003, Section 13.3).
+    /// - Customer return: increases AVAILABLE, DAMAGED, or QUARANTINE bucket.
+    /// - Supplier return: decreases the selected bucket, enforcing strict mode bounds.
+    /// Preserves original reference number when linked to a prior transaction.
+    #[tauri::command]
+    pub fn return_stock(input: ReturnStockInput) -> Result<InventoryTransaction, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        if input.quantity <= 0 {
+            return Err("Quantity must be greater than zero.".to_string());
+        }
+
+        let return_type_upper = input.return_type.trim().to_uppercase();
+        if return_type_upper != "CUSTOMER" && return_type_upper != "SUPPLIER" {
+            return Err("Return type must be CUSTOMER or SUPPLIER.".to_string());
+        }
+
+        let bucket_upper = input.stock_bucket.trim().to_uppercase();
+        if bucket_upper != "AVAILABLE"
+            && bucket_upper != "DAMAGED"
+            && bucket_upper != "QUARANTINE"
+            && bucket_upper != "IN_TRANSIT"
+        {
+            return Err("Invalid stock bucket condition.".to_string());
+        }
+
+        let quantity_delta = if return_type_upper == "CUSTOMER" {
+            input.quantity
+        } else {
+            // SUPPLIER return decreases the bucket
+            let current_balance: i32 = conn
+                .query_row(
+                    "SELECT COALESCE(quantity, 0) FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = ?3",
+                    params![input.store_id, input.product_id, bucket_upper],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            if input.quantity > current_balance {
+                return Err(format!(
+                    "Insufficient stock in {} bucket. Available quantity: {}. Cannot return {} units to supplier.",
+                    bucket_upper, current_balance, input.quantity
+                ));
+            }
+            -input.quantity
+        };
+
+        let transaction_id = generate_id("TX");
+        let now = now_iso();
+
+        // Insert RETURN transaction (FR-MOV-003, Section 13.3)
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, sync_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                transaction_id,
+                input.store_id,
+                input.product_id,
+                "RETURN",
+                bucket_upper,
+                quantity_delta,
+                now,
+                now,
+                input.user_id,
+                input.device_id,
+                input.reference_number,
+                input.reason,
+                "PENDING"
+            ],
+        )
+        .map_err(|e| format!("Failed to insert inventory transaction: {}", e))?;
+
+        // Update stock_balances projection (Section 9.4)
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
+            params![
+                format!("SB-{}-{}-{}", input.store_id, input.product_id, bucket_upper),
+                input.store_id,
+                input.product_id,
+                bucket_upper,
+                quantity_delta,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update stock balance: {}", e))?;
+
+        // Create outbox event
+        let outbox_id = generate_id("OB");
+        let outbox_event_id = format!("EVT-{}", transaction_id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "transaction_id": transaction_id,
+            "store_id": input.store_id,
+            "product_id": input.product_id,
+            "movement_type": "RETURN",
+            "stock_bucket": bucket_upper,
+            "quantity_delta": quantity_delta,
+            "reference_number": input.reference_number
+        }))
+        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                outbox_id,
+                outbox_event_id,
+                "INVENTORY_TRANSACTION",
+                payload,
+                "PENDING",
+                0,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        Ok(InventoryTransaction {
+            transaction_id,
+            store_id: input.store_id,
+            product_id: input.product_id,
+            movement_type: "RETURN".to_string(),
+            stock_bucket: bucket_upper,
+            quantity_delta,
+            occurred_at: now.clone(),
+            recorded_at: now.clone(),
+            user_id: input.user_id,
+            device_id: input.device_id,
+            reference_number: input.reference_number,
+            reason_code: input.reason,
+            transfer_id: None,
+            purchase_order_id: None,
+            batch_id: None,
+            client_sequence: None,
+            sync_status: "PENDING".to_string(),
+            server_accepted_at: None,
+            original_transaction_id: None,
+        })
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -907,6 +1080,8 @@ pub fn run() {
             commands::receive_stock,
             commands::get_stock_balance,
             commands::sell_stock,
+            commands::get_stock_balance_for_bucket,
+            commands::return_stock,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

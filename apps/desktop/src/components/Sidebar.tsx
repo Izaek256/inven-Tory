@@ -5,11 +5,18 @@ import {
   ArrowLeftRight,
   ArrowDownCircle,
   ArrowUpCircle,
+  RotateCcw,
   Settings,
 } from 'lucide-react';
 
 export type NavView =
-  'dashboard' | 'products' | 'transactions' | 'receive_stock' | 'sale_stock' | 'settings';
+  | 'dashboard'
+  | 'products'
+  | 'transactions'
+  | 'receive_stock'
+  | 'sale_stock'
+  | 'return_stock'
+  | 'settings';
 
 interface SidebarProps {
   currentView: NavView;
@@ -22,6 +29,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
     { id: 'products', label: 'Products', icon: <Package size={18} /> },
     { id: 'receive_stock', label: 'Receive Stock', icon: <ArrowDownCircle size={18} /> },
     { id: 'sale_stock', label: 'Sale / Issue', icon: <ArrowUpCircle size={18} /> },
+    { id: 'return_stock', label: 'Returns', icon: <RotateCcw size={18} /> },
     { id: 'transactions', label: 'Transactions', icon: <ArrowLeftRight size={18} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];
@@ -35,7 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
             key={item.id}
             type="button"
             className={`nav-item ${isActive ? 'active' : ''}`}
-            onClick={() => onNavigate(item.id)}
+            onClick={(): void => onNavigate(item.id)}
             data-testid={`nav-${item.id}`}
           >
             {item.icon}

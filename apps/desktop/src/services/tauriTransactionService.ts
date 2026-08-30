@@ -1,5 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
-import { InventoryTransaction, CreateTransactionInput, StockBalance } from '../types/transaction';
+import {
+  InventoryTransaction,
+  CreateTransactionInput,
+  StockBalance,
+  ReturnStockInput,
+  StockBucket,
+} from '../types/transaction';
 import { isTauriEnvironment } from './tauriStoreService';
 
 interface ReceiveStockInput {
@@ -19,6 +25,42 @@ interface SellStockInput {
   reference_number?: string;
   user_id: string;
   device_id: string;
+}
+
+/**
+ * Helper function for mock balance retrieval (web/test).
+ */
+export function getMockBalance(
+  storeId: string,
+  productId: string,
+  bucket: StockBucket = 'AVAILABLE',
+): number {
+  const bucketKey = `${storeId}::${productId}::${bucket}`;
+  if (MOCK_STOCK_BALANCES.has(bucketKey)) {
+    return MOCK_STOCK_BALANCES.get(bucketKey)!;
+  }
+  if (bucket === 'AVAILABLE') {
+    const legacyKey = `${storeId}::${productId}`;
+    return MOCK_STOCK_BALANCES.get(legacyKey) ?? 0;
+  }
+  return 0;
+}
+
+/**
+ * Helper function for mock balance update (web/test).
+ */
+export function setMockBalance(
+  storeId: string,
+  productId: string,
+  bucket: StockBucket,
+  newQty: number,
+): void {
+  const bucketKey = `${storeId}::${productId}::${bucket}`;
+  MOCK_STOCK_BALANCES.set(bucketKey, newQty);
+  if (bucket === 'AVAILABLE') {
+    const legacyKey = `${storeId}::${productId}`;
+    MOCK_STOCK_BALANCES.set(legacyKey, newQty);
+  }
 }
 
 /**
@@ -54,9 +96,8 @@ export async function receiveStock(input: CreateTransactionInput): Promise<Inven
   const transactionId = `TX-${Date.now()}`;
 
   // Update mock stock balance tracker
-  const balanceKey = `${input.store_id}::${input.product_id}`;
-  const current = MOCK_STOCK_BALANCES.get(balanceKey) ?? 0;
-  MOCK_STOCK_BALANCES.set(balanceKey, current + input.quantity);
+  const current = getMockBalance(input.store_id, input.product_id, 'AVAILABLE');
+  setMockBalance(input.store_id, input.product_id, 'AVAILABLE', current + input.quantity);
 
   const transaction: InventoryTransaction = {
     transaction_id: transactionId,
@@ -114,8 +155,7 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
   }
 
   // Read current mock balance and enforce strict mode
-  const balanceKey = `${input.store_id}::${input.product_id}`;
-  const available = MOCK_STOCK_BALANCES.get(balanceKey) ?? 0;
+  const available = getMockBalance(input.store_id, input.product_id, 'AVAILABLE');
   if (input.quantity > available) {
     // AT-012: rejection message must include the available quantity
     throw new Error(
@@ -124,7 +164,7 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
   }
 
   // Commit: deduct from mock balance
-  MOCK_STOCK_BALANCES.set(balanceKey, available - input.quantity);
+  setMockBalance(input.store_id, input.product_id, 'AVAILABLE', available - input.quantity);
 
   const now = new Date().toISOString();
   const transactionId = `TX-${Date.now()}`;
@@ -142,6 +182,71 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
     device_id: input.device_id,
     reference_number: input.reference_number || null,
     reason_code: null,
+    transfer_id: null,
+    purchase_order_id: null,
+    batch_id: null,
+    client_sequence: null,
+    sync_status: 'PENDING',
+    server_accepted_at: null,
+    original_transaction_id: null,
+  };
+
+  return transaction;
+}
+
+/**
+ * Process customer or supplier returns (FR-MOV-003, Section 13.3).
+ * Customer returns increase the specified bucket (AVAILABLE, DAMAGED, or QUARANTINE).
+ * Supplier returns decrease the specified bucket, enforcing strict mode balance bounds.
+ */
+export async function returnStock(input: ReturnStockInput): Promise<InventoryTransaction> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<InventoryTransaction>('return_stock', { input });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking return_stock:', err);
+      throw new Error(String(err));
+    }
+  }
+
+  // Mock implementation for web/test
+  if (input.quantity <= 0) {
+    throw new Error('Quantity must be greater than zero.');
+  }
+
+  const bucket = input.stock_bucket;
+  const currentBalance = getMockBalance(input.store_id, input.product_id, bucket);
+
+  let quantityDelta = input.quantity;
+  if (input.return_type === 'CUSTOMER') {
+    setMockBalance(input.store_id, input.product_id, bucket, currentBalance + input.quantity);
+  } else {
+    if (input.quantity > currentBalance) {
+      throw new Error(
+        `Insufficient stock in ${bucket} bucket. Available quantity: ${currentBalance}. Cannot return ${input.quantity} units to supplier.`,
+      );
+    }
+    quantityDelta = -input.quantity;
+    setMockBalance(input.store_id, input.product_id, bucket, currentBalance - input.quantity);
+  }
+
+  const now = new Date().toISOString();
+  const transactionId = `TX-${Date.now()}`;
+
+  const transaction: InventoryTransaction = {
+    transaction_id: transactionId,
+    store_id: input.store_id,
+    product_id: input.product_id,
+    movement_type: 'RETURN',
+    stock_bucket: bucket,
+    quantity_delta: quantityDelta,
+    occurred_at: now,
+    recorded_at: now,
+    user_id: input.user_id,
+    device_id: input.device_id,
+    reference_number: input.reference_number || null,
+    reason_code: input.reason || null,
     transfer_id: null,
     purchase_order_id: null,
     batch_id: null,
@@ -181,8 +286,7 @@ export async function getStockBalance(storeId: string, productId: string): Promi
   }
 
   // Mock: read from in-memory balance tracker
-  const balanceKey = `${storeId}::${productId}`;
-  const quantity = MOCK_STOCK_BALANCES.get(balanceKey) ?? 0;
+  const quantity = getMockBalance(storeId, productId, 'AVAILABLE');
   return {
     id: `SB-${storeId}-${productId}-AVAILABLE`,
     store_id: storeId,
@@ -194,7 +298,48 @@ export async function getStockBalance(storeId: string, productId: string): Promi
 }
 
 /**
+ * Get stock balance for a specific bucket (Section 9.4).
+ */
+export async function getStockBalanceForBucket(
+  storeId: string,
+  productId: string,
+  stockBucket: StockBucket,
+): Promise<StockBalance> {
+  if (isTauriEnvironment()) {
+    try {
+      const quantity = await invoke<number>('get_stock_balance_for_bucket', {
+        store_id: storeId,
+        product_id: productId,
+        stock_bucket: stockBucket,
+      });
+      return {
+        id: `SB-${storeId}-${productId}-${stockBucket}`,
+        store_id: storeId,
+        product_id: productId,
+        stock_bucket: stockBucket,
+        quantity,
+        updated_at: new Date().toISOString(),
+      };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking get_stock_balance_for_bucket:', err);
+      throw new Error(`Failed to get stock balance: ${String(err)}`);
+    }
+  }
+
+  const quantity = getMockBalance(storeId, productId, stockBucket);
+  return {
+    id: `SB-${storeId}-${productId}-${stockBucket}`,
+    store_id: storeId,
+    product_id: productId,
+    stock_bucket: stockBucket,
+    quantity,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+/**
  * In-memory stock balance map for the mock environment (web/test).
- * Keyed by "store_id::product_id". Exported so tests can seed it directly.
+ * Keyed by "store_id::product_id" or "store_id::product_id::bucket".
  */
 export const MOCK_STOCK_BALANCES = new Map<string, number>();
