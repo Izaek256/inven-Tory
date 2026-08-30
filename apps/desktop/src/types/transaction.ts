@@ -67,3 +67,18 @@ export interface MoveStockBucketInput {
   user_id: string;
   device_id: string;
 }
+
+/**
+ * Input for physical count reconciliation ADJUSTMENT transaction (FR-MOV-006, Section 13.4).
+ * quantity_delta = counted_quantity - system_quantity (negative = downward adjustment).
+ */
+export interface AdjustStockInput {
+  store_id: string;
+  product_id: string;
+  /** counted_quantity − system_quantity; negative means physical count is lower */
+  quantity_delta: number;
+  reason: string;
+  user_id: string;
+  device_id: string;
+  count_reference?: string;
+}

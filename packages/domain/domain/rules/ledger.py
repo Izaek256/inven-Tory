@@ -5,7 +5,7 @@ Inventory ledger business rules and invariants (Section 9, Appendix B).
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from domain.entities.enums import StockBucket, SyncStatus
+from domain.entities.enums import MovementType, StockBucket, SyncStatus
 from domain.entities.inventory_transaction import InventoryTransaction
 
 
@@ -122,4 +122,48 @@ def create_reversal(
         purchase_order_id=original_transaction.purchase_order_id,
         batch_id=original_transaction.batch_id,
         original_transaction_id=original_transaction.transaction_id,
+    )
+
+
+class MissingAdjustmentReasonError(ValueError):
+    """Raised when an adjustment transaction is created without a reason (FR-MOV-006)."""
+
+
+def create_adjustment_transaction(
+    store_id: str,
+    product_id: str,
+    system_quantity: int,
+    counted_quantity: int,
+    reason: str,
+    user_id: str,
+    device_id: str,
+    occurred_at: datetime | None = None,
+    count_reference: str | None = None,
+) -> InventoryTransaction:
+    """
+    Create an ADJUSTMENT transaction from a physical count reconciliation (FR-MOV-006, Section 13.4).
+
+    quantity_delta = counted_quantity - system_quantity.
+    A negative delta reduces AVAILABLE stock; a positive delta increases it.
+    Raises MissingAdjustmentReasonError when reason is blank.
+
+    AT-008 example: system_quantity=18, counted_quantity=17 → quantity_delta=-1.
+    """
+    if not reason or not reason.strip():
+        raise MissingAdjustmentReasonError(
+            "Adjustment reason is required for physical count reconciliation."
+        )
+
+    quantity_delta = counted_quantity - system_quantity
+    return InventoryTransaction(
+        store_id=store_id,
+        product_id=product_id,
+        movement_type=MovementType.ADJUSTMENT,
+        stock_bucket=StockBucket.AVAILABLE,
+        quantity_delta=quantity_delta,
+        occurred_at=occurred_at or datetime.now(UTC),
+        user_id=user_id,
+        device_id=device_id,
+        reason_code=reason.strip(),
+        reference_number=count_reference or f"COUNT-ADJ-{store_id}-{product_id}",
     )
