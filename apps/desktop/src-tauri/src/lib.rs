@@ -118,6 +118,18 @@ pub struct ReturnStockInput {
     pub device_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct MoveStockBucketInput {
+    pub store_id: String,
+    pub product_id: String,
+    pub from_bucket: String,
+    pub to_bucket: String,
+    pub quantity: i32,
+    pub reason: String,
+    pub user_id: String,
+    pub device_id: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transfer {
     pub id: String,
@@ -1084,6 +1096,202 @@ pub mod commands {
         })
     }
 
+    /// Move stock between buckets (AVAILABLE, DAMAGED, QUARANTINE) with required reason (FR-MOV-005, Section 9.5).
+    /// Enforces strict-mode negative-stock prevention on the source bucket.
+    /// Inserts two DAMAGE transactions (outflow from source, inflow to destination),
+    /// updates stock_balances for both buckets, and enqueues outbox events.
+    #[tauri::command]
+    pub fn move_stock_bucket(input: MoveStockBucketInput) -> Result<Vec<InventoryTransaction>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        if input.quantity <= 0 {
+            return Err("Quantity must be greater than zero.".to_string());
+        }
+
+        let reason_clean = input.reason.trim().to_string();
+        if reason_clean.is_empty() {
+            return Err("Reason is required for damage/quarantine movements.".to_string());
+        }
+
+        let from_upper = input.from_bucket.trim().to_uppercase();
+        let to_upper = input.to_bucket.trim().to_uppercase();
+
+        let valid_buckets = ["AVAILABLE", "DAMAGED", "QUARANTINE"];
+        if !valid_buckets.contains(&from_upper.as_str()) || !valid_buckets.contains(&to_upper.as_str()) {
+            return Err("Invalid stock bucket. Must be AVAILABLE, DAMAGED, or QUARANTINE.".to_string());
+        }
+
+        if from_upper == to_upper {
+            return Err("Source and destination buckets must be different.".to_string());
+        }
+
+        // Enforce strict mode balance check on from_bucket
+        let current_from_balance: i32 = conn
+            .query_row(
+                "SELECT COALESCE(quantity, 0) FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = ?3",
+                params![input.store_id, input.product_id, from_upper],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if input.quantity > current_from_balance {
+            return Err(format!(
+                "Insufficient stock in {} bucket. Available quantity: {}. Cannot move {} units.",
+                from_upper, current_from_balance, input.quantity
+            ));
+        }
+
+        let now = now_iso();
+        let outflow_tx_id = generate_id("TX");
+        let inflow_tx_id = generate_id("TX");
+
+        // Insert outflow transaction (-quantity from from_bucket)
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reason_code, sync_status) VALUES (?1, ?2, ?3, 'DAMAGE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'PENDING')",
+            params![
+                outflow_tx_id,
+                input.store_id,
+                input.product_id,
+                from_upper,
+                -input.quantity,
+                now,
+                now,
+                input.user_id,
+                input.device_id,
+                reason_clean,
+            ],
+        )
+        .map_err(|e| format!("Failed to insert outflow inventory transaction: {}", e))?;
+
+        // Insert inflow transaction (+quantity to to_bucket)
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reason_code, sync_status) VALUES (?1, ?2, ?3, 'DAMAGE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'PENDING')",
+            params![
+                inflow_tx_id,
+                input.store_id,
+                input.product_id,
+                to_upper,
+                input.quantity,
+                now,
+                now,
+                input.user_id,
+                input.device_id,
+                reason_clean,
+            ],
+        )
+        .map_err(|e| format!("Failed to insert inflow inventory transaction: {}", e))?;
+
+        // Update stock_balances for from_bucket
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
+            params![
+                format!("SB-{}-{}-{}", input.store_id, input.product_id, from_upper),
+                input.store_id,
+                input.product_id,
+                from_upper,
+                -input.quantity,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update source stock balance: {}", e))?;
+
+        // Update stock_balances for to_bucket
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
+            params![
+                format!("SB-{}-{}-{}", input.store_id, input.product_id, to_upper),
+                input.store_id,
+                input.product_id,
+                to_upper,
+                input.quantity,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update destination stock balance: {}", e))?;
+
+        // Outbox events
+        let outbox_id_1 = generate_id("OB");
+        let payload_1 = serde_json::to_string(&serde_json::json!({
+            "transaction_id": outflow_tx_id,
+            "store_id": input.store_id,
+            "product_id": input.product_id,
+            "movement_type": "DAMAGE",
+            "stock_bucket": from_upper,
+            "quantity_delta": -input.quantity,
+            "reason_code": reason_clean
+        })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
+            params![outbox_id_1, format!("EVT-{}", outflow_tx_id), payload_1, now],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        let outbox_id_2 = generate_id("OB");
+        let payload_2 = serde_json::to_string(&serde_json::json!({
+            "transaction_id": inflow_tx_id,
+            "store_id": input.store_id,
+            "product_id": input.product_id,
+            "movement_type": "DAMAGE",
+            "stock_bucket": to_upper,
+            "quantity_delta": input.quantity,
+            "reason_code": reason_clean
+        })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
+            params![outbox_id_2, format!("EVT-{}", inflow_tx_id), payload_2, now],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        Ok(vec![
+            InventoryTransaction {
+                transaction_id: outflow_tx_id,
+                store_id: input.store_id.clone(),
+                product_id: input.product_id.clone(),
+                movement_type: "DAMAGE".to_string(),
+                stock_bucket: from_upper,
+                quantity_delta: -input.quantity,
+                occurred_at: now.clone(),
+                recorded_at: now.clone(),
+                user_id: input.user_id.clone(),
+                device_id: input.device_id.clone(),
+                reference_number: None,
+                reason_code: Some(reason_clean.clone()),
+                transfer_id: None,
+                purchase_order_id: None,
+                batch_id: None,
+                client_sequence: None,
+                sync_status: "PENDING".to_string(),
+                server_accepted_at: None,
+                original_transaction_id: None,
+            },
+            InventoryTransaction {
+                transaction_id: inflow_tx_id,
+                store_id: input.store_id,
+                product_id: input.product_id,
+                movement_type: "DAMAGE".to_string(),
+                stock_bucket: to_upper,
+                quantity_delta: input.quantity,
+                occurred_at: now.clone(),
+                recorded_at: now.clone(),
+                user_id: input.user_id,
+                device_id: input.device_id,
+                reference_number: None,
+                reason_code: Some(reason_clean),
+                transfer_id: None,
+                purchase_order_id: None,
+                batch_id: None,
+                client_sequence: None,
+                sync_status: "PENDING".to_string(),
+                server_accepted_at: None,
+                original_transaction_id: None,
+            },
+        ])
+    }
+
     #[tauri::command]
     pub fn get_transfers() -> Result<Vec<Transfer>, String> {
         let db_path = get_db_path();
@@ -1519,6 +1727,7 @@ pub fn run() {
             commands::sell_stock,
             commands::get_stock_balance_for_bucket,
             commands::return_stock,
+            commands::move_stock_bucket,
             commands::get_transfers,
             commands::create_transfer,
             commands::dispatch_transfer,

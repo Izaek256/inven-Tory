@@ -4,6 +4,7 @@ import {
   CreateTransactionInput,
   StockBalance,
   ReturnStockInput,
+  MoveStockBucketInput,
   StockBucket,
 } from '../types/transaction';
 import { isTauriEnvironment } from './tauriStoreService';
@@ -257,6 +258,102 @@ export async function returnStock(input: ReturnStockInput): Promise<InventoryTra
   };
 
   return transaction;
+}
+
+/**
+ * Move stock between buckets (AVAILABLE, DAMAGED, QUARANTINE) (FR-MOV-005, Section 9.5).
+ * Requires a non-empty reason.
+ * Enforces strict-mode negative-stock prevention on the source bucket.
+ */
+export async function moveStockBucket(
+  input: MoveStockBucketInput,
+): Promise<InventoryTransaction[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<InventoryTransaction[]>('move_stock_bucket', { input });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking move_stock_bucket:', err);
+      throw new Error(String(err));
+    }
+  }
+
+  // Mock implementation for web/test
+  if (input.quantity <= 0) {
+    throw new Error('Quantity must be greater than zero.');
+  }
+
+  if (!input.reason || !input.reason.trim()) {
+    throw new Error('Reason is required for damage/quarantine movements.');
+  }
+
+  if (input.from_bucket === input.to_bucket) {
+    throw new Error('Source and destination buckets must be different.');
+  }
+
+  const fromBalance = getMockBalance(input.store_id, input.product_id, input.from_bucket);
+  if (input.quantity > fromBalance) {
+    throw new Error(
+      `Insufficient stock in ${input.from_bucket} bucket. Available quantity: ${fromBalance}. Cannot move ${input.quantity} units.`,
+    );
+  }
+
+  // Deduct from source bucket
+  setMockBalance(input.store_id, input.product_id, input.from_bucket, fromBalance - input.quantity);
+
+  // Add to destination bucket
+  const toBalance = getMockBalance(input.store_id, input.product_id, input.to_bucket);
+  setMockBalance(input.store_id, input.product_id, input.to_bucket, toBalance + input.quantity);
+
+  const now = new Date().toISOString();
+  const tx1Id = `TX-${Date.now()}-1`;
+  const tx2Id = `TX-${Date.now()}-2`;
+
+  const outflowTx: InventoryTransaction = {
+    transaction_id: tx1Id,
+    store_id: input.store_id,
+    product_id: input.product_id,
+    movement_type: 'DAMAGE',
+    stock_bucket: input.from_bucket,
+    quantity_delta: -input.quantity,
+    occurred_at: now,
+    recorded_at: now,
+    user_id: input.user_id,
+    device_id: input.device_id,
+    reference_number: null,
+    reason_code: input.reason.trim(),
+    transfer_id: null,
+    purchase_order_id: null,
+    batch_id: null,
+    client_sequence: null,
+    sync_status: 'PENDING',
+    server_accepted_at: null,
+    original_transaction_id: null,
+  };
+
+  const inflowTx: InventoryTransaction = {
+    transaction_id: tx2Id,
+    store_id: input.store_id,
+    product_id: input.product_id,
+    movement_type: 'DAMAGE',
+    stock_bucket: input.to_bucket,
+    quantity_delta: input.quantity,
+    occurred_at: now,
+    recorded_at: now,
+    user_id: input.user_id,
+    device_id: input.device_id,
+    reference_number: null,
+    reason_code: input.reason.trim(),
+    transfer_id: null,
+    purchase_order_id: null,
+    batch_id: null,
+    client_sequence: null,
+    sync_status: 'PENDING',
+    server_accepted_at: null,
+    original_transaction_id: null,
+  };
+
+  return [outflowTx, inflowTx];
 }
 
 /**

@@ -8,6 +8,7 @@ import { ReceiveStockView } from './views/ReceiveStockView';
 import { SaleStockView } from './views/SaleStockView';
 import { ReturnStockView } from './views/ReturnStockView';
 import { TransferStockView } from './views/TransferStockView';
+import { DamageQuarantineView } from './views/DamageQuarantineView';
 import { SettingsView } from './views/SettingsView';
 import { getStores } from './services/tauriStoreService';
 import { Store } from './types/store';
@@ -102,6 +103,8 @@ export function App(): React.ReactElement {
         return <ReturnStockView />;
       case 'transfer_stock':
         return <TransferStockView />;
+      case 'damage_quarantine':
+        return <DamageQuarantineView />;
       case 'transactions':
         return <TransactionsView />;
       case 'settings':
