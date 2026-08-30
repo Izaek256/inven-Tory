@@ -74,3 +74,23 @@ logs/
 
 # ─── Alembic generated ─────────────────────────────────────────────────────────
 infra/migrations/versions/__pycache__/
+
+# --- Agent Skills CLI (npx skills) ---
+# skills-lock.json IS tracked (commit it — lets teammates reproduce via
+# `npx skills experimental_install`), so do NOT ignore that file.
+ 
+# Local cache used when skills are installed in symlink mode
+# (canonical copies live here; agent folders just symlink to them)
+.skills-cache/
+.agents/.cache/
+ 
+# Global-scope installs (if you ever run `npx skills add -g`) don't live
+# in the repo at all, so nothing to ignore there — only add lines below
+# if you deliberately keep PROJECT-scoped skills out of version control
+# instead of committing them (uncomment only if you want this):
+ .claude/skills/
+ .agents/skills/
+ .cursor/skills/
+ .github/copilot/skills/
+apps/desktop/skills-lock.json
+apps/desktop/.agents/skills/frontend-design/LICENSE.txt
