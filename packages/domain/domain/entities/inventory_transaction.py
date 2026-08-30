@@ -4,10 +4,22 @@ Inventory transaction domain entity.
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import Enum
+from typing import Any
 
 from ulid import ULID
 
 from domain.entities.enums import MovementType, StockBucket, SyncStatus
+
+
+def _coerce_and_validate_enum[E: Enum](val: Any, enum_cls: type[E], field_name: str) -> E:
+    if isinstance(val, enum_cls):
+        return val
+    if isinstance(val, str) and not isinstance(val, bool):
+        return enum_cls(val)
+    raise TypeError(
+        f"{field_name} must be a {enum_cls.__name__} or string representation, got {type(val).__name__}"
+    )
 
 
 def generate_ulid() -> str:
@@ -51,11 +63,25 @@ class InventoryTransaction:
 
     def __post_init__(self) -> None:
         """Enforce field type integrity upon initialization."""
-        if not isinstance(self.quantity_delta, int):
+        if isinstance(self.quantity_delta, bool) or not isinstance(self.quantity_delta, int):
             raise TypeError("quantity_delta must be an integer")
-        if isinstance(self.movement_type, str) and not isinstance(self.movement_type, MovementType):
-            object.__setattr__(self, "movement_type", MovementType(self.movement_type))
-        if isinstance(self.stock_bucket, str) and not isinstance(self.stock_bucket, StockBucket):
-            object.__setattr__(self, "stock_bucket", StockBucket(self.stock_bucket))
-        if isinstance(self.sync_status, str) and not isinstance(self.sync_status, SyncStatus):
-            object.__setattr__(self, "sync_status", SyncStatus(self.sync_status))
+        if self.client_sequence is not None and (
+            isinstance(self.client_sequence, bool) or not isinstance(self.client_sequence, int)
+        ):
+            raise TypeError("client_sequence must be an integer")
+
+        object.__setattr__(
+            self,
+            "movement_type",
+            _coerce_and_validate_enum(self.movement_type, MovementType, "movement_type"),
+        )
+        object.__setattr__(
+            self,
+            "stock_bucket",
+            _coerce_and_validate_enum(self.stock_bucket, StockBucket, "stock_bucket"),
+        )
+        object.__setattr__(
+            self,
+            "sync_status",
+            _coerce_and_validate_enum(self.sync_status, SyncStatus, "sync_status"),
+        )

@@ -22,8 +22,7 @@ def project_balance(
     """
     Pure balance projection function matching Section 9.4 balance invariant.
 
-    Calculates current balance by summing quantity_delta over valid, accepted or pending
-    events matching the given criteria. Events with sync_status=REJECTED are ignored.
+    Calculates current balance by summing quantity_delta over events matching the given criteria, excluding events with sync_status=REJECTED.
     """
     total = 0
     for event in events:

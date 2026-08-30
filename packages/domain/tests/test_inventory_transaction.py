@@ -80,3 +80,81 @@ def test_inventory_transaction_quantity_delta_type_validation() -> None:
             user_id="user-1",
             device_id="dev-1",
         )
+
+
+def test_inventory_transaction_quantity_delta_bool_rejection() -> None:
+    now = datetime.now(UTC)
+    with pytest.raises(TypeError, match="quantity_delta must be an integer"):
+        InventoryTransaction(
+            store_id="store-a",
+            product_id="prod-1",
+            movement_type=MovementType.RECEIPT,
+            quantity_delta=True,  # type: ignore[arg-type]
+            occurred_at=now,
+            user_id="user-1",
+            device_id="dev-1",
+        )
+
+
+def test_inventory_transaction_invalid_enum_types_rejection() -> None:
+    now = datetime.now(UTC)
+    base_kwargs = {
+        "store_id": "store-a",
+        "product_id": "prod-1",
+        "quantity_delta": 10,
+        "occurred_at": now,
+        "user_id": "user-1",
+        "device_id": "dev-1",
+    }
+
+    with pytest.raises(TypeError, match="movement_type must be a MovementType or string"):
+        InventoryTransaction(
+            movement_type=123,  # type: ignore[arg-type]
+            **base_kwargs,
+        )
+
+    with pytest.raises(TypeError, match="stock_bucket must be a StockBucket or string"):
+        InventoryTransaction(
+            movement_type=MovementType.RECEIPT,
+            stock_bucket=True,  # type: ignore[arg-type]
+            **base_kwargs,
+        )
+
+    with pytest.raises(TypeError, match="sync_status must be a SyncStatus or string"):
+        InventoryTransaction(
+            movement_type=MovementType.RECEIPT,
+            sync_status=456,  # type: ignore[arg-type]
+            **base_kwargs,
+        )
+
+
+def test_inventory_transaction_invalid_enum_strings_rejection() -> None:
+    now = datetime.now(UTC)
+    base_kwargs = {
+        "store_id": "store-a",
+        "product_id": "prod-1",
+        "quantity_delta": 10,
+        "occurred_at": now,
+        "user_id": "user-1",
+        "device_id": "dev-1",
+    }
+
+    with pytest.raises(ValueError):
+        InventoryTransaction(
+            movement_type="INVALID_MOVEMENT",  # type: ignore[arg-type]
+            **base_kwargs,
+        )
+
+    with pytest.raises(ValueError):
+        InventoryTransaction(
+            movement_type=MovementType.RECEIPT,
+            stock_bucket="NON_EXISTENT_BUCKET",  # type: ignore[arg-type]
+            **base_kwargs,
+        )
+
+    with pytest.raises(ValueError):
+        InventoryTransaction(
+            movement_type=MovementType.RECEIPT,
+            sync_status="UNKNOWN_STATUS",  # type: ignore[arg-type]
+            **base_kwargs,
+        )
