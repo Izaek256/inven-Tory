@@ -26,6 +26,10 @@ class Transfer(Base):
     destination_store_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("stores.id"), nullable=False, index=True
     )
+    product_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("products.id"), nullable=False, index=True
+    )
+    quantity: Mapped[int] = mapped_column(nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="DRAFT")
     created_by_user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id"), nullable=False, index=True

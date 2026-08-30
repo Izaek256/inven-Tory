@@ -16,6 +16,7 @@ export type NavView =
   | 'receive_stock'
   | 'sale_stock'
   | 'return_stock'
+  | 'transfer_stock'
   | 'settings';
 
 interface SidebarProps {
@@ -30,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
     { id: 'receive_stock', label: 'Receive Stock', icon: <ArrowDownCircle size={18} /> },
     { id: 'sale_stock', label: 'Sale / Issue', icon: <ArrowUpCircle size={18} /> },
     { id: 'return_stock', label: 'Returns', icon: <RotateCcw size={18} /> },
+    { id: 'transfer_stock', label: 'Transfers', icon: <ArrowLeftRight size={18} /> },
     { id: 'transactions', label: 'Transactions', icon: <ArrowLeftRight size={18} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];

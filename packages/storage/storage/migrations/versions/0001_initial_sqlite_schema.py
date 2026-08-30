@@ -133,6 +133,8 @@ def upgrade() -> None:
         sa.Column("id", sa.String(length=36), nullable=False),
         sa.Column("source_store_id", sa.String(length=36), nullable=False),
         sa.Column("destination_store_id", sa.String(length=36), nullable=False),
+        sa.Column("product_id", sa.String(length=36), nullable=False),
+        sa.Column("quantity", sa.Integer(), nullable=False),
         sa.Column(
             "status", sa.String(length=50), nullable=False, server_default=sa.text("'DRAFT'")
         ),
@@ -142,6 +144,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["created_by_user_id"], ["users.id"]),
         sa.ForeignKeyConstraint(["destination_store_id"], ["stores.id"]),
+        sa.ForeignKeyConstraint(["product_id"], ["products.id"]),
         sa.ForeignKeyConstraint(["source_store_id"], ["stores.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -149,6 +152,7 @@ def upgrade() -> None:
     op.create_index(
         "ix_transfers_destination_store_id", "transfers", ["destination_store_id"], unique=False
     )
+    op.create_index("ix_transfers_product_id", "transfers", ["product_id"], unique=False)
     op.create_index(
         "ix_transfers_created_by_user_id", "transfers", ["created_by_user_id"], unique=False
     )

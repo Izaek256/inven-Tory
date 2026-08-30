@@ -7,6 +7,7 @@ import { TransactionsView } from './views/TransactionsView';
 import { ReceiveStockView } from './views/ReceiveStockView';
 import { SaleStockView } from './views/SaleStockView';
 import { ReturnStockView } from './views/ReturnStockView';
+import { TransferStockView } from './views/TransferStockView';
 import { SettingsView } from './views/SettingsView';
 import { getStores } from './services/tauriStoreService';
 import { Store } from './types/store';
@@ -99,6 +100,8 @@ export function App(): React.ReactElement {
         return <SaleStockView />;
       case 'return_stock':
         return <ReturnStockView />;
+      case 'transfer_stock':
+        return <TransferStockView />;
       case 'transactions':
         return <TransactionsView />;
       case 'settings':
