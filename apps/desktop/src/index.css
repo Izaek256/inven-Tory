@@ -606,7 +606,9 @@ body {
   color: var(--text-main);
   font-size: 14px;
   font-family: inherit;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .form-input:focus,
@@ -970,4 +972,3 @@ body {
   text-align: center;
   color: var(--text-muted);
 }
-

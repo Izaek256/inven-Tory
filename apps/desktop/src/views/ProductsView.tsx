@@ -160,7 +160,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       </div>
 
       {actionError && (
-        <div className="alert alert-danger" style={{ marginBottom: '16px' }} data-testid="product-action-error">
+        <div
+          className="alert alert-danger"
+          style={{ marginBottom: '16px' }}
+          data-testid="product-action-error"
+        >
           <span>{actionError}</span>
         </div>
       )}
@@ -175,14 +179,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
                 Reusable Search-First Product Picker (Section 18 Specification)
               </h4>
               <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                Keyboard navigation: Arrow up/down to navigate, Enter to select, Escape to close. Auto-focuses for barcode scanners.
+                Keyboard navigation: Arrow up/down to navigate, Enter to select, Escape to close.
+                Auto-focuses for barcode scanners.
               </p>
             </div>
-            <button
-              type="button"
-              className="btn-icon"
-              onClick={() => setPickerDemoOpen(false)}
-            >
+            <button type="button" className="btn-icon" onClick={() => setPickerDemoOpen(false)}>
               ×
             </button>
           </div>
@@ -196,7 +197,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
 
           {selectedPickerProduct && (
             <div className="picker-selection-result" data-testid="picker-selection-result">
-              <strong>Selected Item via Picker:</strong> {selectedPickerProduct.sku} — {selectedPickerProduct.name} ({selectedPickerProduct.category})
+              <strong>Selected Item via Picker:</strong> {selectedPickerProduct.sku} —{' '}
+              {selectedPickerProduct.name} ({selectedPickerProduct.category})
             </div>
           )}
         </div>
@@ -355,7 +357,13 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
                       <span className="badge badge-category">{prod.category}</span>
                     </td>
                     <td style={{ color: 'var(--text-muted)' }}>{prod.unit}</td>
-                    <td style={{ fontFamily: 'monospace', fontSize: '12px', color: 'var(--text-muted)' }}>
+                    <td
+                      style={{
+                        fontFamily: 'monospace',
+                        fontSize: '12px',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
                       {prod.barcode ? (
                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
                           <Barcode size={13} /> {prod.barcode}
@@ -366,7 +374,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
                     </td>
                     <td>
                       {prod.serial_tracking_enabled ? (
-                        <span className="badge badge-serial" title="Serial Number Tracking Required">
+                        <span
+                          className="badge badge-serial"
+                          title="Serial Number Tracking Required"
+                        >
                           Serial
                         </span>
                       ) : (

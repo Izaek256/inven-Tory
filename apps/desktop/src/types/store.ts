@@ -33,4 +33,3 @@ export interface RegisterDeviceInput {
   store_id: string;
   device_name: string;
 }
-

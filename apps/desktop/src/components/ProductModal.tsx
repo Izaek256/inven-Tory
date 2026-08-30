@@ -10,7 +10,14 @@ interface ProductModalProps {
   onSubmitUpdate: (input: UpdateProductInput) => Promise<void>;
 }
 
-const DEFAULT_CATEGORIES = ['Smartphones', 'Laptops', 'Audio', 'Accessories', 'Components', 'General'];
+const DEFAULT_CATEGORIES = [
+  'Smartphones',
+  'Laptops',
+  'Audio',
+  'Accessories',
+  'Components',
+  'General',
+];
 const DEFAULT_UNITS = ['pcs', 'ctn', 'set', 'box', 'kg', 'm'];
 
 export const ProductModal: React.FC<ProductModalProps> = ({
@@ -126,7 +133,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             <Package size={20} color="var(--accent-primary)" />
             <h3 className="modal-title">{isEdit ? 'Edit Product' : 'Add New Product (v1.0.0)'}</h3>
           </div>
-          <button type="button" className="btn-icon" onClick={onClose} data-testid="product-modal-close">
+          <button
+            type="button"
+            className="btn-icon"
+            onClick={onClose}
+            data-testid="product-modal-close"
+          >
             <X size={18} />
           </button>
         </div>

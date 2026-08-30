@@ -32,9 +32,7 @@ describe('Store CRUD & Device Registration (FR-STORE-001–003)', () => {
   });
 
   it('renders store list correctly', () => {
-    render(
-      <DashboardView stores={initialStores} loading={false} error={null} onRetry={vi.fn()} />,
-    );
+    render(<DashboardView stores={initialStores} loading={false} error={null} onRetry={vi.fn()} />);
 
     expect(screen.getByText('ALPHA')).toBeInTheDocument();
     expect(screen.getByText('Store Alpha (Main Flagship)')).toBeInTheDocument();
@@ -90,7 +88,9 @@ describe('Store CRUD & Device Registration (FR-STORE-001–003)', () => {
 
     fireEvent.click(screen.getByTestId('add-store-btn'));
     fireEvent.change(screen.getByTestId('store-code-input'), { target: { value: 'ALPHA' } });
-    fireEvent.change(screen.getByTestId('store-name-input'), { target: { value: 'Duplicate Alpha' } });
+    fireEvent.change(screen.getByTestId('store-name-input'), {
+      target: { value: 'Duplicate Alpha' },
+    });
 
     await act(async () => {
       fireEvent.click(screen.getByTestId('store-modal-submit'));

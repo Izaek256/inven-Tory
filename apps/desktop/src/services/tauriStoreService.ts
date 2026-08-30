@@ -188,4 +188,3 @@ export async function registerDevice(storeId: string, deviceName: string): Promi
   MOCK_DEVICES.push(device);
   return device;
 }
-

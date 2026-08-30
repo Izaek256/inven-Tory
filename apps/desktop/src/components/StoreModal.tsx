@@ -84,7 +84,12 @@ export const StoreModal: React.FC<StoreModalProps> = ({
             <StoreIcon size={20} color="var(--accent-primary)" />
             <h3 className="modal-title">{isEdit ? 'Edit Store Location' : 'Create New Store'}</h3>
           </div>
-          <button type="button" className="btn-icon" onClick={onClose} data-testid="modal-close-btn">
+          <button
+            type="button"
+            className="btn-icon"
+            onClick={onClose}
+            data-testid="modal-close-btn"
+          >
             <X size={18} />
           </button>
         </div>

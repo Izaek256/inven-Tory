@@ -111,7 +111,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {actionError && (
-        <div className="alert alert-danger" style={{ marginBottom: '16px' }} data-testid="dashboard-action-error">
+        <div
+          className="alert alert-danger"
+          style={{ marginBottom: '16px' }}
+          data-testid="dashboard-action-error"
+        >
           <span>{actionError}</span>
         </div>
       )}
@@ -279,4 +283,3 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     </div>
   );
 };
-

@@ -60,7 +60,12 @@ export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = (
             <Smartphone size={20} color="var(--accent-primary)" />
             <h3 className="modal-title">Register Local Device (FR-STORE-003 Stub)</h3>
           </div>
-          <button type="button" className="btn-icon" onClick={onClose} data-testid="device-modal-close">
+          <button
+            type="button"
+            className="btn-icon"
+            onClick={onClose}
+            data-testid="device-modal-close"
+          >
             <X size={18} />
           </button>
         </div>
@@ -68,8 +73,8 @@ export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = (
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
             <div className="banner-info" style={{ marginBottom: '16px', fontSize: '12px' }}>
-              <strong>TODO(issue-13):</strong> Provisional local device registration stub. Full cloud
-              auth and device token pairing will arrive in Issue 13.
+              <strong>TODO(issue-13):</strong> Provisional local device registration stub. Full
+              cloud auth and device token pairing will arrive in Issue 13.
             </div>
 
             {error && (
