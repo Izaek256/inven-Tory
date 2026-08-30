@@ -92,6 +92,8 @@ def test_models_crud(tmp_path):
             id="TRF-01",
             source_store_id="STORE-01",
             destination_store_id="STORE-02",
+            product_id="PROD-01",
+            quantity=5,
             status="DRAFT",
             created_by_user_id="USER-01",
         )

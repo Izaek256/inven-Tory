@@ -118,6 +118,30 @@ pub struct ReturnStockInput {
     pub device_id: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Transfer {
+    pub id: String,
+    pub source_store_id: String,
+    pub destination_store_id: String,
+    pub product_id: String,
+    pub quantity: i32,
+    pub status: String,
+    pub created_by_user_id: String,
+    pub notes: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTransferInput {
+    pub source_store_id: String,
+    pub destination_store_id: String,
+    pub product_id: String,
+    pub quantity: i32,
+    pub created_by_user_id: String,
+    pub notes: Option<String>,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct InventoryTransaction {
     pub transaction_id: String,
@@ -1059,6 +1083,419 @@ pub mod commands {
             original_transaction_id: None,
         })
     }
+
+    #[tauri::command]
+    pub fn get_transfers() -> Result<Vec<Transfer>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers ORDER BY created_at DESC")
+            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+
+        let trf_iter = stmt
+            .query_map([], |row| {
+                Ok(Transfer {
+                    id: row.get(0)?,
+                    source_store_id: row.get(1)?,
+                    destination_store_id: row.get(2)?,
+                    product_id: row.get(3)?,
+                    quantity: row.get(4)?,
+                    status: row.get(5)?,
+                    created_by_user_id: row.get(6)?,
+                    notes: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query transfers: {}", e))?;
+
+        let mut transfers = Vec::new();
+        for trf in trf_iter {
+            let t = trf.map_err(|e| format!("Failed to read transfer record: {}", e))?;
+            transfers.push(t);
+        }
+
+        Ok(transfers)
+    }
+
+    #[tauri::command]
+    pub fn create_transfer(input: CreateTransferInput) -> Result<Transfer, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        if input.quantity <= 0 {
+            return Err("Quantity must be greater than zero.".to_string());
+        }
+
+        if input.source_store_id == input.destination_store_id {
+            return Err("Source store and destination store must be different.".to_string());
+        }
+
+        let transfer_id = generate_id("TRF");
+        let now = now_iso();
+
+        conn.execute(
+            "INSERT INTO transfers (id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                transfer_id,
+                input.source_store_id,
+                input.destination_store_id,
+                input.product_id,
+                input.quantity,
+                "DRAFT",
+                input.created_by_user_id,
+                input.notes,
+                now,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to insert transfer into database: {}", e))?;
+
+        Ok(Transfer {
+            id: transfer_id,
+            source_store_id: input.source_store_id,
+            destination_store_id: input.destination_store_id,
+            product_id: input.product_id,
+            quantity: input.quantity,
+            status: "DRAFT".to_string(),
+            created_by_user_id: input.created_by_user_id,
+            notes: input.notes,
+            created_at: now.clone(),
+            updated_at: now,
+        })
+    }
+
+    #[tauri::command]
+    pub fn dispatch_transfer(
+        transfer_id: String,
+        user_id: String,
+        device_id: String,
+    ) -> Result<Transfer, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
+            .map_err(|e| format!("SQL error: {}", e))?;
+
+        let transfer = stmt
+            .query_row(params![transfer_id], |row| {
+                Ok(Transfer {
+                    id: row.get(0)?,
+                    source_store_id: row.get(1)?,
+                    destination_store_id: row.get(2)?,
+                    product_id: row.get(3)?,
+                    quantity: row.get(4)?,
+                    status: row.get(5)?,
+                    created_by_user_id: row.get(6)?,
+                    notes: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .map_err(|_| format!("Transfer with ID '{}' not found.", transfer_id))?;
+
+        if transfer.status != "DRAFT" {
+            return Err(format!(
+                "Cannot dispatch transfer in '{}' status. Must be in DRAFT status.",
+                transfer.status
+            ));
+        }
+
+        let available: i32 = conn
+            .query_row(
+                "SELECT COALESCE(quantity, 0) FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = 'AVAILABLE'",
+                params![transfer.source_store_id, transfer.product_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if transfer.quantity > available {
+            return Err(format!(
+                "Insufficient stock at source store. Available: {}, required: {}.",
+                available, transfer.quantity
+            ));
+        }
+
+        let now = now_iso();
+        let quantity_delta = -transfer.quantity;
+
+        conn.execute(
+            "UPDATE transfers SET status = 'DISPATCHED', updated_at = ?1 WHERE id = ?2",
+            params![now, transfer_id],
+        )
+        .map_err(|e| format!("Failed to update transfer status: {}", e))?;
+
+        let tx_id = generate_id("TX");
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'PENDING')",
+            params![
+                tx_id,
+                transfer.source_store_id,
+                transfer.product_id,
+                quantity_delta,
+                now,
+                now,
+                user_id,
+                device_id,
+                format!("TRF-DISP-{}", transfer_id),
+                format!("TRANSFER DISPATCH -> Store {}", transfer.destination_store_id),
+                transfer_id
+            ],
+        )
+        .map_err(|e| format!("Failed to insert dispatch transaction: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, 'AVAILABLE', ?4, ?5) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?4, updated_at = ?5",
+            params![
+                format!("SB-{}-{}-AVAILABLE", transfer.source_store_id, transfer.product_id),
+                transfer.source_store_id,
+                transfer.product_id,
+                quantity_delta,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update source stock balance: {}", e))?;
+
+        Ok(Transfer {
+            status: "DISPATCHED".to_string(),
+            updated_at: now,
+            ..transfer
+        })
+    }
+
+    #[tauri::command]
+    pub fn receive_transfer(
+        transfer_id: String,
+        user_id: String,
+        device_id: String,
+    ) -> Result<Transfer, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
+            .map_err(|e| format!("SQL error: {}", e))?;
+
+        let transfer = stmt
+            .query_row(params![transfer_id], |row| {
+                Ok(Transfer {
+                    id: row.get(0)?,
+                    source_store_id: row.get(1)?,
+                    destination_store_id: row.get(2)?,
+                    product_id: row.get(3)?,
+                    quantity: row.get(4)?,
+                    status: row.get(5)?,
+                    created_by_user_id: row.get(6)?,
+                    notes: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .map_err(|_| format!("Transfer with ID '{}' not found.", transfer_id))?;
+
+        if transfer.status != "DISPATCHED" && transfer.status != "EXCEPTION" {
+            return Err(format!(
+                "Cannot confirm receipt for transfer in '{}' status.",
+                transfer.status
+            ));
+        }
+
+        let now = now_iso();
+        let quantity_delta = transfer.quantity;
+
+        conn.execute(
+            "UPDATE transfers SET status = 'RECEIVED', updated_at = ?1 WHERE id = ?2",
+            params![now, transfer_id],
+        )
+        .map_err(|e| format!("Failed to update transfer status: {}", e))?;
+
+        let tx_id = generate_id("TX");
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'PENDING')",
+            params![
+                tx_id,
+                transfer.destination_store_id,
+                transfer.product_id,
+                quantity_delta,
+                now,
+                now,
+                user_id,
+                device_id,
+                format!("TRF-RECV-{}", transfer_id),
+                format!("TRANSFER RECEIVE <- Store {}", transfer.source_store_id),
+                transfer_id
+            ],
+        )
+        .map_err(|e| format!("Failed to insert receive transaction: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, 'AVAILABLE', ?4, ?5) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?4, updated_at = ?5",
+            params![
+                format!("SB-{}-{}-AVAILABLE", transfer.destination_store_id, transfer.product_id),
+                transfer.destination_store_id,
+                transfer.product_id,
+                quantity_delta,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update destination stock balance: {}", e))?;
+
+        Ok(Transfer {
+            status: "RECEIVED".to_string(),
+            updated_at: now,
+            ..transfer
+        })
+    }
+
+    #[tauri::command]
+    pub fn cancel_transfer(
+        transfer_id: String,
+        user_id: String,
+        device_id: String,
+    ) -> Result<Transfer, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
+            .map_err(|e| format!("SQL error: {}", e))?;
+
+        let transfer = stmt
+            .query_row(params![transfer_id], |row| {
+                Ok(Transfer {
+                    id: row.get(0)?,
+                    source_store_id: row.get(1)?,
+                    destination_store_id: row.get(2)?,
+                    product_id: row.get(3)?,
+                    quantity: row.get(4)?,
+                    status: row.get(5)?,
+                    created_by_user_id: row.get(6)?,
+                    notes: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .map_err(|_| format!("Transfer with ID '{}' not found.", transfer_id))?;
+
+        if transfer.status == "RECEIVED" || transfer.status == "CANCELLED" {
+            return Err(format!(
+                "Cannot cancel transfer in terminal status '{}'.",
+                transfer.status
+            ));
+        }
+
+        let now = now_iso();
+
+        if transfer.status == "DISPATCHED" || transfer.status == "EXCEPTION" {
+            let comp_tx_id = generate_id("TX");
+            conn.execute(
+                "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, 'TRANSFER CANCELLED -> Stock Restored', ?10, 'PENDING')",
+                params![
+                    comp_tx_id,
+                    transfer.source_store_id,
+                    transfer.product_id,
+                    transfer.quantity,
+                    now,
+                    now,
+                    user_id,
+                    device_id,
+                    format!("TRF-CNCL-{}", transfer_id),
+                    transfer_id
+                ],
+            )
+            .map_err(|e| format!("Failed to insert cancellation compensation transaction: {}", e))?;
+
+            conn.execute(
+                "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, 'AVAILABLE', ?4, ?5) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?4, updated_at = ?5",
+                params![
+                    format!("SB-{}-{}-AVAILABLE", transfer.source_store_id, transfer.product_id),
+                    transfer.source_store_id,
+                    transfer.product_id,
+                    transfer.quantity,
+                    now
+                ],
+            )
+            .map_err(|e| format!("Failed to restore source stock balance: {}", e))?;
+        }
+
+        conn.execute(
+            "UPDATE transfers SET status = 'CANCELLED', updated_at = ?1 WHERE id = ?2",
+            params![now, transfer_id],
+        )
+        .map_err(|e| format!("Failed to update transfer status: {}", e))?;
+
+        Ok(Transfer {
+            status: "CANCELLED".to_string(),
+            updated_at: now,
+            ..transfer
+        })
+    }
+
+    #[tauri::command]
+    pub fn mark_transfer_exception(
+        transfer_id: String,
+        notes: Option<String>,
+    ) -> Result<Transfer, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
+            .map_err(|e| format!("SQL error: {}", e))?;
+
+        let transfer = stmt
+            .query_row(params![transfer_id], |row| {
+                Ok(Transfer {
+                    id: row.get(0)?,
+                    source_store_id: row.get(1)?,
+                    destination_store_id: row.get(2)?,
+                    product_id: row.get(3)?,
+                    quantity: row.get(4)?,
+                    status: row.get(5)?,
+                    created_by_user_id: row.get(6)?,
+                    notes: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
+            })
+            .map_err(|_| format!("Transfer with ID '{}' not found.", transfer_id))?;
+
+        if transfer.status != "DISPATCHED" {
+            return Err(format!(
+                "Cannot mark exception for transfer in '{}' status. Must be in DISPATCHED status.",
+                transfer.status
+            ));
+        }
+
+        let now = now_iso();
+        let updated_notes = match (transfer.notes.as_deref(), notes.as_deref()) {
+            (Some(existing), Some(new_note)) => Some(format!("{}; EXCEPTION: {}", existing, new_note)),
+            (None, Some(new_note)) => Some(format!("EXCEPTION: {}", new_note)),
+            (Some(existing), None) => Some(existing.to_string()),
+            (None, None) => Some("EXCEPTION: Flagged for discrepancy review".to_string()),
+        };
+
+        conn.execute(
+            "UPDATE transfers SET status = 'EXCEPTION', notes = ?1, updated_at = ?2 WHERE id = ?3",
+            params![updated_notes, now, transfer_id],
+        )
+        .map_err(|e| format!("Failed to update transfer status: {}", e))?;
+
+        Ok(Transfer {
+            status: "EXCEPTION".to_string(),
+            notes: updated_notes,
+            updated_at: now,
+            ..transfer
+        })
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1082,6 +1519,12 @@ pub fn run() {
             commands::sell_stock,
             commands::get_stock_balance_for_bucket,
             commands::return_stock,
+            commands::get_transfers,
+            commands::create_transfer,
+            commands::dispatch_transfer,
+            commands::receive_transfer,
+            commands::cancel_transfer,
+            commands::mark_transfer_exception,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -34,3 +34,13 @@ class SyncStatus(str, Enum):
     SENT = "SENT"
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
+
+
+class TransferStatus(str, Enum):
+    """Inter-store transfer lifecycle state machine (Section 11)."""
+
+    DRAFT = "DRAFT"
+    DISPATCHED = "DISPATCHED"
+    RECEIVED = "RECEIVED"
+    EXCEPTION = "EXCEPTION"
+    CANCELLED = "CANCELLED"
