@@ -1,28 +1,22 @@
 {
-  "name": "@inven-tory/desktop",
+  "name": "@inven-tory/ui",
   "version": "1.1.0",
   "private": true,
-  "description": "INVENTORY Tory desktop app — Tauri + React + TypeScript",
+  "description": "Shared design-system components and tokens for INVENTORY Tory",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview",
-    "tauri": "tauri",
     "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write src",
     "format:check": "prettier --check src",
     "test": "vitest run --passWithNoTests"
   },
-  "dependencies": {
-    "@inven-tory/shared-types": "*",
-    "@inven-tory/ui": "*",
-    "@tauri-apps/api": "^2.0.0",
-    "lucide-react": "^0.400.0",
-    "react": "^18.3.0",
-    "react-dom": "^18.3.0"
+  "peerDependencies": {
+    "lucide-react": ">=0.400.0",
+    "react": ">=18.3.0",
+    "react-dom": ">=18.3.0"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
     "@testing-library/jest-dom": "^6.4.0",
     "@testing-library/react": "^16.0.0",
     "@types/react": "^18.3.0",
@@ -33,10 +27,12 @@
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "jsdom": "^24.1.0",
+    "lucide-react": "^0.400.0",
     "prettier": "^3.3.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
     "typescript": "^5.5.0",
     "vite": "^5.4.0",
     "vitest": "^2.0.0"
   }
 }
-

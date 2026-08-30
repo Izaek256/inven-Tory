@@ -9,15 +9,15 @@ import {
 import { ProductModal } from '../components/ProductModal';
 import { ProductPicker } from '../components/ProductPicker';
 import {
-  Package,
-  Plus,
-  Search,
-  Edit2,
-  Power,
-  Barcode,
-  Sparkles,
-  AlertTriangle,
-} from 'lucide-react';
+  Button,
+  Badge,
+  DataTable,
+  EmptyState,
+  SearchInput,
+  Select,
+  ColumnDef,
+} from '@inven-tory/ui';
+import { Package, Plus, Edit2, Power, Barcode, Sparkles, AlertTriangle, X } from 'lucide-react';
 
 interface ProductsViewProps {
   userRole?: string; // Provisional role restriction - TODO(issue-13)
@@ -121,6 +121,135 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     }
   };
 
+  const columns: ColumnDef<Product>[] = [
+    {
+      key: 'sku',
+      header: 'SKU',
+      sortable: true,
+      render: (p) => (
+        <span
+          style={{
+            fontWeight: 600,
+            fontFamily: 'var(--it-font-mono)',
+            color: 'var(--it-green-text)',
+          }}
+        >
+          {p.sku}
+        </span>
+      ),
+      accessor: (p) => p.sku,
+    },
+    {
+      key: 'name',
+      header: 'Product Name',
+      sortable: true,
+      render: (p) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>{p.name}</div>
+          {p.alternate_names && (
+            <div style={{ fontSize: '11px', color: 'var(--it-text-secondary)' }}>
+              Aliases: {p.alternate_names}
+            </div>
+          )}
+        </div>
+      ),
+      accessor: (p) => p.name,
+    },
+    {
+      key: 'brandModel',
+      header: 'Brand / Model',
+      render: (p) => (
+        <span style={{ color: 'var(--it-text-secondary)' }}>
+          {p.brand || '-'} {p.model ? `(${p.model})` : ''}
+        </span>
+      ),
+      accessor: (p) => `${p.brand || ''} ${p.model || ''}`,
+    },
+    {
+      key: 'category',
+      header: 'Category',
+      sortable: true,
+      render: (p) => <Badge status="SENT" label={p.category} />,
+      accessor: (p) => p.category,
+    },
+    {
+      key: 'unit',
+      header: 'Unit',
+      render: (p) => <span style={{ color: 'var(--it-text-secondary)' }}>{p.unit}</span>,
+      accessor: (p) => p.unit,
+    },
+    {
+      key: 'barcode',
+      header: 'Barcode',
+      render: (p) =>
+        p.barcode ? (
+          <span
+            style={{
+              fontFamily: 'var(--it-font-mono)',
+              fontSize: '12px',
+              color: 'var(--it-text-secondary)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+            }}
+          >
+            <Barcode size={13} /> {p.barcode}
+          </span>
+        ) : (
+          '-'
+        ),
+      accessor: (p) => p.barcode,
+    },
+    {
+      key: 'tracking',
+      header: 'Tracking',
+      render: (p) =>
+        p.serial_tracking_enabled ? (
+          <Badge status="SENT" label="Serial" />
+        ) : (
+          <span style={{ color: 'var(--it-text-secondary)', fontSize: '12px' }}>Standard</span>
+        ),
+      accessor: (p) => (p.serial_tracking_enabled ? 'Serial' : 'Standard'),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (p) => <Badge status={p.is_active ? 'ACTIVE' : 'INACTIVE'} />,
+      accessor: (p) => (p.is_active ? 'Active' : 'Inactive'),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      numeric: true,
+      render: (p) => (
+        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            title="Edit Product"
+            onClick={() => handleOpenEditModal(p)}
+            disabled={!isAuthorized}
+            data-testid={`edit-product-btn-${p.id}`}
+          >
+            <Edit2 size={14} />
+          </Button>
+          <Button
+            variant={p.is_active ? 'destructive' : 'primary'}
+            size="sm"
+            iconOnly
+            title={p.is_active ? 'Deactivate Product' : 'Activate Product'}
+            onClick={() => handleToggleActive(p)}
+            disabled={!isAuthorized}
+            data-testid={`toggle-product-btn-${p.id}`}
+          >
+            <Power size={14} />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="products-view" data-testid="products-view">
       <div className="view-header">
@@ -131,61 +260,77 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {!isAuthorized && (
-            <span
-              className="badge badge-inactive"
-              title="Client-side role restriction (provisional) — TODO(issue-13)"
-            >
-              <AlertTriangle size={12} /> Restricted Role ({userRole})
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn btn-secondary"
+          {!isAuthorized && <Badge status="INACTIVE" label={`Restricted Role (${userRole})`} />}
+          <Button
+            variant="secondary"
             onClick={() => setPickerDemoOpen(!pickerDemoOpen)}
             data-testid="toggle-picker-demo-btn"
           >
             <Sparkles size={16} /> Test Product Picker (FR-PROD-003)
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
+          </Button>
+          <Button
+            variant="primary"
             onClick={handleOpenCreateModal}
             disabled={!isAuthorized}
             data-testid="add-product-btn"
           >
             <Plus size={16} /> Add Product
-          </button>
+          </Button>
         </div>
       </div>
 
       {actionError && (
         <div
-          className="alert alert-danger"
+          className="it-toast it-toast--error"
           style={{ marginBottom: '16px' }}
           data-testid="product-action-error"
         >
+          <AlertTriangle size={16} aria-hidden="true" />
           <span>{actionError}</span>
         </div>
       )}
 
       {/* Product Picker Keyboard Demo Drawer */}
       {pickerDemoOpen && (
-        <div className="card-box picker-demo-box" data-testid="picker-demo-container">
-          <div className="table-header-box" style={{ marginBottom: '12px' }}>
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-green-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '16px',
+            marginBottom: '20px',
+          }}
+          data-testid="picker-demo-container"
+        >
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '12px',
+            }}
+          >
             <div>
-              <h4 style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <Sparkles size={16} color="var(--accent-primary)" />
+              <h4
+                style={{
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  color: 'var(--it-text-primary)',
+                }}
+              >
+                <Sparkles size={16} color="var(--it-green)" />
                 Reusable Search-First Product Picker (Section 18 Specification)
               </h4>
-              <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '2px' }}>
+              <p style={{ fontSize: '12px', color: 'var(--it-text-secondary)', marginTop: '2px' }}>
                 Keyboard navigation: Arrow up/down to navigate, Enter to select, Escape to close.
                 Auto-focuses for barcode scanners.
               </p>
             </div>
-            <button type="button" className="btn-icon" onClick={() => setPickerDemoOpen(false)}>
-              ×
-            </button>
+            <Button variant="ghost" size="sm" iconOnly onClick={() => setPickerDemoOpen(false)}>
+              <X size={16} />
+            </Button>
           </div>
 
           <ProductPicker
@@ -196,7 +341,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           />
 
           {selectedPickerProduct && (
-            <div className="picker-selection-result" data-testid="picker-selection-result">
+            <div
+              style={{
+                marginTop: '12px',
+                padding: '10px 14px',
+                backgroundColor: 'var(--it-green-surface)',
+                border: '1px solid var(--it-green-border)',
+                borderRadius: 'var(--it-r-md)',
+                color: 'var(--it-green-text)',
+                fontSize: '13px',
+              }}
+              data-testid="picker-selection-result"
+            >
               <strong>Selected Item via Picker:</strong> {selectedPickerProduct.sku} —{' '}
               {selectedPickerProduct.name} ({selectedPickerProduct.category})
             </div>
@@ -205,12 +361,22 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       )}
 
       {/* Search & Filter Control Bar */}
-      <div className="filter-card">
-        <div className="filter-search-box">
-          <Search size={18} className="filter-search-icon" />
-          <input
-            type="text"
-            className="filter-search-input"
+      <div
+        style={{
+          backgroundColor: 'var(--it-card)',
+          border: '1px solid var(--it-border)',
+          borderRadius: 'var(--it-r-lg)',
+          padding: '16px',
+          marginBottom: '20px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '16px',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <div style={{ flex: 1, minWidth: '280px' }}>
+          <SearchInput
             placeholder="Search catalogue by name, SKU, brand, model, barcode or alias..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -218,41 +384,43 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           />
         </div>
 
-        <div className="filter-controls-group">
-          {/* Category Filter */}
-          <select
-            className="filter-select"
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Select
             value={selectedCategory}
             onChange={(e) => setSelectedCategory(e.target.value)}
             data-testid="category-filter-select"
-          >
-            <option value="ALL">All Categories ({categories.length})</option>
-            {categories.map((cat) => (
-              <option key={cat} value={cat}>
-                {cat}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: 'ALL', label: `All Categories (${categories.length})` },
+              ...categories.map((c) => ({ value: c, label: c })),
+            ]}
+          />
 
-          {/* Status Filter */}
-          <div className="filter-button-group">
+          <div
+            style={{
+              display: 'flex',
+              backgroundColor: 'var(--it-surface)',
+              padding: '3px',
+              borderRadius: 'var(--it-r-md)',
+              border: '1px solid var(--it-border)',
+            }}
+          >
             <button
               type="button"
-              className={`filter-btn ${activeFilter === 'ALL' ? 'active' : ''}`}
+              className={`it-btn it-btn--sm ${activeFilter === 'ALL' ? 'it-btn--secondary' : 'it-btn--ghost'}`}
               onClick={() => setActiveFilter('ALL')}
             >
               All
             </button>
             <button
               type="button"
-              className={`filter-btn ${activeFilter === 'ACTIVE' ? 'active' : ''}`}
+              className={`it-btn it-btn--sm ${activeFilter === 'ACTIVE' ? 'it-btn--secondary' : 'it-btn--ghost'}`}
               onClick={() => setActiveFilter('ACTIVE')}
             >
               Active
             </button>
             <button
               type="button"
-              className={`filter-btn ${activeFilter === 'INACTIVE' ? 'active' : ''}`}
+              className={`it-btn it-btn--sm ${activeFilter === 'INACTIVE' ? 'it-btn--secondary' : 'it-btn--ghost'}`}
               onClick={() => setActiveFilter('INACTIVE')}
             >
               Inactive
@@ -262,164 +430,85 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       </div>
 
       {/* Product Table */}
-      <div className="table-card">
-        <div className="table-header-box">
+      <div
+        style={{
+          border: '1px solid var(--it-border)',
+          borderRadius: 'var(--it-r-lg)',
+          backgroundColor: 'var(--it-card)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            padding: '16px 20px',
+            borderBottom: '1px solid var(--it-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <Package size={20} color="var(--accent-primary)" />
-            <h3 className="table-title">Product Master List ({filteredProducts.length})</h3>
+            <Package size={20} color="var(--it-green)" />
+            <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
+              Product Master List ({filteredProducts.length})
+            </h3>
           </div>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+          <span style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>
             v1.0.0 Field Set Only
           </span>
         </div>
 
         {loading ? (
-          <div className="loading-state" data-testid="loading-state">
-            <div className="spinner"></div>
-            <p>Loading master product index...</p>
-          </div>
+          <EmptyState
+            variant="loading"
+            heading="Loading product catalogue"
+            body="Loading master product index..."
+            data-testid="loading-state"
+          />
         ) : error ? (
-          <div className="error-state" data-testid="error-state">
-            <p style={{ color: 'var(--status-error)', marginBottom: '8px', fontWeight: 600 }}>
-              {error}
-            </p>
-            <button type="button" className="btn-retry" onClick={fetchProductsList}>
-              Retry Load
-            </button>
-          </div>
-        ) : filteredProducts.length === 0 ? (
-          <div className="empty-state" data-testid="empty-state">
-            <p>No products match the selected criteria.</p>
-            {searchQuery || selectedCategory !== 'ALL' || activeFilter !== 'ALL' ? (
-              <button
-                type="button"
-                className="btn btn-secondary"
-                style={{ marginTop: '12px' }}
-                onClick={() => {
-                  setSearchQuery('');
-                  setSelectedCategory('ALL');
-                  setActiveFilter('ALL');
-                }}
-              >
-                Clear Filters
-              </button>
-            ) : (
-              <button
-                type="button"
-                className="btn btn-primary"
-                style={{ marginTop: '12px' }}
-                onClick={handleOpenCreateModal}
-              >
-                Create First Product
-              </button>
-            )}
-          </div>
+          <EmptyState
+            variant="error"
+            heading="Failed to load products"
+            body={error}
+            action={
+              <Button variant="primary" onClick={fetchProductsList}>
+                Retry Load
+              </Button>
+            }
+            data-testid="error-state"
+          />
         ) : (
-          <div className="table-container">
-            <table className="data-table" data-testid="products-table">
-              <thead>
-                <tr>
-                  <th>SKU</th>
-                  <th>Product Name</th>
-                  <th>Brand / Model</th>
-                  <th>Category</th>
-                  <th>Unit</th>
-                  <th>Barcode</th>
-                  <th>Tracking</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredProducts.map((prod) => (
-                  <tr key={prod.id} data-testid={`product-row-${prod.id}`}>
-                    <td
-                      style={{
-                        fontWeight: 600,
-                        fontFamily: 'monospace',
-                        color: 'var(--accent-primary)',
+          <DataTable
+            columns={columns}
+            rows={filteredProducts}
+            rowKey={(p) => p.id}
+            data-testid="products-table"
+            emptySlot={
+              <EmptyState
+                heading="No products found"
+                body="No products match the selected criteria."
+                action={
+                  searchQuery || selectedCategory !== 'ALL' || activeFilter !== 'ALL' ? (
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setSearchQuery('');
+                        setSelectedCategory('ALL');
+                        setActiveFilter('ALL');
                       }}
                     >
-                      {prod.sku}
-                    </td>
-                    <td>
-                      <div style={{ fontWeight: 500 }}>{prod.name}</div>
-                      {prod.alternate_names && (
-                        <div style={{ fontSize: '11px', color: 'var(--text-dim)' }}>
-                          Aliases: {prod.alternate_names}
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ color: 'var(--text-muted)' }}>
-                      {prod.brand || '-'} {prod.model ? `(${prod.model})` : ''}
-                    </td>
-                    <td>
-                      <span className="badge badge-category">{prod.category}</span>
-                    </td>
-                    <td style={{ color: 'var(--text-muted)' }}>{prod.unit}</td>
-                    <td
-                      style={{
-                        fontFamily: 'monospace',
-                        fontSize: '12px',
-                        color: 'var(--text-muted)',
-                      }}
-                    >
-                      {prod.barcode ? (
-                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                          <Barcode size={13} /> {prod.barcode}
-                        </span>
-                      ) : (
-                        '-'
-                      )}
-                    </td>
-                    <td>
-                      {prod.serial_tracking_enabled ? (
-                        <span
-                          className="badge badge-serial"
-                          title="Serial Number Tracking Required"
-                        >
-                          Serial
-                        </span>
-                      ) : (
-                        <span style={{ color: 'var(--text-dim)', fontSize: '12px' }}>Standard</span>
-                      )}
-                    </td>
-                    <td>
-                      <span
-                        className={`badge ${prod.is_active ? 'badge-active' : 'badge-inactive'}`}
-                      >
-                        {prod.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div className="table-actions">
-                        <button
-                          type="button"
-                          className="btn-action"
-                          title="Edit Product"
-                          onClick={() => handleOpenEditModal(prod)}
-                          disabled={!isAuthorized}
-                          data-testid={`edit-product-btn-${prod.id}`}
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className={`btn-action ${prod.is_active ? 'active-on' : 'active-off'}`}
-                          title={prod.is_active ? 'Deactivate Product' : 'Activate Product'}
-                          onClick={() => handleToggleActive(prod)}
-                          disabled={!isAuthorized}
-                          data-testid={`toggle-product-btn-${prod.id}`}
-                        >
-                          <Power size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                      Clear Filters
+                    </Button>
+                  ) : (
+                    <Button variant="primary" onClick={handleOpenCreateModal}>
+                      Create First Product
+                    </Button>
+                  )
+                }
+                data-testid="empty-state"
+              />
+            }
+          />
         )}
       </div>
 

@@ -7,7 +7,6 @@ import {
   PlusCircle,
   List,
   RefreshCw,
-  Search,
 } from 'lucide-react';
 import { Store } from '../types/store';
 import { Product } from '../types/product';
@@ -23,6 +22,16 @@ import {
   cancelTransfer,
   markTransferException,
 } from '../services/tauriTransferService';
+import {
+  Button,
+  Badge,
+  DataTable,
+  EmptyState,
+  TextInput,
+  NumericInput,
+  Select,
+  ColumnDef,
+} from '@inven-tory/ui';
 
 export const TransferStockView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('list');
@@ -266,17 +275,17 @@ export const TransferStockView: React.FC = () => {
   const getStatusBadge = (status: TransferStatus): React.ReactElement => {
     switch (status) {
       case 'DRAFT':
-        return <span className="badge badge-draft">DRAFT</span>;
+        return <Badge status="PENDING" label="DRAFT" />;
       case 'DISPATCHED':
-        return <span className="badge badge-dispatched">DISPATCHED</span>;
+        return <Badge status="SENT" label="DISPATCHED" />;
       case 'RECEIVED':
-        return <span className="badge badge-received">RECEIVED</span>;
+        return <Badge status="ACCEPTED" label="RECEIVED" />;
       case 'EXCEPTION':
-        return <span className="badge badge-exception">EXCEPTION</span>;
+        return <Badge status="VERY_STALE" label="EXCEPTION" />;
       case 'CANCELLED':
-        return <span className="badge badge-cancelled">CANCELLED</span>;
+        return <Badge status="CANCELLED" label="CANCELLED" />;
       default:
-        return <span className="badge">{status}</span>;
+        return <Badge status="PENDING" label={status} />;
     }
   };
 
@@ -285,70 +294,231 @@ export const TransferStockView: React.FC = () => {
     return store ? `${store.name} (${store.code})` : storeId;
   };
 
+  const columns: ColumnDef<Transfer>[] = [
+    {
+      key: 'id',
+      header: 'ID',
+      render: (t) => (
+        <code style={{ fontFamily: 'var(--it-font-mono)', fontSize: '12px' }}>{t.id}</code>
+      ),
+      accessor: (t) => t.id,
+    },
+    {
+      key: 'source',
+      header: 'Source Store',
+      render: (t) => getStoreName(t.source_store_id),
+      accessor: (t) => getStoreName(t.source_store_id),
+    },
+    {
+      key: 'destination',
+      header: 'Destination Store',
+      render: (t) => getStoreName(t.destination_store_id),
+      accessor: (t) => getStoreName(t.destination_store_id),
+    },
+    {
+      key: 'product',
+      header: 'Product ID',
+      render: (t) => (
+        <code style={{ fontFamily: 'var(--it-font-mono)', fontSize: '12px' }}>{t.product_id}</code>
+      ),
+      accessor: (t) => t.product_id,
+    },
+    {
+      key: 'quantity',
+      header: 'Quantity',
+      numeric: true,
+      render: (t) => <span style={{ fontWeight: 'bold' }}>{t.quantity}</span>,
+      accessor: (t) => t.quantity,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (t) => getStatusBadge(t.status),
+      accessor: (t) => t.status,
+    },
+    {
+      key: 'notes',
+      header: 'Notes',
+      render: (t) => t.notes || '—',
+      accessor: (t) => t.notes,
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      numeric: true,
+      render: (t) => (
+        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+          {t.status === 'DRAFT' && (
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={submitting}
+                onClick={(): Promise<void> => handleDispatch(t.id)}
+                data-testid={`btn-dispatch-${t.id}`}
+              >
+                <Send size={14} />
+                <span>Dispatch</span>
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={submitting}
+                onClick={(): Promise<void> => handleCancel(t.id)}
+                data-testid={`btn-cancel-${t.id}`}
+              >
+                <XCircle size={14} />
+                <span>Cancel</span>
+              </Button>
+            </>
+          )}
+
+          {t.status === 'DISPATCHED' && (
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={submitting}
+                onClick={(): Promise<void> => handleReceive(t.id)}
+                data-testid={`btn-receive-${t.id}`}
+              >
+                <CheckCircle size={14} />
+                <span>Confirm Receipt</span>
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={submitting}
+                onClick={(): Promise<void> => handleException(t.id)}
+                data-testid={`btn-exception-${t.id}`}
+              >
+                <AlertTriangle size={14} />
+                <span>Flag Exception</span>
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={submitting}
+                onClick={(): Promise<void> => handleCancel(t.id)}
+                data-testid={`btn-cancel-${t.id}`}
+              >
+                <XCircle size={14} />
+                <span>Cancel</span>
+              </Button>
+            </>
+          )}
+
+          {t.status === 'EXCEPTION' && (
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={submitting}
+                onClick={(): Promise<void> => handleReceive(t.id)}
+                data-testid={`btn-receive-${t.id}`}
+              >
+                <CheckCircle size={14} />
+                <span>Resolve & Receive</span>
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                disabled={submitting}
+                onClick={(): Promise<void> => handleCancel(t.id)}
+                data-testid={`btn-cancel-${t.id}`}
+              >
+                <XCircle size={14} />
+                <span>Cancel</span>
+              </Button>
+            </>
+          )}
+
+          {(t.status === 'RECEIVED' || t.status === 'CANCELLED') && (
+            <span style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>Completed</span>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="view-container" data-testid="transfer-stock-view">
       <div className="view-header">
         <div>
-          <h2>Inter-Store Stock Transfers</h2>
-          <p className="subtitle">
+          <h2 className="view-title">Inter-Store Stock Transfers</h2>
+          <p className="view-subtitle">
             Move inventory between stores with linked transaction history (FR-MOV-004, Section 11,
             AT-005)
           </p>
         </div>
-        <button
-          type="button"
-          className="btn btn-secondary"
+        <Button
+          variant="secondary"
           onClick={fetchData}
           disabled={loading}
           data-testid="btn-refresh"
         >
           <RefreshCw size={16} className={loading ? 'spin' : ''} />
           <span>Refresh</span>
-        </button>
+        </Button>
       </div>
 
       {error && (
-        <div className="alert alert-error" data-testid="alert-error">
-          <AlertTriangle size={18} />
+        <div
+          className="it-toast it-toast--error"
+          style={{ marginBottom: '16px' }}
+          data-testid="alert-error"
+        >
+          <AlertTriangle size={16} aria-hidden="true" />
           <span>{error}</span>
         </div>
       )}
 
       {successMessage && (
-        <div className="alert alert-success" data-testid="alert-success">
-          <CheckCircle size={18} />
+        <div
+          className="it-toast it-toast--success"
+          style={{ marginBottom: '16px' }}
+          data-testid="alert-success"
+        >
+          <CheckCircle size={16} aria-hidden="true" />
           <span>{successMessage}</span>
         </div>
       )}
 
       {/* View Tabs */}
       <div className="view-tabs" style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-        <button
-          type="button"
-          className={`btn ${activeTab === 'list' ? 'btn-primary' : 'btn-secondary'}`}
+        <Button
+          variant={activeTab === 'list' ? 'primary' : 'secondary'}
           onClick={(): void => setActiveTab('list')}
           data-testid="tab-list"
         >
           <List size={16} />
           <span>Transfer List ({transfers.length})</span>
-        </button>
-        <button
-          type="button"
-          className={`btn ${activeTab === 'create' ? 'btn-primary' : 'btn-secondary'}`}
+        </Button>
+        <Button
+          variant={activeTab === 'create' ? 'primary' : 'secondary'}
           onClick={(): void => setActiveTab('create')}
           data-testid="tab-create"
         >
           <PlusCircle size={16} />
           <span>New Transfer</span>
-        </button>
+        </Button>
       </div>
 
       {/* CREATE TAB */}
       {activeTab === 'create' && (
-        <div className="card" style={{ padding: '20px' }} data-testid="create-transfer-card">
-          <h3>Create Inter-Store Transfer</h3>
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '24px',
+          }}
+          data-testid="create-transfer-card"
+        >
+          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
+            Create Inter-Store Transfer
+          </h3>
           <div
-            className="form-grid"
             style={{
               display: 'grid',
               gridTemplateColumns: '1fr 1fr',
@@ -357,92 +527,67 @@ export const TransferStockView: React.FC = () => {
             }}
           >
             {/* Source Store */}
-            <div className="form-group">
-              <label htmlFor="source-store">Source Store (Origin)</label>
-              <select
-                id="source-store"
-                className="form-control"
-                value={sourceStoreId}
-                onChange={(e): void => setSourceStoreId(e.target.value)}
-                data-testid="select-source-store"
-              >
-                {stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.name} ({s.code})
-                  </option>
-                ))}
-              </select>
-            </div>
+            <Select
+              id="source-store"
+              data-testid="select-source-store"
+              label="Source Store (Origin)"
+              value={sourceStoreId}
+              onChange={(e): void => setSourceStoreId(e.target.value)}
+              options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+            />
 
             {/* Destination Store */}
-            <div className="form-group">
-              <label htmlFor="destination-store">Destination Store (Target)</label>
-              <select
-                id="destination-store"
-                className="form-control"
-                value={destinationStoreId}
-                onChange={(e): void => setDestinationStoreId(e.target.value)}
-                data-testid="select-destination-store"
-              >
-                {stores
-                  .filter((s) => s.id !== sourceStoreId)
-                  .map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.code})
-                    </option>
-                  ))}
-              </select>
-            </div>
+            <Select
+              id="destination-store"
+              data-testid="select-destination-store"
+              label="Destination Store (Target)"
+              value={destinationStoreId}
+              onChange={(e): void => setDestinationStoreId(e.target.value)}
+              options={stores
+                .filter((s) => s.id !== sourceStoreId)
+                .map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+            />
 
             {/* Product Picker */}
-            <div className="form-group" style={{ gridColumn: 'span 2', position: 'relative' }}>
-              <label htmlFor="product-search">Product to Transfer</label>
-              <div className="search-input-wrapper" style={{ position: 'relative' }}>
-                <input
-                  id="product-search"
-                  type="text"
-                  className="form-control"
-                  placeholder="Scan barcode or type SKU / Name..."
-                  value={searchQuery}
-                  onChange={(e): void => {
-                    setSearchQuery(e.target.value);
-                    if (selectedProduct) setSelectedProduct(null);
-                  }}
-                  data-testid="input-product-search"
-                />
-                <Search
-                  size={18}
-                  style={{
-                    position: 'absolute',
-                    right: '12px',
-                    top: '50%',
-                    transform: 'translateY(-50%)',
-                    color: '#666',
-                  }}
-                />
-              </div>
+            <div style={{ gridColumn: 'span 2', position: 'relative' }}>
+              <TextInput
+                id="product-search"
+                data-testid="input-product-search"
+                label="Product to Transfer"
+                placeholder="Scan barcode or type SKU / Name..."
+                value={searchQuery}
+                onChange={(e): void => {
+                  setSearchQuery(e.target.value);
+                  if (selectedProduct) setSelectedProduct(null);
+                }}
+              />
 
               {matchingProducts.length > 0 && (
                 <div
-                  className="dropdown-menu"
                   style={{
                     position: 'absolute',
                     top: '100%',
                     left: 0,
                     right: 0,
-                    background: '#fff',
-                    border: '1px solid #ccc',
-                    borderRadius: '4px',
+                    backgroundColor: 'var(--it-card)',
+                    border: '1px solid var(--it-border)',
+                    borderRadius: 'var(--it-r-md)',
                     zIndex: 10,
                     maxHeight: '200px',
                     overflowY: 'auto',
+                    boxShadow: 'var(--it-shadow-md)',
+                    marginTop: '4px',
                   }}
                   data-testid="product-search-results"
                 >
                   {matchingProducts.map((prod) => (
                     <div
                       key={prod.id}
-                      style={{ padding: '8px 12px', cursor: 'pointer' }}
+                      style={{
+                        padding: '8px 12px',
+                        cursor: 'pointer',
+                        borderBottom: '1px solid var(--it-border)',
+                      }}
                       onClick={(): void => handleSelectProduct(prod)}
                       data-testid={`product-option-${prod.id}`}
                     >
@@ -453,10 +598,16 @@ export const TransferStockView: React.FC = () => {
               )}
 
               {selectedProduct && (
-                <div style={{ marginTop: '6px', fontSize: '14px', color: '#059669' }}>
+                <div style={{ marginTop: '6px', fontSize: '13px', color: 'var(--it-green-text)' }}>
                   Selected: <strong>{selectedProduct.name}</strong> ({selectedProduct.sku})
                   {sourceStock !== null && (
-                    <span style={{ marginLeft: '12px', fontWeight: 'bold' }}>
+                    <span
+                      style={{
+                        marginLeft: '12px',
+                        fontWeight: 600,
+                        fontFamily: 'var(--it-font-mono)',
+                      }}
+                    >
                       | Stock Available at Source: {sourceStock} {selectedProduct.unit}
                     </span>
                   )}
@@ -465,62 +616,60 @@ export const TransferStockView: React.FC = () => {
             </div>
 
             {/* Quantity */}
-            <div className="form-group">
-              <label htmlFor="transfer-quantity">Quantity to Transfer</label>
-              <input
-                id="transfer-quantity"
-                type="number"
-                min="1"
-                className="form-control"
-                value={quantity}
-                onChange={(e): void => setQuantity(Math.max(1, parseInt(e.target.value, 10) || 0))}
-                data-testid="input-quantity"
-              />
-            </div>
+            <NumericInput
+              id="transfer-quantity"
+              data-testid="input-quantity"
+              label="Quantity to Transfer"
+              value={quantity}
+              min={1}
+              onChange={(v) => setQuantity(Math.max(1, v))}
+            />
 
             {/* Notes */}
-            <div className="form-group">
-              <label htmlFor="transfer-notes">Transfer Notes / Reason (Optional)</label>
-              <input
-                id="transfer-notes"
-                type="text"
-                className="form-control"
-                placeholder="e.g. Inter-store stock rebalance"
-                value={notes}
-                onChange={(e): void => setNotes(e.target.value)}
-                data-testid="input-notes"
-              />
-            </div>
+            <TextInput
+              id="transfer-notes"
+              data-testid="input-notes"
+              label="Transfer Notes / Reason (Optional)"
+              placeholder="e.g. Inter-store stock rebalance"
+              value={notes}
+              onChange={(e): void => setNotes(e.target.value)}
+            />
           </div>
 
-          <div className="form-actions" style={{ marginTop: '20px', display: 'flex', gap: '12px' }}>
-            <button
-              type="button"
-              className="btn btn-secondary"
+          <div style={{ marginTop: '20px', display: 'flex', gap: '12px' }}>
+            <Button
+              variant="secondary"
               disabled={submitting}
               onClick={(): Promise<void> => handleCreateTransfer(false)}
               data-testid="btn-create-draft"
             >
               <PlusCircle size={16} />
               <span>Save as Draft</span>
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
+            </Button>
+            <Button
+              variant="primary"
               disabled={submitting}
               onClick={(): Promise<void> => handleCreateTransfer(true)}
               data-testid="btn-create-dispatch"
             >
               <Send size={16} />
               <span>Create & Dispatch</span>
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {/* LIST TAB */}
       {activeTab === 'list' && (
-        <div className="card" style={{ padding: '20px' }} data-testid="transfer-list-card">
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '24px',
+          }}
+          data-testid="transfer-list-card"
+        >
           <div
             style={{
               display: 'flex',
@@ -529,155 +678,42 @@ export const TransferStockView: React.FC = () => {
               marginBottom: '16px',
             }}
           >
-            <h3>Transfers</h3>
+            <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
+              Transfers
+            </h3>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <label htmlFor="filter-status" style={{ fontSize: '14px', fontWeight: 500 }}>
-                Filter Status:
-              </label>
-              <select
+              <Select
                 id="filter-status"
-                className="form-control"
-                style={{ width: 'auto' }}
+                data-testid="select-filter-status"
+                label="Filter Status:"
                 value={statusFilter}
                 onChange={(e): void => setStatusFilter(e.target.value)}
-                data-testid="select-filter-status"
-              >
-                <option value="ALL">All Statuses</option>
-                <option value="DRAFT">DRAFT</option>
-                <option value="DISPATCHED">DISPATCHED</option>
-                <option value="RECEIVED">RECEIVED</option>
-                <option value="EXCEPTION">EXCEPTION</option>
-                <option value="CANCELLED">CANCELLED</option>
-              </select>
+                options={[
+                  { value: 'ALL', label: 'All Statuses' },
+                  { value: 'DRAFT', label: 'DRAFT' },
+                  { value: 'DISPATCHED', label: 'DISPATCHED' },
+                  { value: 'RECEIVED', label: 'RECEIVED' },
+                  { value: 'EXCEPTION', label: 'EXCEPTION' },
+                  { value: 'CANCELLED', label: 'CANCELLED' },
+                ]}
+              />
             </div>
           </div>
 
           {filteredTransfers.length === 0 ? (
-            <p data-testid="empty-transfers-message">No transfers found matching criteria.</p>
+            <div data-testid="empty-transfers-message">
+              <EmptyState
+                heading="No transfers found"
+                body="No transfers match the selected filter criteria."
+              />
+            </div>
           ) : (
-            <table className="data-table" data-testid="transfers-table">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Source Store</th>
-                  <th>Destination Store</th>
-                  <th>Product ID</th>
-                  <th>Quantity</th>
-                  <th>Status</th>
-                  <th>Notes</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredTransfers.map((t) => (
-                  <tr key={t.id} data-testid={`transfer-row-${t.id}`}>
-                    <td>
-                      <code>{t.id}</code>
-                    </td>
-                    <td>{getStoreName(t.source_store_id)}</td>
-                    <td>{getStoreName(t.destination_store_id)}</td>
-                    <td>
-                      <code>{t.product_id}</code>
-                    </td>
-                    <td style={{ fontWeight: 'bold' }}>{t.quantity}</td>
-                    <td>{getStatusBadge(t.status)}</td>
-                    <td>{t.notes || '—'}</td>
-                    <td>
-                      <div style={{ display: 'flex', gap: '6px' }}>
-                        {t.status === 'DRAFT' && (
-                          <>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-primary"
-                              disabled={submitting}
-                              onClick={(): Promise<void> => handleDispatch(t.id)}
-                              data-testid={`btn-dispatch-${t.id}`}
-                            >
-                              <Send size={14} />
-                              <span>Dispatch</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              disabled={submitting}
-                              onClick={(): Promise<void> => handleCancel(t.id)}
-                              data-testid={`btn-cancel-${t.id}`}
-                            >
-                              <XCircle size={14} />
-                              <span>Cancel</span>
-                            </button>
-                          </>
-                        )}
-
-                        {t.status === 'DISPATCHED' && (
-                          <>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-success"
-                              disabled={submitting}
-                              onClick={(): Promise<void> => handleReceive(t.id)}
-                              data-testid={`btn-receive-${t.id}`}
-                            >
-                              <CheckCircle size={14} />
-                              <span>Confirm Receipt</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-warning"
-                              disabled={submitting}
-                              onClick={(): Promise<void> => handleException(t.id)}
-                              data-testid={`btn-exception-${t.id}`}
-                            >
-                              <AlertTriangle size={14} />
-                              <span>Flag Exception</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              disabled={submitting}
-                              onClick={(): Promise<void> => handleCancel(t.id)}
-                              data-testid={`btn-cancel-${t.id}`}
-                            >
-                              <XCircle size={14} />
-                              <span>Cancel</span>
-                            </button>
-                          </>
-                        )}
-
-                        {t.status === 'EXCEPTION' && (
-                          <>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-success"
-                              disabled={submitting}
-                              onClick={(): Promise<void> => handleReceive(t.id)}
-                              data-testid={`btn-receive-${t.id}`}
-                            >
-                              <CheckCircle size={14} />
-                              <span>Resolve & Receive</span>
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-sm btn-danger"
-                              disabled={submitting}
-                              onClick={(): Promise<void> => handleCancel(t.id)}
-                              data-testid={`btn-cancel-${t.id}`}
-                            >
-                              <XCircle size={14} />
-                              <span>Cancel</span>
-                            </button>
-                          </>
-                        )}
-
-                        {(t.status === 'RECEIVED' || t.status === 'CANCELLED') && (
-                          <span style={{ fontSize: '12px', color: '#6b7280' }}>Completed</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <DataTable
+              columns={columns}
+              rows={filteredTransfers}
+              rowKey={(t) => t.id}
+              data-testid="transfers-table"
+            />
           )}
         </div>
       )}

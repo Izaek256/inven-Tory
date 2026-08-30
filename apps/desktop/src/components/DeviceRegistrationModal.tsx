@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Store } from '../types/store';
-import { X, Smartphone, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Modal, TextInput, Button } from '@inven-tory/ui';
+import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface DeviceRegistrationModalProps {
   isOpen: boolean;
@@ -9,10 +10,6 @@ interface DeviceRegistrationModalProps {
   onRegisterDevice: (storeId: string, deviceName: string) => Promise<void>;
 }
 
-/**
- * Device registration stub (FR-STORE-003).
- * TODO(issue-13): Replace with full server-side OAuth device registration & pairing workflow in Issue 13.
- */
 export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = ({
   isOpen,
   store,
@@ -53,90 +50,88 @@ export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = (
   };
 
   return (
-    <div className="modal-backdrop" data-testid="device-modal-backdrop">
-      <div className="modal-card" data-testid="device-modal">
-        <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Smartphone size={20} color="var(--accent-primary)" />
-            <h3 className="modal-title">Register Local Device (FR-STORE-003 Stub)</h3>
-          </div>
-          <button
-            type="button"
-            className="btn-icon"
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Register Local Device (FR-STORE-003 Stub)"
+      size="md"
+      footer={
+        <>
+          <Button
+            variant="secondary"
             onClick={onClose}
-            data-testid="device-modal-close"
+            disabled={submitting}
+            data-testid="device-modal-cancel"
           >
-            <X size={18} />
-          </button>
+            Discard
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleSubmit}
+            loading={submitting}
+            data-testid="device-modal-submit"
+          >
+            Register Device
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} data-testid="device-modal">
+        <div className="it-toast it-toast--info" style={{ marginBottom: '16px', fontSize: '12px' }}>
+          <strong>TODO(issue-13):</strong> Provisional local device registration stub. Full cloud
+          auth and device token pairing will arrive in Issue 13.
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="modal-body">
-            <div className="banner-info" style={{ marginBottom: '16px', fontSize: '12px' }}>
-              <strong>TODO(issue-13):</strong> Provisional local device registration stub. Full
-              cloud auth and device token pairing will arrive in Issue 13.
-            </div>
-
-            {error && (
-              <div className="alert alert-danger" data-testid="device-modal-error">
-                <AlertCircle size={16} />
-                <span>{error}</span>
-              </div>
-            )}
-
-            {successMessage && (
-              <div className="alert alert-success" data-testid="device-modal-success">
-                <CheckCircle2 size={16} />
-                <span>{successMessage}</span>
-              </div>
-            )}
-
-            <div className="form-group">
-              <label className="form-label">Target Store Location</label>
-              <div className="read-only-box" data-testid="device-target-store">
-                <strong>{store.code}</strong> — {store.name}
-              </div>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="device-name-input" className="form-label">
-                Device Terminal Name <span className="required">*</span>
-              </label>
-              <input
-                id="device-name-input"
-                type="text"
-                className="form-input"
-                placeholder="e.g. POS Register 1, Counter Tablet A"
-                value={deviceName}
-                onChange={(e) => setDeviceName(e.target.value)}
-                disabled={submitting}
-                data-testid="device-name-input"
-                autoFocus
-              />
-            </div>
+        {error && (
+          <div
+            className="it-toast it-toast--error"
+            style={{ marginBottom: '16px' }}
+            data-testid="device-modal-error"
+          >
+            <AlertCircle size={16} aria-hidden="true" />
+            <span>{error}</span>
           </div>
+        )}
 
-          <div className="modal-footer">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onClose}
-              disabled={submitting}
-              data-testid="device-modal-cancel"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={submitting}
-              data-testid="device-modal-submit"
-            >
-              {submitting ? 'Registering...' : 'Register Device'}
-            </button>
+        {successMessage && (
+          <div
+            className="it-toast it-toast--success"
+            style={{ marginBottom: '16px' }}
+            data-testid="device-modal-success"
+          >
+            <CheckCircle2 size={16} aria-hidden="true" />
+            <span>{successMessage}</span>
           </div>
-        </form>
-      </div>
-    </div>
+        )}
+
+        <div className="it-field" style={{ marginBottom: '16px' }}>
+          <label className="it-label">Target Store Location</label>
+          <div
+            style={{
+              padding: '10px 14px',
+              backgroundColor: 'var(--it-surface)',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-md)',
+              fontSize: '14px',
+              color: 'var(--it-text-secondary)',
+            }}
+            data-testid="device-target-store"
+          >
+            <strong>{store.code}</strong> — {store.name}
+          </div>
+        </div>
+
+        <TextInput
+          id="device-name-input"
+          label="Device Terminal Name"
+          required
+          placeholder="e.g. POS Register 1, Counter Tablet A"
+          value={deviceName}
+          onChange={(e) => setDeviceName(e.target.value)}
+          disabled={submitting}
+          data-testid="device-name-input"
+        />
+      </form>
+    </Modal>
   );
 };

@@ -6,6 +6,7 @@ import { returnStock, getStockBalanceForBucket } from '../services/tauriTransact
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { ReturnStockInput, StockBucket } from '../types/transaction';
+import { Button, TextInput, NumericInput, Select } from '@inven-tory/ui';
 
 export const ReturnStockView: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);
@@ -23,7 +24,6 @@ export const ReturnStockView: React.FC = () => {
   const [success, setSuccess] = useState<boolean>(false);
   const [bucketQuantity, setBucketQuantity] = useState<number | null>(null);
 
-  // Demo session identifiers
   const userId = 'USER-DEMO';
   const deviceId = 'DEV-DEMO';
 
@@ -132,12 +132,10 @@ export const ReturnStockView: React.FC = () => {
       await returnStock(input);
       setSuccess(true);
 
-      // Refresh stock balance
       if (selectedProduct && selectedStoreId) {
         await loadBucketQuantity(selectedStoreId, selectedProduct, stockBucket);
       }
 
-      // Reset transaction form inputs
       setQuantity(1);
       setReferenceNumber('');
       setReason('');
@@ -149,141 +147,97 @@ export const ReturnStockView: React.FC = () => {
   };
 
   return (
-    <div className="return-stock-view" data-testid="return-stock-view">
+    <div
+      className="return-stock-view"
+      data-testid="return-stock-view"
+      style={{ maxWidth: '640px' }}
+    >
       <div className="view-header">
-        <h2 className="view-title">Customer &amp; Supplier Returns</h2>
-        <p className="view-subtitle">
-          Process stock returns affecting Available, Damaged, or Quarantine buckets (FR-MOV-003,
-          Section 13.3)
-        </p>
+        <div>
+          <h2 className="view-title">Customer &amp; Supplier Returns</h2>
+          <p className="view-subtitle">
+            Process stock returns affecting Available, Damaged, or Quarantine buckets (FR-MOV-003,
+            Section 13.3)
+          </p>
+        </div>
       </div>
 
       {success && (
         <div
-          className="success-banner"
+          className="it-toast it-toast--success"
           data-testid="success-banner"
-          style={{
-            marginBottom: '16px',
-            padding: '12px',
-            backgroundColor: '#dcfce7',
-            border: '1px solid #22c55e',
-            borderRadius: '6px',
-            color: '#166534',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
+          style={{ marginBottom: '16px' }}
         >
-          <Check size={20} />
+          <Check size={16} aria-hidden="true" />
           <span>Return transaction recorded successfully and stock balance updated.</span>
         </div>
       )}
 
       {error && (
         <div
-          className="error-banner"
+          className="it-toast it-toast--error"
           data-testid="error-banner"
-          style={{
-            marginBottom: '16px',
-            padding: '12px',
-            backgroundColor: '#fee2e2',
-            border: '1px solid #ef4444',
-            borderRadius: '6px',
-            color: '#991b1b',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
+          style={{ marginBottom: '16px' }}
         >
-          <AlertCircle size={20} />
+          <AlertCircle size={16} aria-hidden="true" />
           <span>{error}</span>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="return-form" style={{ maxWidth: '640px' }}>
+      <form
+        onSubmit={handleSubmit}
+        className="return-form"
+        style={{
+          backgroundColor: 'var(--it-card)',
+          border: '1px solid var(--it-border)',
+          borderRadius: 'var(--it-r-lg)',
+          padding: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '20px',
+        }}
+      >
         {/* Return Type Segmented Toggle */}
-        <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label
-            className="form-label"
-            style={{ display: 'block', marginBottom: '8px', fontWeight: 600 }}
-          >
+        <div>
+          <label className="it-label" style={{ display: 'block', marginBottom: '8px' }}>
             Return Direction
           </label>
           <div style={{ display: 'flex', gap: '12px' }}>
-            <button
+            <Button
               type="button"
               data-testid="return-type-customer"
+              variant={returnType === 'CUSTOMER' ? 'primary' : 'secondary'}
               onClick={(): void => setReturnType('CUSTOMER')}
-              style={{
-                flex: 1,
-                padding: '10px 16px',
-                borderRadius: '6px',
-                border: returnType === 'CUSTOMER' ? '2px solid #2563eb' : '1px solid #d1d5db',
-                backgroundColor: returnType === 'CUSTOMER' ? '#eff6ff' : '#ffffff',
-                color: returnType === 'CUSTOMER' ? '#1e40af' : '#374151',
-                fontWeight: returnType === 'CUSTOMER' ? 600 : 400,
-                cursor: 'pointer',
-              }}
+              style={{ flex: 1 }}
             >
               Customer Return (Stock In)
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
               data-testid="return-type-supplier"
+              variant={returnType === 'SUPPLIER' ? 'primary' : 'secondary'}
               onClick={(): void => setReturnType('SUPPLIER')}
-              style={{
-                flex: 1,
-                padding: '10px 16px',
-                borderRadius: '6px',
-                border: returnType === 'SUPPLIER' ? '2px solid #2563eb' : '1px solid #d1d5db',
-                backgroundColor: returnType === 'SUPPLIER' ? '#eff6ff' : '#ffffff',
-                color: returnType === 'SUPPLIER' ? '#1e40af' : '#374151',
-                fontWeight: returnType === 'SUPPLIER' ? 600 : 400,
-                cursor: 'pointer',
-              }}
+              style={{ flex: 1 }}
             >
               Supplier Return (Stock Out)
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* Store Selection */}
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label
-            className="form-label"
-            htmlFor="store-select"
-            style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}
-          >
-            Store Location *
-          </label>
-          <select
-            id="store-select"
-            data-testid="store-select"
-            className="form-control"
-            value={selectedStoreId}
-            onChange={(e): void => setSelectedStoreId(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '8px 12px',
-              borderRadius: '6px',
-              border: '1px solid #d1d5db',
-            }}
-          >
-            {stores.map((store) => (
-              <option key={store.id} value={store.id}>
-                {store.name} ({store.code})
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          id="store-select"
+          data-testid="store-select"
+          label="Store Location"
+          required
+          value={selectedStoreId}
+          onChange={(e): void => setSelectedStoreId(e.target.value)}
+          options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+        />
 
         {/* Product Search / Selection */}
-        <div className="form-group" style={{ marginBottom: '16px', position: 'relative' }}>
-          <label
-            className="form-label"
-            htmlFor="product-search"
-            style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}
-          >
+        <div style={{ position: 'relative' }}>
+          <label className="it-label" style={{ display: 'block', marginBottom: '4px' }}>
             Product *
           </label>
           {selectedProduct ? (
@@ -294,30 +248,40 @@ export const ReturnStockView: React.FC = () => {
                 alignItems: 'center',
                 justifyContent: 'space-between',
                 padding: '10px 14px',
-                border: '1px solid #3b82f6',
-                borderRadius: '6px',
-                backgroundColor: '#f0f9ff',
+                border: '1px solid var(--it-green-border)',
+                borderRadius: 'var(--it-r-md)',
+                backgroundColor: 'var(--it-green-surface)',
               }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Package size={20} color="#0284c7" />
+                <Package size={20} color="var(--it-green)" />
                 <div>
-                  <strong style={{ display: 'block', color: '#0369a1' }}>
+                  <strong
+                    style={{ display: 'block', color: 'var(--it-green-text)', fontSize: '13px' }}
+                  >
                     {selectedProduct.name}
                   </strong>
-                  <span style={{ fontSize: '12px', color: '#64748b' }}>
+                  <span
+                    style={{
+                      fontSize: '12px',
+                      color: 'var(--it-text-secondary)',
+                      fontFamily: 'var(--it-font-mono)',
+                    }}
+                  >
                     SKU: {selectedProduct.sku}
                   </span>
                 </div>
               </div>
-              <button
+              <Button
                 type="button"
                 data-testid="clear-product-button"
+                variant="ghost"
+                size="sm"
+                iconOnly
                 onClick={clearProduct}
-                style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748b' }}
               >
                 <X size={18} />
-              </button>
+              </Button>
             </div>
           ) : (
             <div>
@@ -325,16 +289,10 @@ export const ReturnStockView: React.FC = () => {
                 id="product-search"
                 data-testid="product-search"
                 type="text"
-                className="form-control"
+                className="it-input"
                 placeholder="Type to search SKU or name..."
                 value={productQuery}
                 onChange={(e): void => setProductQuery(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #d1d5db',
-                }}
               />
               {searchResults.length > 0 && (
                 <ul
@@ -345,13 +303,13 @@ export const ReturnStockView: React.FC = () => {
                     left: 0,
                     right: 0,
                     zIndex: 10,
-                    margin: 0,
+                    margin: '4px 0 0 0',
                     padding: 0,
                     listStyle: 'none',
-                    backgroundColor: '#ffffff',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                    backgroundColor: 'var(--it-card)',
+                    border: '1px solid var(--it-border)',
+                    borderRadius: 'var(--it-r-md)',
+                    boxShadow: 'var(--it-shadow-md)',
                     maxHeight: '200px',
                     overflowY: 'auto',
                   }}
@@ -364,11 +322,29 @@ export const ReturnStockView: React.FC = () => {
                       style={{
                         padding: '10px 14px',
                         cursor: 'pointer',
-                        borderBottom: '1px solid #f3f4f6',
+                        borderBottom: '1px solid var(--it-border)',
                       }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
+                      }
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                     >
-                      <div style={{ fontWeight: 600 }}>{product.name}</div>
-                      <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: '13px',
+                          color: 'var(--it-text-primary)',
+                        }}
+                      >
+                        {product.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: 'var(--it-text-secondary)',
+                          fontFamily: 'var(--it-font-mono)',
+                        }}
+                      >
                         SKU: {product.sku} | Category: {product.category}
                       </div>
                     </li>
@@ -380,154 +356,82 @@ export const ReturnStockView: React.FC = () => {
         </div>
 
         {/* Condition / Stock Bucket Selection */}
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label
-            className="form-label"
-            htmlFor="bucket-select"
-            style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}
-          >
-            Stock Condition / Bucket *
-          </label>
-          <select
-            id="bucket-select"
-            data-testid="bucket-select"
-            className="form-control"
-            value={stockBucket}
-            onChange={(e): void => setStockBucket(e.target.value as StockBucket)}
-            style={{
-              width: '100%',
-              padding: '8px 12px',
-              borderRadius: '6px',
-              border: '1px solid #d1d5db',
-            }}
-          >
-            <option value="AVAILABLE">AVAILABLE — Saleable / Good Condition</option>
-            <option value="DAMAGED">DAMAGED — Damaged / Defective Stock</option>
-            <option value="QUARANTINE">QUARANTINE — Under Inspection / Quarantine</option>
-          </select>
-        </div>
+        <Select
+          id="bucket-select"
+          data-testid="bucket-select"
+          label="Stock Condition / Bucket"
+          required
+          value={stockBucket}
+          onChange={(e): void => setStockBucket(e.target.value as StockBucket)}
+          options={[
+            { value: 'AVAILABLE', label: 'AVAILABLE — Saleable / Good Condition' },
+            { value: 'DAMAGED', label: 'DAMAGED — Damaged / Defective Stock' },
+            { value: 'QUARANTINE', label: 'QUARANTINE — Under Inspection / Quarantine' },
+          ]}
+        />
 
         {/* Bucket Stock Balance Info */}
         {selectedProduct && bucketQuantity !== null && (
           <div
             data-testid="bucket-balance-info"
             style={{
-              marginBottom: '16px',
               padding: '10px 14px',
-              backgroundColor: '#f8fafc',
-              border: '1px solid #e2e8f0',
-              borderRadius: '6px',
-              fontSize: '14px',
-              color: '#334155',
+              backgroundColor: 'var(--it-surface)',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-md)',
+              fontSize: '13px',
+              color: 'var(--it-text-primary)',
             }}
           >
             Current stock in <strong>{stockBucket}</strong> bucket:{' '}
-            <strong>{bucketQuantity}</strong> units
+            <strong style={{ fontFamily: 'var(--it-font-mono)' }}>{bucketQuantity}</strong> units
           </div>
         )}
 
         {/* Quantity Input */}
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label
-            className="form-label"
-            htmlFor="quantity-input"
-            style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}
-          >
-            Quantity *
-          </label>
-          <input
-            id="quantity-input"
-            data-testid="quantity-input"
-            type="number"
-            min="1"
-            className="form-control"
-            value={quantity}
-            onChange={(e): void => setQuantity(parseInt(e.target.value, 10) || 0)}
-            style={{
-              width: '100%',
-              padding: '8px 12px',
-              borderRadius: '6px',
-              border: '1px solid #d1d5db',
-            }}
-          />
-        </div>
+        <NumericInput
+          id="quantity-input"
+          data-testid="quantity-input"
+          label="Quantity"
+          required
+          value={quantity}
+          min={1}
+          onChange={(v) => setQuantity(Math.max(1, v))}
+        />
 
         {/* Original Reference Number Input */}
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label
-            className="form-label"
-            htmlFor="reference-input"
-            style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}
-          >
-            Original Transaction Reference (Optional)
-          </label>
-          <input
-            id="reference-input"
-            data-testid="reference-input"
-            type="text"
-            className="form-control"
-            placeholder="e.g. TX-SALE-100234 or INV-9941"
-            value={referenceNumber}
-            onChange={(e): void => setReferenceNumber(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '8px 12px',
-              borderRadius: '6px',
-              border: '1px solid #d1d5db',
-            }}
-          />
-          <span style={{ fontSize: '12px', color: '#6b7280' }}>
-            Links return to original sale receipt or purchase order
-          </span>
-        </div>
+        <TextInput
+          id="reference-input"
+          data-testid="reference-input"
+          label="Original Transaction Reference (Optional)"
+          placeholder="e.g. TX-SALE-100234 or INV-9941"
+          value={referenceNumber}
+          onChange={(e): void => setReferenceNumber(e.target.value)}
+          hint="Links return to original sale receipt or purchase order"
+        />
 
         {/* Reason / Notes Input */}
-        <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label
-            className="form-label"
-            htmlFor="reason-input"
-            style={{ display: 'block', marginBottom: '6px', fontWeight: 500 }}
-          >
-            Reason / Notes (Optional)
-          </label>
-          <input
-            id="reason-input"
-            data-testid="reason-input"
-            type="text"
-            className="form-control"
-            placeholder="e.g. Defective screen upon opening box"
-            value={reason}
-            onChange={(e): void => setReason(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '8px 12px',
-              borderRadius: '6px',
-              border: '1px solid #d1d5db',
-            }}
-          />
-        </div>
+        <TextInput
+          id="reason-input"
+          data-testid="reason-input"
+          label="Reason / Notes (Optional)"
+          placeholder="e.g. Defective screen upon opening box"
+          value={reason}
+          onChange={(e): void => setReason(e.target.value)}
+        />
 
         {/* Submit Button */}
-        <button
+        <Button
           type="submit"
+          variant="primary"
+          loading={isSubmitting}
+          disabled={!selectedProduct}
           data-testid="submit-return-button"
-          disabled={isSubmitting || !selectedProduct}
-          style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '10px 20px',
-            backgroundColor: isSubmitting || !selectedProduct ? '#9ca3af' : '#2563eb',
-            color: '#ffffff',
-            border: 'none',
-            borderRadius: '6px',
-            fontWeight: 600,
-            cursor: isSubmitting || !selectedProduct ? 'not-allowed' : 'pointer',
-          }}
+          style={{ width: '100%' }}
         >
           <RotateCcw size={18} />
           <span>{isSubmitting ? 'Processing Return...' : 'Process Return'}</span>
-        </button>
+        </Button>
       </form>
     </div>
   );

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
+import { Badge, ThemeToggle, Select } from '@inven-tory/ui';
 
 interface HeaderProps {
   stores: Store[];
@@ -59,14 +60,15 @@ export const Header: React.FC<HeaderProps> = ({
       </div>
 
       <div className="header-controls">
+        {/* Theme Toggle */}
+        <ThemeToggle />
+
         {/* Offline / Online Status Badge */}
-        <div
-          className={`status-pill ${isOnline ? 'status-online' : 'status-offline'}`}
-          title={isOnline ? 'Network connection active' : 'Operating in offline mode'}
-          data-testid="status-indicator"
-        >
-          <span className="status-dot"></span>
-          <span>{isOnline ? 'Online' : 'Offline Mode'}</span>
+        <div data-testid="status-indicator">
+          <Badge
+            status={isOnline ? 'ONLINE' : 'OFFLINE'}
+            label={isOnline ? 'Online' : 'Offline Mode'}
+          />
         </div>
 
         {/* Pending Sync Count Badge */}
@@ -75,8 +77,8 @@ export const Header: React.FC<HeaderProps> = ({
           title={`Pending sync outbox events: ${pendingSyncCount}`}
           data-testid="pending-sync-badge"
         >
-          <span>Pending Sync:</span>
-          <span className="sync-count" data-testid="pending-sync-count">
+          <Badge status="PENDING" label={`Pending Sync: ${pendingSyncCount}`} />
+          <span style={{ display: 'none' }} data-testid="pending-sync-count">
             {pendingSyncCount}
           </span>
         </div>
@@ -84,19 +86,15 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Active Store Selector */}
         {stores.length > 0 && (
           <div className="store-selector-box">
-            <select
-              className="status-pill"
+            <Select
               value={activeStoreId || ''}
               onChange={(e) => onSelectStore(e.target.value)}
               data-testid="store-selector"
-              style={{ cursor: 'pointer', background: 'var(--bg-card)', color: 'var(--text-main)' }}
-            >
-              {stores.map((store) => (
-                <option key={store.id} value={store.id}>
-                  {store.name} ({store.code})
-                </option>
-              ))}
-            </select>
+              options={stores.map((store) => ({
+                value: store.id,
+                label: `${store.name} (${store.code})`,
+              }))}
+            />
           </div>
         )}
 

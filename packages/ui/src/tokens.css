@@ -1,0 +1,285 @@
+/*
+ * INVENTORY Tory — Design Tokens
+ * packages/ui/src/tokens.css
+ *
+ * Two-pass token plan documented in implementation_plan.md.
+ * All component styles derive from these properties — no hex literals elsewhere.
+ *
+ * Typefaces:
+ *   Display/heading: Inter (already loaded via app)
+ *   Data/numeric:    JetBrains Mono (loaded here)
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Shared (theme-invariant) tokens
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  /* Typography */
+  --it-font-ui: 'Inter', system-ui, -apple-system, sans-serif;
+  --it-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+
+  /* Type scale */
+  --it-text-xs: 11px;
+  --it-text-sm: 12px;
+  --it-text-base: 14px;
+  --it-text-md: 16px;
+  --it-text-lg: 22px;
+  --it-text-xl: 28px;
+
+  --it-weight-normal: 400;
+  --it-weight-medium: 500;
+  --it-weight-semibold: 600;
+  --it-weight-bold: 700;
+
+  --it-tracking-label: 0.04em;
+
+  /* Spacing scale — 4px base grid */
+  --it-sp-1: 4px;
+  --it-sp-2: 8px;
+  --it-sp-3: 12px;
+  --it-sp-4: 16px;
+  --it-sp-5: 20px;
+  --it-sp-6: 24px;
+  --it-sp-8: 32px;
+  --it-sp-12: 48px;
+
+  /* Radius scale */
+  --it-r-sm: 4px;
+  --it-r-md: 8px;
+  --it-r-lg: 12px;
+  --it-r-pill: 999px;
+
+  /* Shadow scale */
+  --it-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.1);
+
+  /* Motion */
+  --it-ease: cubic-bezier(0.2, 0, 0, 1);
+  --it-dur-fast: 120ms;
+  --it-dur-base: 200ms;
+
+  /* Focus ring (shared) */
+  --it-focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.35);
+  --it-focus-ring-green: 0 0 0 3px rgba(22, 163, 74, 0.3);
+  --it-focus-ring-red: 0 0 0 3px rgba(220, 38, 38, 0.3);
+
+  /* Sidebar badge indicator width */
+  --it-status-bar: 3px;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Light theme (default)
+   ───────────────────────────────────────────────────────────────────────────── */
+[data-theme='light'],
+:root {
+  --it-bg: #ffffff;
+  --it-surface: #f8f9fa;
+  --it-card: #ffffff;
+  --it-border: #e5e7eb;
+  --it-border-strong: #d1d5db;
+
+  --it-text-primary: #0f172a;
+  --it-text-secondary: #64748b;
+  --it-text-disabled: #9ca3af;
+
+  /* Green — confirm / save / positive */
+  --it-green: #16a34a;
+  --it-green-hover: #15803d;
+  --it-green-active: #166534;
+  --it-green-surface: #dcfce7;
+  --it-green-text: #15803d;
+  --it-green-border: #86efac;
+
+  /* Red — cancel / destructive */
+  --it-red: #dc2626;
+  --it-red-hover: #b91c1c;
+  --it-red-active: #991b1b;
+  --it-red-surface: #fee2e2;
+  --it-red-text: #b91c1c;
+  --it-red-border: #fca5a5;
+
+  /* Gray — neutral / secondary */
+  --it-gray: #6b7280;
+  --it-gray-hover: #374151;
+  --it-gray-active: #1f2937;
+  --it-gray-surface: #f3f4f6;
+  --it-gray-text: #374151;
+  --it-gray-border: #d1d5db;
+
+  /* Accent — used sparingly (sync count badge, external links) */
+  --it-accent: #2563eb;
+  --it-accent-surface: #eff6ff;
+  --it-accent-text: #1d4ed8;
+  --it-accent-border: #93c5fd;
+
+  /* Warning / amber */
+  --it-amber: #d97706;
+  --it-amber-surface: #fffbeb;
+  --it-amber-text: #92400e;
+  --it-amber-border: #fcd34d;
+
+  /* Scrollbar */
+  --it-scrollbar: #d1d5db;
+  --it-scrollbar-track: transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Dark theme
+   ───────────────────────────────────────────────────────────────────────────── */
+[data-theme='dark'] {
+  --it-bg: #111318;
+  --it-surface: #1c1f26;
+  --it-card: #242830;
+  --it-border: #2e3340;
+  --it-border-strong: #3d4452;
+
+  --it-text-primary: #f1f5f9;
+  --it-text-secondary: #8b95a8;
+  --it-text-disabled: #4b5563;
+
+  /* Green */
+  --it-green: #22c55e;
+  --it-green-hover: #4ade80;
+  --it-green-active: #86efac;
+  --it-green-surface: rgba(34, 197, 94, 0.12);
+  --it-green-text: #4ade80;
+  --it-green-border: rgba(34, 197, 94, 0.3);
+
+  /* Red */
+  --it-red: #ef4444;
+  --it-red-hover: #f87171;
+  --it-red-active: #fca5a5;
+  --it-red-surface: rgba(239, 68, 68, 0.12);
+  --it-red-text: #f87171;
+  --it-red-border: rgba(239, 68, 68, 0.3);
+
+  /* Gray */
+  --it-gray: #9ca3af;
+  --it-gray-hover: #d1d5db;
+  --it-gray-active: #f3f4f6;
+  --it-gray-surface: rgba(156, 163, 175, 0.12);
+  --it-gray-text: #d1d5db;
+  --it-gray-border: rgba(156, 163, 175, 0.25);
+
+  /* Accent */
+  --it-accent: #60a5fa;
+  --it-accent-surface: rgba(96, 165, 250, 0.1);
+  --it-accent-text: #93c5fd;
+  --it-accent-border: rgba(96, 165, 250, 0.25);
+
+  /* Warning / amber */
+  --it-amber: #f59e0b;
+  --it-amber-surface: rgba(245, 158, 11, 0.12);
+  --it-amber-text: #fcd34d;
+  --it-amber-border: rgba(245, 158, 11, 0.3);
+
+  /* Shadows are deeper in dark mode */
+  --it-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+  --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+
+  /* Scrollbar */
+  --it-scrollbar: #2e3340;
+  --it-scrollbar-track: transparent;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   System preference fallback (first visit, before JS sets data-theme)
+   ───────────────────────────────────────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --it-bg: #111318;
+    --it-surface: #1c1f26;
+    --it-card: #242830;
+    --it-border: #2e3340;
+    --it-border-strong: #3d4452;
+    --it-text-primary: #f1f5f9;
+    --it-text-secondary: #8b95a8;
+    --it-text-disabled: #4b5563;
+    --it-green: #22c55e;
+    --it-green-hover: #4ade80;
+    --it-green-active: #86efac;
+    --it-green-surface: rgba(34, 197, 94, 0.12);
+    --it-green-text: #4ade80;
+    --it-green-border: rgba(34, 197, 94, 0.3);
+    --it-red: #ef4444;
+    --it-red-hover: #f87171;
+    --it-red-active: #fca5a5;
+    --it-red-surface: rgba(239, 68, 68, 0.12);
+    --it-red-text: #f87171;
+    --it-red-border: rgba(239, 68, 68, 0.3);
+    --it-gray: #9ca3af;
+    --it-gray-hover: #d1d5db;
+    --it-gray-active: #f3f4f6;
+    --it-gray-surface: rgba(156, 163, 175, 0.12);
+    --it-gray-text: #d1d5db;
+    --it-gray-border: rgba(156, 163, 175, 0.25);
+    --it-accent: #60a5fa;
+    --it-accent-surface: rgba(96, 165, 250, 0.1);
+    --it-accent-text: #93c5fd;
+    --it-accent-border: rgba(96, 165, 250, 0.25);
+    --it-amber: #f59e0b;
+    --it-amber-surface: rgba(245, 158, 11, 0.12);
+    --it-amber-text: #fcd34d;
+    --it-amber-border: rgba(245, 158, 11, 0.3);
+    --it-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+    --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+    --it-scrollbar: #2e3340;
+    --it-scrollbar-track: transparent;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Global resets and base
+   ───────────────────────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-family: var(--it-font-ui);
+  font-size: var(--it-text-base);
+  color: var(--it-text-primary);
+  background-color: var(--it-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--it-scrollbar-track);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--it-scrollbar);
+  border-radius: var(--it-r-pill);
+}
+
+/* Focus visible (global) — components override with colour-specific rings */
+:focus-visible {
+  outline: none;
+  box-shadow: var(--it-focus-ring);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
