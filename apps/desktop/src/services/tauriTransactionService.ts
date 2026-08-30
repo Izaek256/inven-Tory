@@ -65,6 +65,36 @@ export function setMockBalance(
   }
 }
 
+let mockPendingOutboxCount = 0;
+
+export function getMockPendingOutboxCount(): number {
+  return mockPendingOutboxCount;
+}
+
+export function setMockPendingOutboxCount(count: number): void {
+  mockPendingOutboxCount = count;
+}
+
+export function incrementMockPendingOutboxCount(by: number = 1): void {
+  mockPendingOutboxCount += by;
+}
+
+/**
+ * Get current count of pending/sending outbox events (Issue 12).
+ */
+export async function getPendingOutboxCount(): Promise<number> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<number>('get_pending_outbox_count');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking get_pending_outbox_count:', err);
+      return mockPendingOutboxCount;
+    }
+  }
+  return mockPendingOutboxCount;
+}
+
 /**
  * Receive stock into a store (FR-MOV-001, Section 13.1).
  * Creates a RECEIPT transaction, updates stock_balances, and creates an outbox event.
@@ -123,6 +153,7 @@ export async function receiveStock(input: CreateTransactionInput): Promise<Inven
     original_transaction_id: null,
   };
 
+  incrementMockPendingOutboxCount();
   return transaction;
 }
 
@@ -193,6 +224,7 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
     original_transaction_id: null,
   };
 
+  incrementMockPendingOutboxCount();
   return transaction;
 }
 
@@ -258,6 +290,7 @@ export async function returnStock(input: ReturnStockInput): Promise<InventoryTra
     original_transaction_id: null,
   };
 
+  incrementMockPendingOutboxCount();
   return transaction;
 }
 
@@ -354,6 +387,7 @@ export async function moveStockBucket(
     original_transaction_id: null,
   };
 
+  incrementMockPendingOutboxCount(2);
   return [outflowTx, inflowTx];
 }
 
@@ -502,5 +536,6 @@ export async function adjustStock(input: AdjustStockInput): Promise<InventoryTra
     original_transaction_id: null,
   };
 
+  incrementMockPendingOutboxCount();
   return transaction;
 }

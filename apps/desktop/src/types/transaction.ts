@@ -1,7 +1,16 @@
 export type MovementType =
   'RECEIPT' | 'SALE' | 'RETURN' | 'TRANSFER' | 'ADJUSTMENT' | 'DAMAGE' | 'COUNT' | 'OTHER';
 export type StockBucket = 'AVAILABLE' | 'DAMAGED' | 'QUARANTINE' | 'IN_TRANSIT';
-export type SyncStatus = 'PENDING' | 'SENT' | 'ACCEPTED' | 'REJECTED';
+export type SyncStatus =
+  | 'PENDING'
+  | 'SENDING'
+  | 'SENT'
+  | 'ACCEPTED'
+  | 'SYNCED'
+  | 'REJECTED'
+  | 'RETRYABLE_ERROR'
+  | 'PERMANENT_REJECTION'
+  | 'EXCEPTION_REVIEW';
 
 export interface InventoryTransaction {
   transaction_id: string;

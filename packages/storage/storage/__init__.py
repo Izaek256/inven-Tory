@@ -13,12 +13,14 @@ from storage.models import (
     Transfer,
     User,
 )
+from storage.services.outbox_service import OutboxService
 
 __all__ = [
     "Base",
     "Device",
     "InventoryTransaction",
     "OutboxEvent",
+    "OutboxService",
     "Product",
     "StockBalance",
     "Store",
