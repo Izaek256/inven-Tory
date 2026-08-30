@@ -5,11 +5,18 @@ Tests receive_stock command, transaction creation, balance updates, and outbox e
 
 from datetime import UTC, datetime
 
-import pytest
 from sqlalchemy import select
 
 from storage.db import Base, get_engine, get_sessionmaker
-from storage.models import Device, InventoryTransaction, OutboxEvent, Product, StockBalance, Store, User
+from storage.models import (
+    Device,
+    InventoryTransaction,
+    OutboxEvent,
+    Product,
+    StockBalance,
+    Store,
+    User,
+)
 
 
 def test_issue06_receive_stock_workflow(tmp_path):
