@@ -84,6 +84,40 @@ pub struct UpdateProductInput {
     pub serial_tracking_enabled: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ReceiveStockInput {
+    pub store_id: String,
+    pub product_id: String,
+    pub quantity: i32,
+    pub reference_number: Option<String>,
+    pub supplier: Option<String>,
+    pub user_id: String,
+    pub device_id: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct InventoryTransaction {
+    pub transaction_id: String,
+    pub store_id: String,
+    pub product_id: String,
+    pub movement_type: String,
+    pub stock_bucket: String,
+    pub quantity_delta: i32,
+    pub occurred_at: String,
+    pub recorded_at: String,
+    pub user_id: String,
+    pub device_id: String,
+    pub reference_number: Option<String>,
+    pub reason_code: Option<String>,
+    pub transfer_id: Option<String>,
+    pub purchase_order_id: Option<String>,
+    pub batch_id: Option<String>,
+    pub client_sequence: Option<i32>,
+    pub sync_status: String,
+    pub server_accepted_at: Option<String>,
+    pub original_transaction_id: Option<String>,
+}
+
 fn get_db_path() -> PathBuf {
     if let Ok(env_path) = env::var("INVEN_TORY_DB_PATH") {
         return PathBuf::from(env_path);
@@ -603,6 +637,106 @@ pub mod commands {
 
         Ok(prod)
     }
+
+    #[tauri::command]
+    pub fn receive_stock(input: ReceiveStockInput) -> Result<InventoryTransaction, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        // Validate inputs
+        if input.quantity <= 0 {
+            return Err("Quantity must be greater than zero.".to_string());
+        }
+
+        let transaction_id = generate_id("TX");
+        let now = now_iso();
+
+        // Insert RECEIPT transaction (FR-MOV-001, Section 13.1)
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, sync_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                transaction_id,
+                input.store_id,
+                input.product_id,
+                "RECEIPT",
+                "AVAILABLE",
+                input.quantity,
+                now,
+                now,
+                input.user_id,
+                input.device_id,
+                input.reference_number,
+                input.supplier, // Store supplier in reason_code for now (full Supplier entity is Issue 21)
+                "PENDING"
+            ],
+        )
+        .map_err(|e| format!("Failed to insert inventory transaction: {}", e))?;
+
+        // Update stock_balances projection (Section 9.4)
+        // Use UPSERT pattern: insert if not exists, otherwise update
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
+            params![
+                format!("SB-{}-{}-AVAILABLE", input.store_id, input.product_id),
+                input.store_id,
+                input.product_id,
+                "AVAILABLE",
+                input.quantity,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update stock balance: {}", e))?;
+
+        // Create outbox event (stub for now - full state machine is Issue 12)
+        let outbox_id = generate_id("OB");
+        let outbox_event_id = format!("EVT-{}", transaction_id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "transaction_id": transaction_id,
+            "store_id": input.store_id,
+            "product_id": input.product_id,
+            "movement_type": "RECEIPT",
+            "quantity_delta": input.quantity
+        }))
+        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                outbox_id,
+                outbox_event_id,
+                "INVENTORY_TRANSACTION",
+                payload,
+                "PENDING",
+                0,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        // Return the created transaction
+        Ok(InventoryTransaction {
+            transaction_id,
+            store_id: input.store_id,
+            product_id: input.product_id,
+            movement_type: "RECEIPT".to_string(),
+            stock_bucket: "AVAILABLE".to_string(),
+            quantity_delta: input.quantity,
+            occurred_at: now.clone(),
+            recorded_at: now.clone(),
+            user_id: input.user_id,
+            device_id: input.device_id,
+            reference_number: input.reference_number,
+            reason_code: input.supplier,
+            transfer_id: None,
+            purchase_order_id: None,
+            batch_id: None,
+            client_sequence: None,
+            sync_status: "PENDING".to_string(),
+            server_accepted_at: None,
+            original_transaction_id: None,
+        })
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -621,6 +755,7 @@ pub fn run() {
             commands::create_product,
             commands::update_product,
             commands::toggle_product_active,
+            commands::receive_stock,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
