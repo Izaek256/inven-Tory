@@ -95,6 +95,16 @@ pub struct ReceiveStockInput {
     pub device_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SellStockInput {
+    pub store_id: String,
+    pub product_id: String,
+    pub quantity: i32,
+    pub reference_number: Option<String>,
+    pub user_id: String,
+    pub device_id: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 pub struct InventoryTransaction {
     pub transaction_id: String,
@@ -737,6 +747,145 @@ pub mod commands {
             original_transaction_id: None,
         })
     }
+
+    /// Query current AVAILABLE balance for a product in a store (Section 9.4).
+    /// Used by the UI to display and validate against real local stock before committing a sale.
+    #[tauri::command]
+    pub fn get_stock_balance(store_id: String, product_id: String) -> Result<i32, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let balance: i32 = conn
+            .query_row(
+                "SELECT COALESCE(quantity, 0) FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = 'AVAILABLE'",
+                params![store_id, product_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        Ok(balance)
+    }
+
+    /// Sell / issue stock from a store (FR-MOV-002, Section 13.2).
+    /// Enforces strict-mode negative-stock rejection (FR-MOV-008, Section 21).
+    /// On success: inserts SALE transaction, decreases AVAILABLE balance, enqueues outbox event.
+    #[tauri::command]
+    pub fn sell_stock(input: SellStockInput) -> Result<InventoryTransaction, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        // Validate inputs
+        if input.quantity <= 0 {
+            return Err("Quantity must be greater than zero.".to_string());
+        }
+
+        // FR-MOV-008 / Section 21 strict-mode negative-stock rejection:
+        // Read current AVAILABLE balance before committing.
+        let available: i32 = conn
+            .query_row(
+                "SELECT COALESCE(quantity, 0) FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = 'AVAILABLE'",
+                params![input.store_id, input.product_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        if input.quantity > available {
+            // AT-012: rejection message must show the available quantity.
+            return Err(format!(
+                "Insufficient stock. Available quantity: {}. Cannot sell {} units.",
+                available, input.quantity
+            ));
+        }
+
+        let transaction_id = generate_id("TX");
+        let now = now_iso();
+        let quantity_delta = -input.quantity; // SALE is a negative delta
+
+        // Insert SALE transaction (FR-MOV-002, Section 13.2)
+        conn.execute(
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, sync_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            params![
+                transaction_id,
+                input.store_id,
+                input.product_id,
+                "SALE",
+                "AVAILABLE",
+                quantity_delta,
+                now,
+                now,
+                input.user_id,
+                input.device_id,
+                input.reference_number,
+                "PENDING"
+            ],
+        )
+        .map_err(|e| format!("Failed to insert inventory transaction: {}", e))?;
+
+        // Decrease stock_balances projection (Section 9.4)
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
+            params![
+                format!("SB-{}-{}-AVAILABLE", input.store_id, input.product_id),
+                input.store_id,
+                input.product_id,
+                "AVAILABLE",
+                quantity_delta,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to update stock balance: {}", e))?;
+
+        // Create outbox event (stub — full state machine is Issue 12)
+        let outbox_id = generate_id("OB");
+        let outbox_event_id = format!("EVT-{}", transaction_id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "transaction_id": transaction_id,
+            "store_id": input.store_id,
+            "product_id": input.product_id,
+            "movement_type": "SALE",
+            "quantity_delta": quantity_delta
+        }))
+        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                outbox_id,
+                outbox_event_id,
+                "INVENTORY_TRANSACTION",
+                payload,
+                "PENDING",
+                0,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        // Return the created transaction
+        Ok(InventoryTransaction {
+            transaction_id,
+            store_id: input.store_id,
+            product_id: input.product_id,
+            movement_type: "SALE".to_string(),
+            stock_bucket: "AVAILABLE".to_string(),
+            quantity_delta,
+            occurred_at: now.clone(),
+            recorded_at: now.clone(),
+            user_id: input.user_id,
+            device_id: input.device_id,
+            reference_number: input.reference_number,
+            reason_code: None,
+            transfer_id: None,
+            purchase_order_id: None,
+            batch_id: None,
+            client_sequence: None,
+            sync_status: "PENDING".to_string(),
+            server_accepted_at: None,
+            original_transaction_id: None,
+        })
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -756,6 +905,8 @@ pub fn run() {
             commands::update_product,
             commands::toggle_product_active,
             commands::receive_stock,
+            commands::get_stock_balance,
+            commands::sell_stock,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,0 +1,37 @@
+#!/bin/sh
+# Pre-push hook for inven-Tory (Cross-Platform: Windows Git Bash, Linux, macOS)
+# Enforces ruff + black compliance before pushing to remote.
+
+echo "==> Running pre-push lint checks..."
+
+# Detect Python inside virtual environment
+if [ -f ".venv/Scripts/python.exe" ]; then
+    PYTHON=".venv/Scripts/python.exe"
+elif [ -f ".venv/bin/python" ]; then
+    PYTHON=".venv/bin/python"
+else
+    PYTHON="python"
+fi
+
+# 1. Run ruff check
+echo "--> Checking ruff..."
+$PYTHON -m ruff check services/ packages/
+RUFF_RES=$?
+
+if [ $RUFF_RES -ne 0 ]; then
+    echo "x ruff check failed! Run 'make lint' or '$PYTHON -m ruff check --fix services/ packages/' to fix imports."
+    exit 1
+fi
+
+# 2. Run black check
+echo "--> Checking black..."
+$PYTHON -m black --check services/ packages/
+BLACK_RES=$?
+
+if [ $BLACK_RES -ne 0 ]; then
+    echo "x black check failed! Run 'make lint' or '$PYTHON -m black services/ packages/' to format code."
+    exit 1
+fi
+
+echo "==> Pre-push lint checks passed successfully! [OK]"
+exit 0
