@@ -8,6 +8,7 @@ lives in services; domain rules live in packages/domain.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.v1 import auth, devices
 from app.core.config import settings
 
 app = FastAPI(
@@ -40,10 +41,14 @@ async def health_check() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Router registration — routers are added in later issues:
-#
-#   Issue 08: auth / device registration  →  app/api/v1/auth.py
-#   Issue 09: sync push/pull              →  app/api/v1/sync.py
-#   Issue 10: products / search           →  app/api/v1/products.py
-#   Issue 11: reports / dashboard         →  app/api/v1/reports.py
+# Router registration
 # ---------------------------------------------------------------------------
+API_V1_PREFIX = "/api/v1"
+
+app.include_router(auth.router, prefix=API_V1_PREFIX)
+app.include_router(devices.router, prefix=API_V1_PREFIX)
+
+# Future routers (Issue 14+):
+#   Issue 15: sync push/pull  →  app/api/v1/sync.py
+#   Issue 14: products/stores →  app/api/v1/products.py  app/api/v1/stores.py
+#   Issue 17: audit log       →  app/api/v1/audit.py

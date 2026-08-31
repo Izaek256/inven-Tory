@@ -34,8 +34,8 @@ select = [
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ANN"]  # Relaxed annotation rules in tests
-"**/tests/**/*.py" = ["ANN"]
+"tests/**/*.py" = ["ANN", "ARG"]  # Relaxed annotation + unused-arg rules in tests
+"**/tests/**/*.py" = ["ANN", "ARG"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "domain", "storage"]
@@ -64,7 +64,17 @@ testpaths = [
     "packages/domain/tests",
     "packages/storage/tests",
 ]
+# Ensure each package root is on sys.path so `from app.xxx import` and
+# `from storage.xxx import` resolve correctly regardless of which directory
+# pytest is invoked from.  The packages themselves are also pip-installed as
+# editable installs in CI, so this is belt-and-braces for local runs.
+pythonpath = [
+    "services/api",
+    "packages/storage",
+    "packages/domain",
+]
 addopts = "-v --tb=short"
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
+asyncio_mode = "auto"
