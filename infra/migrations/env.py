@@ -10,21 +10,29 @@ from __future__ import annotations
 
 import asyncio
 from logging.config import fileConfig
+from typing import TYPE_CHECKING
 
 from alembic import context
 from sqlalchemy import pool
-from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+if TYPE_CHECKING:
+    from sqlalchemy.engine import Connection
 
 # ---------------------------------------------------------------------------
 # Import every model so metadata is populated for autogenerate.
 # Add new model imports here as issues introduce new tables.
 # ---------------------------------------------------------------------------
-from app.db import Base  # noqa: F401 — registers DeclarativeBase
-from app.models.store import Store  # noqa: F401
-from app.models.user import User  # noqa: F401
+from app.db import Base
+from app.models.audit_event import AuditEvent  # noqa: F401
 from app.models.device import Device  # noqa: F401
-# Issue 14 will add: Product, InventoryTransaction, StockBalance, Transfer, …
+from app.models.inventory_transaction import InventoryTransaction  # noqa: F401
+from app.models.product import Product  # noqa: F401
+from app.models.stock_balance import StockBalance  # noqa: F401
+from app.models.store import Store  # noqa: F401
+from app.models.sync_receipt import SyncReceipt  # noqa: F401
+from app.models.transfer import Transfer  # noqa: F401
+from app.models.user import User  # noqa: F401
 
 # ---------------------------------------------------------------------------
 # Alembic Config object
