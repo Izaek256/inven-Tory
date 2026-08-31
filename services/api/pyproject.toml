@@ -22,6 +22,7 @@ dependencies = [
     "alembic>=1.13.0",       # Migrations
     # Auth
     "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=3.1.0,<5",   # passlib 1.7.4 is incompatible with bcrypt 5.x (dropped __about__)
     "python-jose[cryptography]>=3.3.0",
     # HTTP client (for internal calls)
     "httpx>=0.27.0",

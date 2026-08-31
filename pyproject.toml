@@ -34,8 +34,8 @@ select = [
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = ["ANN"]  # Relaxed annotation rules in tests
-"**/tests/**/*.py" = ["ANN"]
+"tests/**/*.py" = ["ANN", "ARG"]  # Relaxed annotation + unused-arg rules in tests
+"**/tests/**/*.py" = ["ANN", "ARG"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "domain", "storage"]
@@ -68,3 +68,4 @@ addopts = "-v --tb=short"
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
+asyncio_mode = "auto"
