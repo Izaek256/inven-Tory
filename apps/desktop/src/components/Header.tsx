@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
+import { getLastSyncTimestamp } from '../services/tauriSyncService';
 import { Badge, ThemeToggle, Select } from '@inven-tory/ui';
 
 interface HeaderProps {
@@ -20,6 +21,7 @@ export const Header: React.FC<HeaderProps> = ({
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   );
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
+  const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
 
   useEffect(() => {
     const handleOnline = (): void => setIsOnline(true);
@@ -43,9 +45,24 @@ export const Header: React.FC<HeaderProps> = ({
     fetchPendingCount();
     const interval = setInterval(fetchPendingCount, 1000);
 
+    // Fetch last sync timestamp on mount and every 5 s (SYNC-009)
+    const fetchLastSync = async (): Promise<void> => {
+      try {
+        const ts = await getLastSyncTimestamp();
+        if (isMounted) {
+          setLastSyncAt(ts);
+        }
+      } catch {
+        // Ignore errors
+      }
+    };
+    fetchLastSync();
+    const syncInterval = setInterval(fetchLastSync, 5000);
+
     return (): void => {
       isMounted = false;
       clearInterval(interval);
+      clearInterval(syncInterval);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
@@ -81,6 +98,21 @@ export const Header: React.FC<HeaderProps> = ({
           <span style={{ display: 'none' }} data-testid="pending-sync-count">
             {pendingSyncCount}
           </span>
+        </div>
+
+        {/* Last sync timestamp (SYNC-009) */}
+        <div
+          className="last-sync-badge"
+          data-testid="last-sync-timestamp"
+          title={lastSyncAt ? `Last synced: ${lastSyncAt}` : 'Not yet synced'}
+        >
+          {lastSyncAt ? (
+            <span className="last-sync-label">
+              Synced: {new Date(lastSyncAt).toLocaleTimeString()}
+            </span>
+          ) : (
+            <span className="last-sync-label last-sync-none">Not synced</span>
+          )}
         </div>
 
         {/* Active Store Selector */}

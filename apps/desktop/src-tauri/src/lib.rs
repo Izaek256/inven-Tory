@@ -1896,6 +1896,231 @@ pub mod commands {
 
         Ok(count)
     }
+
+    // -----------------------------------------------------------------------
+    // Sync commands — Issue 15
+    // -----------------------------------------------------------------------
+
+    /// Return pending outbox events ready for push (PENDING or RETRYABLE_ERROR
+    /// with a past or null next_attempt_at), ordered by created_at ASC.
+    /// The sync worker reads these, posts them to /api/v1/sync/push, then calls
+    /// update_outbox_event_status to advance each event's state.
+    #[tauri::command]
+    pub fn get_pending_outbox_events(limit: Option<i32>) -> Result<Vec<serde_json::Value>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let batch_limit = limit.unwrap_or(100).max(1).min(500);
+        let now = now_iso();
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, event_id, event_type, payload, status, retry_count, \
+                 next_attempt_at, created_at, last_error \
+                 FROM outbox_events \
+                 WHERE status = 'PENDING' \
+                    OR (status = 'RETRYABLE_ERROR' \
+                        AND (next_attempt_at IS NULL OR next_attempt_at <= ?1)) \
+                 ORDER BY created_at ASC \
+                 LIMIT ?2",
+            )
+            .map_err(|e| format!("SQL error preparing outbox query: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![now, batch_limit], |row| {
+                Ok(serde_json::json!({
+                    "id": row.get::<_, String>(0)?,
+                    "event_id": row.get::<_, String>(1)?,
+                    "event_type": row.get::<_, String>(2)?,
+                    "payload": row.get::<_, String>(3)?,
+                    "status": row.get::<_, String>(4)?,
+                    "retry_count": row.get::<_, i32>(5)?,
+                    "next_attempt_at": row.get::<_, Option<String>>(6)?,
+                    "created_at": row.get::<_, String>(7)?,
+                    "last_error": row.get::<_, Option<String>>(8)?
+                }))
+            })
+            .map_err(|e| format!("Failed to query outbox events: {}", e))?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            events.push(row.map_err(|e| format!("Failed to read outbox row: {}", e))?);
+        }
+        Ok(events)
+    }
+
+    /// Transition an outbox event to a new status.
+    ///
+    /// Valid target_status values:
+    ///   "SENDING"            — optimistic lock before HTTP call
+    ///   "ACCEPTED"           — server returned accepted receipt
+    ///   "SYNCED"             — final settled state
+    ///   "RETRYABLE_ERROR"    — transient error; backoff applied
+    ///   "PERMANENT_REJECTION"— server rejected with 4xx validation error
+    ///
+    /// For RETRYABLE_ERROR the retry_count is incremented and next_attempt_at
+    /// is calculated with exponential backoff: base 5 s * 2^retry_count,
+    /// capped at 3600 s (SYNC-011).
+    #[tauri::command]
+    pub fn update_outbox_event_status(
+        event_id: String,
+        target_status: String,
+        error_msg: Option<String>,
+    ) -> Result<(), String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        // Read current retry_count
+        let (current_retry, _current_status): (i32, String) = conn
+            .query_row(
+                "SELECT retry_count, status FROM outbox_events WHERE event_id = ?1",
+                params![event_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| format!("Outbox event '{}' not found.", event_id))?;
+
+        let now = now_iso();
+
+        match target_status.as_str() {
+            "RETRYABLE_ERROR" => {
+                // Increment retry_count and calculate exponential backoff
+                let new_retry = current_retry + 1;
+                // base 5 s * 2^(new_retry - 1), capped at 3600 s
+                let delay_secs: i64 = (5_i64 * 2_i64.pow((new_retry - 1).max(0) as u32)).min(3600);
+                // next_attempt_at = now + delay (simple ISO offset approach: store as epoch nanos)
+                // We store as an ISO 8601 string offset by delay seconds.
+                // rusqlite doesn't have datetime arithmetic, so we compute in Rust.
+                let delay = std::time::Duration::from_secs(delay_secs as u64);
+                let next_attempt: chrono::DateTime<Utc> = Utc::now() + chrono::Duration::from_std(delay)
+                    .unwrap_or(chrono::Duration::seconds(3600));
+                let next_attempt_str = next_attempt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+                conn.execute(
+                    "UPDATE outbox_events SET status = ?1, retry_count = ?2, \
+                     next_attempt_at = ?3, last_error = ?4 \
+                     WHERE event_id = ?5",
+                    params![
+                        target_status,
+                        new_retry,
+                        next_attempt_str,
+                        error_msg,
+                        event_id
+                    ],
+                )
+                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+            }
+            "ACCEPTED" | "SYNCED" => {
+                conn.execute(
+                    "UPDATE outbox_events SET status = ?1, last_error = NULL, \
+                     next_attempt_at = NULL \
+                     WHERE event_id = ?2",
+                    params![target_status, event_id],
+                )
+                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+            }
+            "PERMANENT_REJECTION" | "EXCEPTION_REVIEW" => {
+                conn.execute(
+                    "UPDATE outbox_events SET status = ?1, last_error = ?2 \
+                     WHERE event_id = ?3",
+                    params![target_status, error_msg, event_id],
+                )
+                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+            }
+            _ => {
+                // SENDING or other status — just update the status field
+                conn.execute(
+                    "UPDATE outbox_events SET status = ?1 WHERE event_id = ?2",
+                    params![target_status, event_id],
+                )
+                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Update the sync_status (and optionally server_accepted_at) on an
+    /// inventory_transactions row after a successful push acknowledgement.
+    #[tauri::command]
+    pub fn update_transaction_sync_status(
+        transaction_id: String,
+        sync_status: String,
+        server_accepted_at: Option<String>,
+    ) -> Result<(), String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let rows_affected = match server_accepted_at {
+            Some(ref ts) => conn.execute(
+                "UPDATE inventory_transactions SET sync_status = ?1, server_accepted_at = ?2 \
+                 WHERE transaction_id = ?3",
+                params![sync_status, ts, transaction_id],
+            ),
+            None => conn.execute(
+                "UPDATE inventory_transactions SET sync_status = ?1 \
+                 WHERE transaction_id = ?2",
+                params![sync_status, transaction_id],
+            ),
+        }
+        .map_err(|e| format!("Failed to update transaction sync status: {}", e))?;
+
+        if rows_affected == 0 {
+            return Err(format!("Transaction '{}' not found.", transaction_id));
+        }
+        Ok(())
+    }
+
+    /// Read the stored last-successful-sync timestamp (SYNC-009).
+    /// Returns null if no sync has completed yet.
+    #[tauri::command]
+    pub fn get_last_sync_timestamp() -> Result<Option<String>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        // Ensure the kv_store table exists (created lazily on first write)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS kv_store \
+             (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+
+        let result: Option<String> = conn
+            .query_row(
+                "SELECT value FROM kv_store WHERE key = 'last_sync_at'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        Ok(result)
+    }
+
+    /// Persist the last-successful-sync timestamp (SYNC-009).
+    #[tauri::command]
+    pub fn set_last_sync_timestamp(timestamp: String) -> Result<(), String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS kv_store \
+             (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO kv_store (key, value) VALUES ('last_sync_at', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = ?1",
+            params![timestamp],
+        )
+        .map_err(|e| format!("Failed to persist last_sync_at: {}", e))?;
+
+        Ok(())
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1928,6 +2153,12 @@ pub fn run() {
             commands::cancel_transfer,
             commands::mark_transfer_exception,
             commands::get_pending_outbox_count,
+            // Issue 15: sync commands
+            commands::get_pending_outbox_events,
+            commands::update_outbox_event_status,
+            commands::update_transaction_sync_status,
+            commands::get_last_sync_timestamp,
+            commands::set_last_sync_timestamp,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

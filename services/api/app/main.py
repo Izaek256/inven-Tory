@@ -8,7 +8,7 @@ lives in services; domain rules live in packages/domain.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.v1 import auth, devices
+from app.api.v1 import auth, devices, sync
 from app.core.config import settings
 
 app = FastAPI(
@@ -47,8 +47,8 @@ API_V1_PREFIX = "/api/v1"
 
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(devices.router, prefix=API_V1_PREFIX)
+app.include_router(sync.router, prefix=API_V1_PREFIX)
 
-# Future routers (Issue 15+):
-#   Issue 15: sync push/pull  →  app/api/v1/sync.py  (wires ingestion service)
-#   Issue 14: products/stores →  app/api/v1/products.py  app/api/v1/stores.py
-#   Issue 17: audit log       →  app/api/v1/audit.py
+# Future routers (Issue 16+):
+#   Issue 16: remote dashboard →  app/api/v1/dashboard.py
+#   Issue 17: audit log        →  app/api/v1/audit.py
