@@ -50,6 +50,12 @@ const CSS = `
   animation: it-spin 0.75s linear infinite;
 }
 
+@keyframes it-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .it-spinner__circle { animation: none; }
+}
+
 .it-sr-only {
   position: absolute;
   width: 1px;
@@ -59,7 +65,7 @@ const CSS = `
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
-  border-0: 0;
+  border: 0;
 }
 `;
 
