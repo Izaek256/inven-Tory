@@ -94,3 +94,6 @@ infra/migrations/versions/__pycache__/
  .github/copilot/skills/
 apps/desktop/skills-lock.json
 apps/desktop/.agents/skills/frontend-design/LICENSE.txt
+.agents/skills/frontend-design/SKILL.md
+.agents/skills/frontend-design/LICENSE.txt
+skills-lock.json
