@@ -32,6 +32,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "eslint": "^8.57.0",
     "eslint-plugin-react-hooks": "^4.6.0",
+    "fast-check": "^3.22.0",
     "jsdom": "^24.1.0",
     "prettier": "^3.3.0",
     "typescript": "^5.5.0",
@@ -39,4 +40,3 @@
     "vitest": "^2.0.0"
   }
 }
-

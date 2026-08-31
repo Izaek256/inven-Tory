@@ -29,13 +29,13 @@ body {
 
 /* Header Styling */
 .app-header {
-  height: 64px;
+  height: 48px;
   background-color: var(--it-surface);
   border-bottom: 1px solid var(--it-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 24px;
+  padding: 0 20px;
   box-shadow: var(--it-shadow-xs);
   z-index: 10;
 }
@@ -62,7 +62,7 @@ body {
 }
 
 .brand-title {
-  font-size: 18px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--it-text-primary);
   letter-spacing: -0.5px;
@@ -94,12 +94,12 @@ body {
 
 /* Sidebar Styling */
 .app-sidebar {
-  width: 240px;
+  width: 200px;
   background-color: var(--it-surface);
   border-right: 1px solid var(--it-border);
   display: flex;
   flex-direction: column;
-  padding: 16px 12px;
+  padding: 12px 8px;
   gap: 6px;
 }
 
@@ -107,10 +107,10 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 10px 14px;
+  padding: 7px 10px;
   border-radius: var(--it-r-md);
   color: var(--it-text-secondary);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   border: 1px solid transparent;
@@ -141,7 +141,7 @@ body {
 .app-content {
   flex: 1;
   background-color: var(--it-bg);
-  padding: 24px;
+  padding: 16px;
   overflow-y: auto;
 }
 
@@ -151,19 +151,19 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   flex-wrap: wrap;
 }
 
 .view-title {
-  font-size: 22px;
+  font-size: 18px;
   font-weight: 700;
   color: var(--it-text-primary);
   margin-bottom: 4px;
 }
 
 .view-subtitle {
-  font-size: 14px;
+  font-size: 13px;
   color: var(--it-text-secondary);
 }
 
@@ -171,4 +171,78 @@ body {
   font-size: 11px;
   color: var(--it-text-secondary);
   font-family: var(--it-font-mono);
+}
+
+/* ── UI Package Compact Overrides ────────────────────────────────────────── */
+
+/* Buttons: md and lg sizes — sm is preserved */
+.it-btn--md {
+  min-height: 30px;
+  padding: 5px 12px;
+}
+.it-btn--icon-only.it-btn--md {
+  padding: 5px;
+  width: 30px;
+}
+.it-btn--lg {
+  min-height: 36px;
+  padding: 8px 18px;
+}
+.it-btn--icon-only.it-btn--lg {
+  padding: 8px;
+  width: 36px;
+}
+
+/* Form inputs and selects */
+.it-input {
+  padding: 5px 10px;
+  font-size: 13px;
+}
+/* SearchInput has extra left padding for the icon; preserve the offset */
+.it-search__input {
+  padding-left: calc(10px + 16px + 6px);
+}
+
+/* Table header and body cells */
+.it-th {
+  padding: 6px 12px;
+}
+.it-td {
+  padding: 6px 12px;
+}
+/* Empty-state cell padding is preserved (requirement 3.6) */
+.it-td--empty {
+  padding: var(--it-sp-12);
+}
+
+/* Modal padding and lg max-width */
+.it-modal--lg {
+  max-width: 660px;
+}
+.it-modal__header {
+  padding: 12px 20px;
+}
+.it-modal__body {
+  padding: 16px 20px;
+}
+.it-modal__footer {
+  padding: 12px 20px;
+}
+
+/* StatCard value font-size */
+.it-stat-card__value {
+  font-size: 22px;
+}
+
+/* Card padding — does not affect it-card--no-pad */
+.it-card:not(.it-card--no-pad) {
+  padding: 12px 16px;
+}
+
+/* SummaryCard header/body */
+.it-summary-card__header {
+  padding: 10px 16px;
+}
+.it-summary-card__body {
+  padding: 12px 16px;
 }
