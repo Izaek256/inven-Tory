@@ -16,76 +16,67 @@ import { getStockBalance, adjustStock } from '../services/tauriTransactionServic
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { InventoryTransaction, AdjustStockInput } from '../types/transaction';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import {
+  Button,
+  StepIndicator as SharedStepIndicator,
+  TextInput,
+  Select,
+  Badge,
+  BadgeStatus,
+} from '@inven-tory/ui';
 
 type Step = 'count' | 'approve' | 'done';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 function varianceLabel(delta: number): React.ReactElement {
   if (delta === 0)
     return (
-      <span className="variance-neutral" data-testid="variance-display">
+      <span
+        style={{ color: 'var(--it-text-secondary)', fontWeight: 600 }}
+        data-testid="variance-display"
+      >
         ±0 (no discrepancy)
       </span>
     );
   if (delta > 0)
     return (
-      <span className="variance-positive" data-testid="variance-display">
+      <span
+        style={{ color: 'var(--it-green-text)', fontWeight: 700 }}
+        data-testid="variance-display"
+      >
         +{delta} (surplus — unrecorded receipt?)
       </span>
     );
   return (
-    <span className="variance-negative" data-testid="variance-display">
+    <span style={{ color: 'var(--it-red-text)', fontWeight: 700 }} data-testid="variance-display">
       {delta} (shortage — adjustment required)
     </span>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export const PhysicalCountAdjustmentView: React.FC = () => {
-  // Demo credentials
   const userId = 'USER-DEMO';
   const deviceId = 'DEV-DEMO';
 
-  // Step state
   const [step, setStep] = useState<Step>('count');
 
-  // Entity selection
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>('');
   const [productQuery, setProductQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
-  // Count session
   const [systemQty, setSystemQty] = useState<number | null>(null);
   const [countedQty, setCountedQty] = useState<string>('');
   const [loadingBalance, setLoadingBalance] = useState<boolean>(false);
 
-  // Approval
   const [reason, setReason] = useState<string>('');
   const [reasonError, setReasonError] = useState<string | null>(null);
-  /** Provisional elevated-permission flag — server-side enforcement lands in Issue 13/14. */
   const [hasElevatedPermission, setHasElevatedPermission] = useState<boolean>(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
-  // Submission
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [approvedTransaction, setApprovedTransaction] = useState<InventoryTransaction | null>(null);
-
-  // ---------------------------------------------------------------------------
-  // Load stores
-  // ---------------------------------------------------------------------------
 
   useEffect(() => {
     const loadStores = async (): Promise<void> => {
@@ -103,10 +94,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
     loadStores();
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // Product search (debounced 300 ms)
-  // ---------------------------------------------------------------------------
-
   useEffect(() => {
     const timer = setTimeout(async () => {
       if (productQuery.trim()) {
@@ -123,10 +110,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
     return (): void => clearTimeout(timer);
   }, [productQuery]);
 
-  // ---------------------------------------------------------------------------
-  // Load system quantity when store + product are set
-  // ---------------------------------------------------------------------------
-
   const loadSystemQty = useCallback(async (storeId: string, product: Product): Promise<void> => {
     setLoadingBalance(true);
     setSystemQty(null);
@@ -134,15 +117,11 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
       const bal = await getStockBalance(storeId, product.id);
       setSystemQty(bal.quantity);
     } catch (_err) {
-      setSystemQty(0); // Treat as 0 if not found
+      setSystemQty(0);
     } finally {
       setLoadingBalance(false);
     }
   }, []);
-
-  // ---------------------------------------------------------------------------
-  // Handlers
-  // ---------------------------------------------------------------------------
 
   const handleProductSelect = (product: Product): void => {
     setSelectedProduct(product);
@@ -173,7 +152,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
   const parsedCounted = countedQty === '' ? null : parseInt(countedQty, 10);
   const variance = parsedCounted !== null && systemQty !== null ? parsedCounted - systemQty : null;
 
-  // Step 1 → Step 2
   const handleProceedToApproval = (): void => {
     setError(null);
     if (!selectedStoreId) {
@@ -195,7 +173,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
     setStep('approve');
   };
 
-  // Step 2 → submit
   const handleApprove = async (): Promise<void> => {
     setError(null);
     setReasonError(null);
@@ -208,7 +185,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
       return;
     }
 
-    // Provisional client-side permission gate (server enforcement: Issue 13/14)
     if (!hasElevatedPermission) {
       const msg =
         'Elevated permission is required to approve stock adjustments (provisional check).';
@@ -260,46 +236,22 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
     setIsSubmitting(false);
   };
 
-  // ---------------------------------------------------------------------------
-  // Step indicator helper
-  // ---------------------------------------------------------------------------
-
-  const StepIndicator: React.FC = () => (
-    <div className="step-indicator" data-testid="step-indicator">
-      <div
-        className={`step-pill ${step === 'count' || step === 'approve' || step === 'done' ? 'step-active' : ''}`}
-      >
-        <span className="step-num">1</span>
-        <span>Count Session</span>
-      </div>
-      <div className="step-connector" />
-      <div
-        className={`step-pill ${step === 'approve' || step === 'done' ? 'step-active' : 'step-inactive'}`}
-      >
-        <span className="step-num">2</span>
-        <span>Approve Adjustment</span>
-      </div>
-      <div className="step-connector" />
-      <div className={`step-pill ${step === 'done' ? 'step-active' : 'step-inactive'}`}>
-        <span className="step-num">3</span>
-        <span>Confirmed</span>
-      </div>
-    </div>
-  );
-
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+  const currentStepIdx = step === 'count' ? 0 : step === 'approve' ? 1 : 2;
+  const wizardSteps = [
+    { id: 'count', label: 'Count Session' },
+    { id: 'approve', label: 'Approve Adjustment' },
+    { id: 'done', label: 'Confirmed' },
+  ];
 
   return (
-    <div className="view-container" data-testid="physical-count-view">
+    <div className="view-container" data-testid="physical-count-view" style={{ maxWidth: '640px' }}>
       {/* Header */}
       <div className="view-header">
-        <div className="view-title">
-          <ClipboardList className="icon" size={24} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ClipboardList size={28} color="var(--it-green)" />
           <div>
-            <h1>Physical Count &amp; Adjustment</h1>
-            <p>
+            <h2 className="view-title">Physical Count &amp; Adjustment</h2>
+            <p className="view-subtitle">
               Record physical stock counts and reconcile variances with ADJUSTMENT transactions
               (FR-MOV-006, Section 13.4)
             </p>
@@ -307,80 +259,161 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
         </div>
       </div>
 
-      <StepIndicator />
+      <div data-testid="step-indicator">
+        <SharedStepIndicator steps={wizardSteps} currentStepIndex={currentStepIdx} />
+      </div>
 
       {/* Global error banner */}
       {error && (
-        <div className="alert alert-error" data-testid="count-error-banner">
-          <AlertCircle size={20} />
+        <div
+          className="it-toast it-toast--error"
+          style={{ marginBottom: '16px' }}
+          data-testid="count-error-banner"
+        >
+          <AlertCircle size={16} aria-hidden="true" />
           <span>{error}</span>
         </div>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Step 1: Count Session                                               */}
-      {/* ------------------------------------------------------------------ */}
+      {/* Step 1: Count Session */}
       {step === 'count' && (
-        <div className="form-card" data-testid="count-session-panel">
-          <h2 className="panel-title">Step 1 — Enter Physical Count</h2>
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+          }}
+          data-testid="count-session-panel"
+        >
+          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
+            Step 1 — Enter Physical Count
+          </h3>
 
           {/* Store */}
-          <div className="form-group">
-            <label htmlFor="count-store-select">Store</label>
-            <select
-              id="count-store-select"
-              value={selectedStoreId}
-              onChange={(e): void => handleStoreChange(e.target.value)}
-              data-testid="store-select"
-              className="form-control"
-            >
-              {stores.map((store) => (
-                <option key={store.id} value={store.id}>
-                  {store.name} ({store.code})
-                </option>
-              ))}
-            </select>
-          </div>
+          <Select
+            id="count-store-select"
+            data-testid="store-select"
+            label="Store"
+            value={selectedStoreId}
+            onChange={(e): void => handleStoreChange(e.target.value)}
+            options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+          />
 
           {/* Product search */}
-          <div className="form-group">
-            <label htmlFor="count-product-search">Product</label>
+          <div style={{ position: 'relative' }}>
+            <label className="it-label" style={{ display: 'block', marginBottom: '4px' }}>
+              Product
+            </label>
             {selectedProduct ? (
-              <div className="selected-item-badge">
-                <Package size={16} />
-                <span data-testid="selected-product-name">{selectedProduct.name}</span>
-                <span className="sku-tag">SKU: {selectedProduct.sku}</span>
-                <button
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '10px 14px',
+                  border: '1px solid var(--it-green-border)',
+                  borderRadius: 'var(--it-r-md)',
+                  backgroundColor: 'var(--it-green-surface)',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Package size={18} color="var(--it-green)" />
+                  <span
+                    data-testid="selected-product-name"
+                    style={{ fontWeight: 600, color: 'var(--it-green-text)', fontSize: '13px' }}
+                  >
+                    {selectedProduct.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: '12px',
+                      fontFamily: 'var(--it-font-mono)',
+                      color: 'var(--it-text-secondary)',
+                    }}
+                  >
+                    SKU: {selectedProduct.sku}
+                  </span>
+                </div>
+                <Button
                   type="button"
-                  className="btn-icon"
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
                   onClick={clearProduct}
                   data-testid="clear-product-btn"
                   title="Change Product"
                 >
                   <X size={16} />
-                </button>
+                </Button>
               </div>
             ) : (
-              <div className="search-input-wrapper">
-                <input
+              <div>
+                <TextInput
                   id="count-product-search"
-                  type="text"
+                  data-testid="product-search-input"
                   value={productQuery}
                   onChange={(e): void => setProductQuery(e.target.value)}
                   placeholder="Search by product name or SKU..."
-                  data-testid="product-search-input"
-                  className="form-control"
                 />
                 {searchResults.length > 0 && (
-                  <ul className="search-results-dropdown" data-testid="product-search-results">
+                  <ul
+                    data-testid="product-search-results"
+                    style={{
+                      position: 'absolute',
+                      top: '100%',
+                      left: 0,
+                      right: 0,
+                      zIndex: 10,
+                      margin: '4px 0 0 0',
+                      padding: 0,
+                      listStyle: 'none',
+                      backgroundColor: 'var(--it-card)',
+                      border: '1px solid var(--it-border)',
+                      borderRadius: 'var(--it-r-md)',
+                      boxShadow: 'var(--it-shadow-md)',
+                      maxHeight: '200px',
+                      overflowY: 'auto',
+                    }}
+                  >
                     {searchResults.map((product) => (
                       <li
                         key={product.id}
                         onClick={(): void => handleProductSelect(product)}
                         data-testid={`product-result-${product.id}`}
+                        style={{
+                          padding: '10px 14px',
+                          cursor: 'pointer',
+                          borderBottom: '1px solid var(--it-border)',
+                        }}
+                        onMouseEnter={(e) =>
+                          (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
+                        }
+                        onMouseLeave={(e) =>
+                          (e.currentTarget.style.backgroundColor = 'transparent')
+                        }
                       >
-                        <div className="product-result-name">{product.name}</div>
-                        <div className="product-result-sku">SKU: {product.sku}</div>
+                        <div
+                          style={{
+                            fontWeight: 600,
+                            fontSize: '13px',
+                            color: 'var(--it-text-primary)',
+                          }}
+                        >
+                          {product.name}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: '12px',
+                            color: 'var(--it-text-secondary)',
+                            fontFamily: 'var(--it-font-mono)',
+                          }}
+                        >
+                          SKU: {product.sku}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -391,17 +424,53 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
 
           {/* Count table — only shown when a product is selected */}
           {selectedProduct && (
-            <div className="count-variance-table" data-testid="count-variance-table">
-              <div className="count-row">
-                <span className="count-label">System Quantity (projection)</span>
-                <span className="count-value system-qty" data-testid="system-quantity-display">
+            <div
+              style={{
+                backgroundColor: 'var(--it-surface)',
+                border: '1px solid var(--it-border)',
+                borderRadius: 'var(--it-r-md)',
+                overflow: 'hidden',
+              }}
+              data-testid="count-variance-table"
+            >
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  borderBottom: '1px solid var(--it-border)',
+                }}
+              >
+                <span style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>
+                  System Quantity (projection)
+                </span>
+                <span
+                  data-testid="system-quantity-display"
+                  style={{
+                    fontFamily: 'var(--it-font-mono)',
+                    fontWeight: 700,
+                    fontSize: '16px',
+                    color: 'var(--it-green-text)',
+                  }}
+                >
                   {loadingBalance ? '…' : (systemQty ?? '—')}
                 </span>
               </div>
 
-              <div className="count-row">
-                <label htmlFor="counted-qty-input" className="count-label">
-                  Counted Quantity <span className="required-asterisk">*</span>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '12px 16px',
+                  borderBottom: '1px solid var(--it-border)',
+                }}
+              >
+                <label
+                  htmlFor="counted-qty-input"
+                  style={{ fontSize: '13px', color: 'var(--it-text-primary)', fontWeight: 600 }}
+                >
+                  Counted Quantity <span style={{ color: 'var(--it-red)' }}>*</span>
                 </label>
                 <input
                   id="counted-qty-input"
@@ -411,93 +480,201 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
                   onChange={(e): void => setCountedQty(e.target.value)}
                   placeholder="0"
                   data-testid="counted-quantity-input"
-                  className="form-control count-qty-input"
+                  className="it-input"
+                  style={{
+                    width: '120px',
+                    textAlign: 'center',
+                    fontFamily: 'var(--it-font-mono)',
+                    fontWeight: 600,
+                  }}
                 />
               </div>
 
-              <div className="count-row count-row-variance">
-                <span className="count-label">Variance (Counted − System)</span>
-                <span className="count-value">
-                  {variance !== null ? varianceLabel(variance) : <span className="muted">—</span>}
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  padding: '12px 16px',
+                  backgroundColor: 'var(--it-gray-surface)',
+                }}
+              >
+                <span style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>
+                  Variance (Counted − System)
+                </span>
+                <span style={{ fontSize: '14px' }}>
+                  {variance !== null ? (
+                    varianceLabel(variance)
+                  ) : (
+                    <span style={{ color: 'var(--it-text-disabled)' }}>—</span>
+                  )}
                 </span>
               </div>
             </div>
           )}
 
-          <div className="form-actions">
-            <button
+          <div style={{ marginTop: '8px' }}>
+            <Button
               type="button"
-              className="btn btn-primary"
+              variant="primary"
               onClick={handleProceedToApproval}
               disabled={!selectedProduct || parsedCounted === null}
               data-testid="proceed-to-approval-btn"
+              style={{ width: '100%' }}
             >
               <ArrowRight size={18} />
               <span>Proceed to Approval</span>
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Step 2: Approval                                                    */}
-      {/* ------------------------------------------------------------------ */}
+      {/* Step 2: Approval */}
       {step === 'approve' && (
-        <div className="form-card" data-testid="approval-panel">
-          <h2 className="panel-title">Step 2 — Approve Adjustment</h2>
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+          }}
+          data-testid="approval-panel"
+        >
+          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
+            Step 2 — Approve Adjustment
+          </h3>
 
-          {/* Summary table */}
-          <div className="count-summary-block" data-testid="approval-summary">
-            <table className="summary-table">
+          <div
+            style={{
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-md)',
+              overflow: 'hidden',
+            }}
+            data-testid="approval-summary"
+          >
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead>
-                <tr>
-                  <th>Field</th>
-                  <th>Value</th>
+                <tr
+                  style={{
+                    backgroundColor: 'var(--it-surface)',
+                    color: 'var(--it-text-secondary)',
+                  }}
+                >
+                  <th
+                    style={{
+                      padding: '8px 14px',
+                      textAlign: 'left',
+                      borderBottom: '1px solid var(--it-border)',
+                    }}
+                  >
+                    Field
+                  </th>
+                  <th
+                    style={{
+                      padding: '8px 14px',
+                      textAlign: 'left',
+                      borderBottom: '1px solid var(--it-border)',
+                    }}
+                  >
+                    Value
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>Product</td>
-                  <td data-testid="summary-product-name">{selectedProduct?.name}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Product
+                  </td>
+                  <td
+                    style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}
+                    data-testid="summary-product-name"
+                  >
+                    {selectedProduct?.name}
+                  </td>
                 </tr>
                 <tr>
-                  <td>SKU</td>
-                  <td>{selectedProduct?.sku}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    SKU
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 14px',
+                      borderBottom: '1px solid var(--it-border)',
+                      fontFamily: 'var(--it-font-mono)',
+                    }}
+                  >
+                    {selectedProduct?.sku}
+                  </td>
                 </tr>
                 <tr>
-                  <td>Store</td>
-                  <td>{stores.find((s) => s.id === selectedStoreId)?.name ?? selectedStoreId}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Store
+                  </td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    {stores.find((s) => s.id === selectedStoreId)?.name ?? selectedStoreId}
+                  </td>
                 </tr>
                 <tr>
-                  <td>System Quantity</td>
-                  <td data-testid="summary-system-qty">{systemQty}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    System Quantity
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 14px',
+                      borderBottom: '1px solid var(--it-border)',
+                      fontFamily: 'var(--it-font-mono)',
+                    }}
+                    data-testid="summary-system-qty"
+                  >
+                    {systemQty}
+                  </td>
                 </tr>
                 <tr>
-                  <td>Counted Quantity</td>
-                  <td data-testid="summary-counted-qty">{parsedCounted}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Counted Quantity
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 14px',
+                      borderBottom: '1px solid var(--it-border)',
+                      fontFamily: 'var(--it-font-mono)',
+                    }}
+                    data-testid="summary-counted-qty"
+                  >
+                    {parsedCounted}
+                  </td>
                 </tr>
                 <tr>
-                  <td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
                     <strong>Adjustment Delta</strong>
                   </td>
-                  <td>
+                  <td
+                    style={{
+                      padding: '8px 14px',
+                      borderBottom: '1px solid var(--it-border)',
+                      fontFamily: 'var(--it-font-mono)',
+                    }}
+                  >
                     <strong data-testid="summary-variance">
                       {variance !== null && variance >= 0 ? `+${variance}` : variance}
                     </strong>
                   </td>
                 </tr>
                 <tr>
-                  <td>Responsible User</td>
-                  <td data-testid="summary-user">{userId}</td>
+                  <td style={{ padding: '8px 14px' }}>Responsible User</td>
+                  <td style={{ padding: '8px 14px' }} data-testid="summary-user">
+                    {userId}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          {/* Reason */}
-          <div className="form-group">
-            <label htmlFor="adjustment-reason-input">
-              Adjustment Reason <span className="required-asterisk">*</span>
+          <div className="it-field">
+            <label htmlFor="adjustment-reason-input" className="it-label">
+              Adjustment Reason <span style={{ color: 'var(--it-red)' }}>*</span>
             </label>
             <textarea
               id="adjustment-reason-input"
@@ -510,18 +687,38 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
               }}
               placeholder="Describe why this adjustment is required (e.g., cycle count discrepancy, shelf damage)..."
               data-testid="reason-input"
-              className={`form-control ${reasonError ? 'input-error' : ''}`}
+              className="it-input"
+              style={reasonError ? { borderColor: 'var(--it-red)' } : undefined}
             />
             {reasonError && (
-              <span className="error-text" data-testid="reason-error">
+              <span
+                style={{ fontSize: '12px', color: 'var(--it-red-text)' }}
+                data-testid="reason-error"
+              >
                 {reasonError}
               </span>
             )}
           </div>
 
-          {/* Elevated-permission gate (provisional — Issue 13/14 enforces server-side) */}
-          <div className="form-group permission-gate" data-testid="permission-gate">
-            <label className="checkbox-label">
+          <div
+            style={{
+              padding: '14px 18px',
+              backgroundColor: 'var(--it-gray-surface)',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-md)',
+            }}
+            data-testid="permission-gate"
+          >
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                cursor: 'pointer',
+                fontSize: '13px',
+                color: 'var(--it-text-primary)',
+              }}
+            >
               <input
                 id="elevated-permission-checkbox"
                 type="checkbox"
@@ -533,23 +730,34 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
                 }}
                 data-testid="elevated-permission-checkbox"
               />
-              <ShieldCheck size={16} />
+              <ShieldCheck size={16} color="var(--it-green)" />
               <span>
                 I confirm I have elevated permission to approve stock adjustments
-                <em className="provisional-badge"> (provisional — Issue 13/14)</em>
+                <em style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>
+                  {' '}
+                  (provisional — Issue 13/14)
+                </em>
               </span>
             </label>
             {permissionError && (
-              <span className="error-text" data-testid="permission-error">
+              <span
+                style={{
+                  display: 'block',
+                  marginTop: '4px',
+                  fontSize: '12px',
+                  color: 'var(--it-red-text)',
+                }}
+                data-testid="permission-error"
+              >
                 {permissionError}
               </span>
             )}
           </div>
 
-          <div className="form-actions">
-            <button
+          <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
+            <Button
               type="button"
-              className="btn btn-secondary"
+              variant="secondary"
               onClick={(): void => {
                 setStep('count');
                 setError(null);
@@ -560,60 +768,119 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
             >
               <ChevronLeft size={18} />
               <span>Back</span>
-            </button>
+            </Button>
 
-            <button
+            <Button
               type="button"
-              className="btn btn-primary"
+              variant="primary"
               onClick={handleApprove}
-              disabled={isSubmitting}
+              loading={isSubmitting}
               data-testid="approve-adjustment-btn"
             >
               <Check size={18} />
-              <span>{isSubmitting ? 'Processing…' : 'Approve Adjustment'}</span>
-            </button>
+              <span>Approve Adjustment</span>
+            </Button>
           </div>
         </div>
       )}
 
-      {/* ------------------------------------------------------------------ */}
-      {/* Step 3: Done                                                         */}
-      {/* ------------------------------------------------------------------ */}
+      {/* Step 3: Done */}
       {step === 'done' && approvedTransaction && (
-        <div className="form-card done-panel" data-testid="adjustment-done-panel">
-          <div className="done-icon-wrap">
-            <Check size={48} className="done-check-icon" />
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '32px 24px',
+            textAlign: 'center',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '16px',
+          }}
+          data-testid="adjustment-done-panel"
+        >
+          <div
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              backgroundColor: 'var(--it-green-surface)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--it-green-text)',
+            }}
+          >
+            <Check size={36} />
           </div>
-          <h2 className="panel-title done-title">Adjustment Approved</h2>
-          <p className="done-subtitle">
+          <h2 style={{ fontSize: '20px', fontWeight: 700, color: 'var(--it-text-primary)' }}>
+            Adjustment Approved
+          </h2>
+          <p style={{ fontSize: '14px', color: 'var(--it-text-secondary)' }}>
             An <strong>ADJUSTMENT</strong> transaction has been recorded with a full audit trail.
           </p>
 
-          <div className="count-summary-block" data-testid="adjustment-result">
-            <table className="summary-table">
+          <div
+            style={{
+              width: '100%',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-md)',
+              overflow: 'hidden',
+              textAlign: 'left',
+            }}
+            data-testid="adjustment-result"
+          >
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead>
-                <tr>
-                  <th>Field</th>
-                  <th>Value</th>
+                <tr
+                  style={{
+                    backgroundColor: 'var(--it-surface)',
+                    color: 'var(--it-text-secondary)',
+                  }}
+                >
+                  <th style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Field
+                  </th>
+                  <th style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Value
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td>Transaction ID</td>
-                  <td>
-                    <code data-testid="result-transaction-id">
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Transaction ID
+                  </td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    <code
+                      data-testid="result-transaction-id"
+                      style={{ fontFamily: 'var(--it-font-mono)' }}
+                    >
                       {approvedTransaction.transaction_id}
                     </code>
                   </td>
                 </tr>
                 <tr>
-                  <td>Movement Type</td>
-                  <td data-testid="result-movement-type">{approvedTransaction.movement_type}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Movement Type
+                  </td>
+                  <td
+                    style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}
+                    data-testid="result-movement-type"
+                  >
+                    {approvedTransaction.movement_type}
+                  </td>
                 </tr>
                 <tr>
-                  <td>Delta Applied</td>
-                  <td data-testid="result-quantity-delta">
-                    <strong>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Delta Applied
+                  </td>
+                  <td
+                    style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}
+                    data-testid="result-quantity-delta"
+                  >
+                    <strong style={{ fontFamily: 'var(--it-font-mono)' }}>
                       {approvedTransaction.quantity_delta >= 0
                         ? `+${approvedTransaction.quantity_delta}`
                         : approvedTransaction.quantity_delta}
@@ -621,36 +888,54 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
                   </td>
                 </tr>
                 <tr>
-                  <td>Reason</td>
-                  <td data-testid="result-reason">{approvedTransaction.reason_code}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Reason
+                  </td>
+                  <td
+                    style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}
+                    data-testid="result-reason"
+                  >
+                    {approvedTransaction.reason_code}
+                  </td>
                 </tr>
                 <tr>
-                  <td>Responsible User</td>
-                  <td data-testid="result-user">{approvedTransaction.user_id}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Responsible User
+                  </td>
+                  <td
+                    style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}
+                    data-testid="result-user"
+                  >
+                    {approvedTransaction.user_id}
+                  </td>
                 </tr>
                 <tr>
-                  <td>Sync Status</td>
-                  <td>{approvedTransaction.sync_status}</td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Sync Status
+                  </td>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    <Badge status={approvedTransaction.sync_status as BadgeStatus} />
+                  </td>
                 </tr>
                 <tr>
-                  <td>Timestamp</td>
-                  <td>{new Date(approvedTransaction.occurred_at).toLocaleString()}</td>
+                  <td style={{ padding: '8px 14px' }}>Timestamp</td>
+                  <td style={{ padding: '8px 14px' }}>
+                    {new Date(approvedTransaction.occurred_at).toLocaleString()}
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
 
-          <div className="form-actions">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={handleReset}
-              data-testid="new-count-btn"
-            >
-              <RotateCcw size={18} />
-              <span>Start New Count</span>
-            </button>
-          </div>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={handleReset}
+            data-testid="new-count-btn"
+          >
+            <RotateCcw size={18} />
+            <span>Start New Count</span>
+          </Button>
         </div>
       )}
     </div>

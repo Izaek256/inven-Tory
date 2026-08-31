@@ -8,6 +8,7 @@ import {
 } from '../services/tauriStoreService';
 import { StoreModal } from '../components/StoreModal';
 import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal';
+import { Button, Badge, StatCard, DataTable, EmptyState, ColumnDef } from '@inven-tory/ui';
 import { Store as StoreIcon, Plus, Edit2, Power, Smartphone, AlertTriangle } from 'lucide-react';
 
 interface DashboardViewProps {
@@ -23,7 +24,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   loading,
   error,
   onRetry,
-  userRole = 'ADMIN', // Default to ADMIN for dev, editable in settings
+  userRole = 'ADMIN',
 }) => {
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [editingStore, setEditingStore] = useState<Store | null>(null);
@@ -34,8 +35,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const activeCount = stores.filter((s) => s.is_active).length;
-
-  // Provisional role restriction check (TODO issue-13)
   const isAuthorized = userRole === 'ADMIN' || userRole === 'MANAGER';
 
   const handleOpenCreateModal = (): void => {
@@ -80,6 +79,105 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     await registerDevice(storeId, deviceName);
   };
 
+  const columns: ColumnDef<Store>[] = [
+    {
+      key: 'code',
+      header: 'Store Code',
+      sortable: true,
+      render: (s) => (
+        <span
+          style={{
+            fontWeight: 600,
+            color: 'var(--it-green-text)',
+            fontFamily: 'var(--it-font-mono)',
+          }}
+        >
+          {s.code}
+        </span>
+      ),
+      accessor: (s) => s.code,
+    },
+    {
+      key: 'name',
+      header: 'Store Name',
+      sortable: true,
+      render: (s) => <span style={{ fontWeight: 500 }}>{s.name}</span>,
+      accessor: (s) => s.name,
+    },
+    {
+      key: 'id',
+      header: 'ID',
+      render: (s) => (
+        <span
+          style={{
+            fontFamily: 'var(--it-font-mono)',
+            fontSize: '12px',
+            color: 'var(--it-text-secondary)',
+          }}
+        >
+          {s.id}
+        </span>
+      ),
+      accessor: (s) => s.id,
+    },
+    {
+      key: 'address',
+      header: 'Address',
+      render: (s) => (
+        <span style={{ color: 'var(--it-text-secondary)' }}>{s.address || 'N/A'}</span>
+      ),
+      accessor: (s) => s.address,
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      render: (s) => <Badge status={s.is_active ? 'ACTIVE' : 'INACTIVE'} />,
+      accessor: (s) => (s.is_active ? 'Active' : 'Inactive'),
+    },
+    {
+      key: 'actions',
+      header: 'Actions',
+      numeric: true,
+      render: (s) => (
+        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            title="Register Local Device Stub (FR-STORE-003)"
+            onClick={() => handleOpenDeviceModal(s)}
+            disabled={!isAuthorized}
+            data-testid={`register-device-btn-${s.id}`}
+          >
+            <Smartphone size={14} />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            title="Edit Store"
+            onClick={() => handleOpenEditModal(s)}
+            disabled={!isAuthorized}
+            data-testid={`edit-store-btn-${s.id}`}
+          >
+            <Edit2 size={14} />
+          </Button>
+          <Button
+            variant={s.is_active ? 'destructive' : 'primary'}
+            size="sm"
+            iconOnly
+            title={s.is_active ? 'Deactivate Store' : 'Activate Store'}
+            onClick={() => handleToggleActive(s)}
+            disabled={!isAuthorized}
+            data-testid={`toggle-store-btn-${s.id}`}
+          >
+            <Power size={14} />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="dashboard-view" data-testid="dashboard-view">
       <div className="view-header">
@@ -90,178 +188,119 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          {!isAuthorized && (
-            <span
-              className="badge badge-inactive"
-              title="Client-side role restriction (provisional) — TODO(issue-13)"
-            >
-              <AlertTriangle size={12} /> Restricted Role ({userRole})
-            </span>
-          )}
-          <button
-            type="button"
-            className="btn btn-primary"
+          {!isAuthorized && <Badge status="INACTIVE" label={`Restricted Role (${userRole})`} />}
+          <Button
+            variant="primary"
             onClick={handleOpenCreateModal}
             disabled={!isAuthorized}
             data-testid="add-store-btn"
           >
             <Plus size={16} /> Add Store
-          </button>
+          </Button>
         </div>
       </div>
 
       {actionError && (
         <div
-          className="alert alert-danger"
+          className="it-toast it-toast--error"
           style={{ marginBottom: '16px' }}
           data-testid="dashboard-action-error"
         >
+          <AlertTriangle size={16} aria-hidden="true" />
           <span>{actionError}</span>
         </div>
       )}
 
       {/* Summary Cards */}
-      <div className="grid-stats">
-        <div className="stat-card">
-          <div className="stat-label">Total Stores</div>
-          <div className="stat-value" data-testid="stat-total-stores">
-            {loading ? '...' : stores.length}
-          </div>
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+          gap: '16px',
+          marginBottom: '24px',
+        }}
+      >
+        <div data-testid="stat-total-stores">
+          <StatCard label="Total Stores" value={loading ? '...' : stores.length} />
         </div>
-
-        <div className="stat-card">
-          <div className="stat-label">Active Stores</div>
-          <div
-            className="stat-value"
-            style={{ color: 'var(--status-online)' }}
-            data-testid="stat-active-stores"
-          >
-            {loading ? '...' : activeCount}
-          </div>
+        <div data-testid="stat-active-stores">
+          <StatCard
+            label="Active Stores"
+            value={loading ? '...' : activeCount}
+            valueColour="green"
+          />
         </div>
-
-        <div className="stat-card">
-          <div className="stat-label">Local Engine</div>
-          <div className="stat-value" style={{ fontSize: '18px', paddingTop: '6px' }}>
-            SQLite (Issue 03)
-          </div>
-        </div>
+        <StatCard label="Local Engine" value="SQLite (Issue 03)" />
       </div>
 
       {/* Table Section */}
-      <div className="table-card">
-        <div className="table-header-box">
+      <div
+        className="it-summary-card"
+        style={{
+          border: '1px solid var(--it-border)',
+          borderRadius: 'var(--it-r-lg)',
+          backgroundColor: 'var(--it-card)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            padding: '16px 20px',
+            borderBottom: '1px solid var(--it-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <StoreIcon size={20} color="var(--accent-primary)" />
-            <h3 className="table-title">Registered Store Locations</h3>
+            <StoreIcon size={20} color="var(--it-green)" />
+            <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
+              Registered Store Locations
+            </h3>
           </div>
-          <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+          <span style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>
             FR-STORE-001 Store Management
           </span>
         </div>
 
         {loading ? (
-          <div className="loading-state" data-testid="loading-state">
-            <div className="spinner"></div>
-            <p>Reading store database from local SQLite file...</p>
-          </div>
+          <EmptyState
+            variant="loading"
+            heading="Loading store database"
+            body="Reading store database from local SQLite file..."
+            data-testid="loading-state"
+          />
         ) : error ? (
-          <div className="error-state" data-testid="error-state">
-            <p style={{ color: 'var(--status-error)', marginBottom: '8px', fontWeight: 600 }}>
-              {error}
-            </p>
-            <button type="button" className="btn-retry" onClick={onRetry}>
-              Retry Load
-            </button>
-          </div>
-        ) : stores.length === 0 ? (
-          <div className="empty-state" data-testid="empty-state">
-            <p>No stores found in local SQLite database.</p>
-            <button
-              type="button"
-              className="btn btn-primary"
-              style={{ marginTop: '12px' }}
-              onClick={handleOpenCreateModal}
-            >
-              Create First Store
-            </button>
-          </div>
+          <EmptyState
+            variant="error"
+            heading="Failed to load stores"
+            body={error}
+            action={
+              <Button variant="primary" onClick={onRetry}>
+                Retry Load
+              </Button>
+            }
+            data-testid="error-state"
+          />
         ) : (
-          <div className="table-container">
-            <table className="data-table" data-testid="stores-table">
-              <thead>
-                <tr>
-                  <th>Store Code</th>
-                  <th>Store Name</th>
-                  <th>ID</th>
-                  <th>Address</th>
-                  <th>Status</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stores.map((store) => (
-                  <tr key={store.id} data-testid={`store-row-${store.id}`}>
-                    <td style={{ fontWeight: 600, color: 'var(--accent-primary)' }}>
-                      {store.code}
-                    </td>
-                    <td style={{ fontWeight: 500 }}>{store.name}</td>
-                    <td
-                      style={{
-                        fontFamily: 'monospace',
-                        fontSize: '12px',
-                        color: 'var(--text-muted)',
-                      }}
-                    >
-                      {store.id}
-                    </td>
-                    <td style={{ color: 'var(--text-muted)' }}>{store.address || 'N/A'}</td>
-                    <td>
-                      <span
-                        className={`badge ${store.is_active ? 'badge-active' : 'badge-inactive'}`}
-                      >
-                        {store.is_active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div className="table-actions">
-                        <button
-                          type="button"
-                          className="btn-action"
-                          title="Register Local Device Stub (FR-STORE-003)"
-                          onClick={() => handleOpenDeviceModal(store)}
-                          disabled={!isAuthorized}
-                          data-testid={`register-device-btn-${store.id}`}
-                        >
-                          <Smartphone size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className="btn-action"
-                          title="Edit Store"
-                          onClick={() => handleOpenEditModal(store)}
-                          disabled={!isAuthorized}
-                          data-testid={`edit-store-btn-${store.id}`}
-                        >
-                          <Edit2 size={14} />
-                        </button>
-                        <button
-                          type="button"
-                          className={`btn-action ${store.is_active ? 'active-on' : 'active-off'}`}
-                          title={store.is_active ? 'Deactivate Store' : 'Activate Store'}
-                          onClick={() => handleToggleActive(store)}
-                          disabled={!isAuthorized}
-                          data-testid={`toggle-store-btn-${store.id}`}
-                        >
-                          <Power size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable
+            columns={columns}
+            rows={stores}
+            rowKey={(s) => s.id}
+            data-testid="stores-table"
+            emptySlot={
+              <EmptyState
+                heading="No stores found"
+                body="No stores found in local SQLite database."
+                action={
+                  <Button variant="primary" onClick={handleOpenCreateModal}>
+                    Create First Store
+                  </Button>
+                }
+                data-testid="empty-state"
+              />
+            }
+          />
         )}
       </div>
 

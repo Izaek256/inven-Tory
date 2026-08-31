@@ -6,6 +6,7 @@ import { moveStockBucket, getStockBalanceForBucket } from '../services/tauriTran
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { MoveStockBucketInput, StockBucket } from '../types/transaction';
+import { Button, TextInput, NumericInput, Select } from '@inven-tory/ui';
 
 export const DamageQuarantineView: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);
@@ -27,7 +28,6 @@ export const DamageQuarantineView: React.FC = () => {
   const [fromBucketQty, setFromBucketQty] = useState<number | null>(null);
   const [toBucketQty, setToBucketQty] = useState<number | null>(null);
 
-  // Demo user/device parameters
   const userId = 'USER-DEMO';
   const deviceId = 'DEV-DEMO';
 
@@ -156,12 +156,10 @@ export const DamageQuarantineView: React.FC = () => {
       await moveStockBucket(input);
       setSuccess(true);
 
-      // Refresh balances
       if (selectedStoreId && selectedProduct) {
         await loadBucketBalances(selectedStoreId, selectedProduct, fromBucket, toBucket);
       }
 
-      // Reset reason and quantity
       setReason('');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -171,27 +169,41 @@ export const DamageQuarantineView: React.FC = () => {
   };
 
   return (
-    <div className="view-container" data-testid="damage-quarantine-view">
+    <div
+      className="view-container"
+      data-testid="damage-quarantine-view"
+      style={{ maxWidth: '640px' }}
+    >
       <div className="view-header">
-        <div className="view-title">
-          <ShieldAlert className="icon" size={24} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ShieldAlert size={28} color="var(--it-red)" />
           <div>
-            <h1>Damage & Quarantine Management</h1>
-            <p>Move stock between Available, Damaged, and Quarantine buckets (FR-MOV-005)</p>
+            <h2 className="view-title">Damage &amp; Quarantine Management</h2>
+            <p className="view-subtitle">
+              Move stock between Available, Damaged, and Quarantine buckets (FR-MOV-005)
+            </p>
           </div>
         </div>
       </div>
 
       {error && (
-        <div className="alert alert-error" data-testid="damage-error-banner">
-          <AlertCircle size={20} />
+        <div
+          className="it-toast it-toast--error"
+          style={{ marginBottom: '16px' }}
+          data-testid="damage-error-banner"
+        >
+          <AlertCircle size={16} aria-hidden="true" />
           <span>{error}</span>
         </div>
       )}
 
       {success && (
-        <div className="alert alert-success" data-testid="damage-success-banner">
-          <Check size={20} />
+        <div
+          className="it-toast it-toast--success"
+          style={{ marginBottom: '16px' }}
+          data-testid="damage-success-banner"
+        >
+          <Check size={16} aria-hidden="true" />
           <span>
             Stock movement recorded successfully! {quantity} unit(s) moved from {fromBucket} to{' '}
             {toBucket}.
@@ -199,67 +211,141 @@ export const DamageQuarantineView: React.FC = () => {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="form-card">
+      <form
+        onSubmit={handleSubmit}
+        style={{
+          backgroundColor: 'var(--it-card)',
+          border: '1px solid var(--it-border)',
+          borderRadius: 'var(--it-r-lg)',
+          padding: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '20px',
+        }}
+      >
         {/* Store Selection */}
-        <div className="form-group">
-          <label htmlFor="store-select">Store</label>
-          <select
-            id="store-select"
-            value={selectedStoreId}
-            onChange={(e): void => setSelectedStoreId(e.target.value)}
-            disabled={isSubmitting}
-            data-testid="store-select"
-            className="form-control"
-          >
-            {stores.map((store) => (
-              <option key={store.id} value={store.id}>
-                {store.name} ({store.code})
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          id="store-select"
+          data-testid="store-select"
+          label="Store"
+          required
+          value={selectedStoreId}
+          onChange={(e): void => setSelectedStoreId(e.target.value)}
+          disabled={isSubmitting}
+          options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+        />
 
         {/* Product Search / Picker */}
-        <div className="form-group">
-          <label htmlFor="product-search-input">Product</label>
+        <div style={{ position: 'relative' }}>
+          <label className="it-label" style={{ display: 'block', marginBottom: '4px' }}>
+            Product *
+          </label>
           {selectedProduct ? (
-            <div className="selected-item-badge">
-              <Package size={16} />
-              <span data-testid="selected-product-name">{selectedProduct.name}</span>
-              <span className="sku-tag">SKU: {selectedProduct.sku}</span>
-              <button
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '10px 14px',
+                border: '1px solid var(--it-green-border)',
+                borderRadius: 'var(--it-r-md)',
+                backgroundColor: 'var(--it-green-surface)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Package size={18} color="var(--it-green)" />
+                <span
+                  data-testid="selected-product-name"
+                  style={{ fontWeight: 600, color: 'var(--it-green-text)', fontSize: '13px' }}
+                >
+                  {selectedProduct.name}
+                </span>
+                <span
+                  style={{
+                    fontSize: '12px',
+                    fontFamily: 'var(--it-font-mono)',
+                    color: 'var(--it-text-secondary)',
+                  }}
+                >
+                  SKU: {selectedProduct.sku}
+                </span>
+              </div>
+              <Button
                 type="button"
-                className="btn-icon"
+                variant="ghost"
+                size="sm"
+                iconOnly
                 onClick={clearProduct}
                 disabled={isSubmitting}
                 data-testid="clear-product-btn"
                 title="Change Product"
               >
                 <X size={16} />
-              </button>
+              </Button>
             </div>
           ) : (
-            <div className="search-input-wrapper">
-              <input
+            <div>
+              <TextInput
                 id="product-search-input"
-                type="text"
+                data-testid="product-search-input"
                 value={productQuery}
                 onChange={(e): void => setProductQuery(e.target.value)}
                 placeholder="Search by product name or SKU..."
                 disabled={isSubmitting}
-                data-testid="product-search-input"
-                className="form-control"
               />
               {searchResults.length > 0 && (
-                <ul className="search-results-dropdown" data-testid="product-search-results">
+                <ul
+                  data-testid="product-search-results"
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    zIndex: 10,
+                    margin: '4px 0 0 0',
+                    padding: 0,
+                    listStyle: 'none',
+                    backgroundColor: 'var(--it-card)',
+                    border: '1px solid var(--it-border)',
+                    borderRadius: 'var(--it-r-md)',
+                    boxShadow: 'var(--it-shadow-md)',
+                    maxHeight: '200px',
+                    overflowY: 'auto',
+                  }}
+                >
                   {searchResults.map((product) => (
                     <li
                       key={product.id}
                       onClick={(): void => handleProductSelect(product)}
                       data-testid={`product-result-${product.id}`}
+                      style={{
+                        padding: '10px 14px',
+                        cursor: 'pointer',
+                        borderBottom: '1px solid var(--it-border)',
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
+                      }
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                     >
-                      <div className="product-result-name">{product.name}</div>
-                      <div className="product-result-sku">SKU: {product.sku}</div>
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: '13px',
+                          color: 'var(--it-text-primary)',
+                        }}
+                      >
+                        {product.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: 'var(--it-text-secondary)',
+                          fontFamily: 'var(--it-font-mono)',
+                        }}
+                      >
+                        SKU: {product.sku}
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -269,70 +355,89 @@ export const DamageQuarantineView: React.FC = () => {
         </div>
 
         {/* Bucket Selection: Source -> Destination */}
-        <div className="grid-2-col">
-          <div className="form-group">
-            <label htmlFor="from-bucket-select">Source Bucket (From)</label>
-            <select
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div>
+            <Select
               id="from-bucket-select"
+              data-testid="from-bucket-select"
+              label="Source Bucket (From)"
               value={fromBucket}
               onChange={(e): void => setFromBucket(e.target.value as StockBucket)}
               disabled={isSubmitting}
-              data-testid="from-bucket-select"
-              className="form-control"
-            >
-              <option value="AVAILABLE">AVAILABLE — Sellable Stock</option>
-              <option value="DAMAGED">DAMAGED — Damaged / Defective</option>
-              <option value="QUARANTINE">QUARANTINE — Under Inspection</option>
-            </select>
+              options={[
+                { value: 'AVAILABLE', label: 'AVAILABLE — Sellable Stock' },
+                { value: 'DAMAGED', label: 'DAMAGED — Damaged / Defective' },
+                { value: 'QUARANTINE', label: 'QUARANTINE — Under Inspection' },
+              ]}
+            />
             {fromBucketQty !== null && (
-              <small className="help-text" data-testid="from-bucket-qty">
+              <small
+                style={{
+                  display: 'block',
+                  marginTop: '4px',
+                  fontSize: '12px',
+                  color: 'var(--it-text-secondary)',
+                }}
+                data-testid="from-bucket-qty"
+              >
                 Current {fromBucket} balance:{' '}
-                <strong data-testid="available-balance-display">{fromBucketQty}</strong>
+                <strong
+                  data-testid="available-balance-display"
+                  style={{ fontFamily: 'var(--it-font-mono)' }}
+                >
+                  {fromBucketQty}
+                </strong>
               </small>
             )}
           </div>
 
-          <div className="form-group">
-            <label htmlFor="to-bucket-select">Destination Bucket (To)</label>
-            <select
+          <div>
+            <Select
               id="to-bucket-select"
+              data-testid="to-bucket-select"
+              label="Destination Bucket (To)"
               value={toBucket}
               onChange={(e): void => setToBucket(e.target.value as StockBucket)}
               disabled={isSubmitting}
-              data-testid="to-bucket-select"
-              className="form-control"
-            >
-              <option value="DAMAGED">DAMAGED — Damaged / Defective</option>
-              <option value="QUARANTINE">QUARANTINE — Under Inspection</option>
-              <option value="AVAILABLE">AVAILABLE — Sellable Stock</option>
-            </select>
+              options={[
+                { value: 'DAMAGED', label: 'DAMAGED — Damaged / Defective' },
+                { value: 'QUARANTINE', label: 'QUARANTINE — Under Inspection' },
+                { value: 'AVAILABLE', label: 'AVAILABLE — Sellable Stock' },
+              ]}
+            />
             {toBucketQty !== null && (
-              <small className="help-text" data-testid="to-bucket-qty">
-                Current {toBucket} balance: <strong>{toBucketQty}</strong>
+              <small
+                style={{
+                  display: 'block',
+                  marginTop: '4px',
+                  fontSize: '12px',
+                  color: 'var(--it-text-secondary)',
+                }}
+                data-testid="to-bucket-qty"
+              >
+                Current {toBucket} balance:{' '}
+                <strong style={{ fontFamily: 'var(--it-font-mono)' }}>{toBucketQty}</strong>
               </small>
             )}
           </div>
         </div>
 
         {/* Quantity */}
-        <div className="form-group">
-          <label htmlFor="quantity-input">Quantity</label>
-          <input
-            id="quantity-input"
-            type="number"
-            min="1"
-            value={quantity}
-            onChange={(e): void => setQuantity(parseInt(e.target.value, 10) || 0)}
-            disabled={isSubmitting}
-            data-testid="quantity-input"
-            className="form-control"
-          />
-        </div>
+        <NumericInput
+          id="quantity-input"
+          data-testid="quantity-input"
+          label="Quantity"
+          required
+          value={quantity}
+          min={1}
+          onChange={(v) => setQuantity(Math.max(1, v))}
+          disabled={isSubmitting}
+        />
 
         {/* Reason (Required Field) */}
-        <div className="form-group">
-          <label htmlFor="reason-input">
-            Reason for Movement <span className="required-asterisk">*</span>
+        <div className="it-field">
+          <label htmlFor="reason-input" className="it-label">
+            Reason for Movement <span style={{ color: 'var(--it-red)' }}>*</span>
           </label>
           <textarea
             id="reason-input"
@@ -345,26 +450,32 @@ export const DamageQuarantineView: React.FC = () => {
             placeholder="Describe reason for damage, quarantine, or bucket transfer..."
             disabled={isSubmitting}
             data-testid="reason-input"
-            className={`form-control ${reasonError ? 'input-error' : ''}`}
+            className="it-input"
+            style={reasonError ? { borderColor: 'var(--it-red)' } : undefined}
           />
           {reasonError && (
-            <span className="error-text" data-testid="reason-error">
+            <span
+              style={{ fontSize: '12px', color: 'var(--it-red-text)' }}
+              data-testid="reason-error"
+            >
               {reasonError}
             </span>
           )}
         </div>
 
         {/* Form Actions */}
-        <div className="form-actions">
-          <button
+        <div style={{ marginTop: '8px' }}>
+          <Button
             type="submit"
+            variant="primary"
             disabled={isSubmitting || !selectedProduct}
+            loading={isSubmitting}
             data-testid="submit-move-btn"
-            className="btn btn-primary"
+            style={{ width: '100%' }}
           >
             <ArrowRightLeft size={18} />
-            <span>{isSubmitting ? 'Processing...' : 'Transfer Between Buckets'}</span>
-          </button>
+            <span>Transfer Between Buckets</span>
+          </Button>
         </div>
       </form>
     </div>

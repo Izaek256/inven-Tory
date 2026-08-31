@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { Product } from '../types/product';
 import { searchProducts } from '../services/tauriProductService';
+import { Badge, Spinner } from '@inven-tory/ui';
 import { Search, Package, Check, Tag, Barcode } from 'lucide-react';
 
 interface ProductPickerProps {
@@ -100,9 +101,34 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
   };
 
   return (
-    <div className="product-picker-container" data-testid="product-picker">
-      <div className="picker-search-bar">
-        <Search size={18} className="picker-search-icon" />
+    <div
+      className="product-picker-container"
+      data-testid="product-picker"
+      style={{
+        backgroundColor: 'var(--it-card)',
+        border: '1px solid var(--it-border)',
+        borderRadius: 'var(--it-r-lg)',
+        overflow: 'hidden',
+        boxShadow: 'var(--it-shadow-sm)',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
+      <div
+        className="picker-search-bar"
+        style={{
+          position: 'relative',
+          display: 'flex',
+          alignItems: 'center',
+          borderBottom: '1px solid var(--it-border)',
+          backgroundColor: 'var(--it-surface)',
+        }}
+      >
+        <Search
+          size={18}
+          className="picker-search-icon"
+          style={{ position: 'absolute', left: '14px', color: 'var(--it-green)' }}
+        />
         <input
           ref={inputRef}
           type="text"
@@ -118,8 +144,22 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
           data-testid="picker-search-input"
+          style={{
+            width: '100%',
+            padding: '12px 14px 12px 42px',
+            background: 'transparent',
+            border: 'none',
+            color: 'var(--it-text-primary)',
+            fontSize: '14px',
+            fontFamily: 'var(--it-font-ui)',
+            outline: 'none',
+          }}
         />
-        {loading && <div className="spinner-sm" data-testid="picker-loading" />}
+        {loading && (
+          <div style={{ paddingRight: '14px' }} data-testid="picker-loading">
+            <Spinner size="sm" />
+          </div>
+        )}
       </div>
 
       <div
@@ -129,9 +169,19 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
         className="picker-results-list"
         ref={resultsContainerRef}
         data-testid="picker-results-list"
+        style={{ maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}
       >
         {results.length === 0 && hasSearched && !loading ? (
-          <div className="picker-no-results" data-testid="picker-no-results">
+          <div
+            className="picker-no-results"
+            data-testid="picker-no-results"
+            style={{
+              padding: '24px',
+              textAlign: 'center',
+              color: 'var(--it-text-secondary)',
+              fontSize: '13px',
+            }}
+          >
             <Package size={24} style={{ opacity: 0.5, marginBottom: '4px' }} />
             <div>No matching products found for "{query}"</div>
           </div>
@@ -149,38 +199,87 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
                 onClick={() => handleSelect(prod)}
                 onMouseEnter={() => setSelectedIndex(index)}
                 data-testid={`picker-item-${prod.id}`}
+                style={{
+                  padding: '10px 14px',
+                  borderBottom: '1px solid var(--it-border)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  cursor: 'pointer',
+                  backgroundColor: isSelected ? 'var(--it-surface)' : 'transparent',
+                }}
               >
-                <div className="picker-item-main">
-                  <div className="picker-item-header">
-                    <span className="picker-sku" data-testid={`picker-sku-${prod.id}`}>
+                <div
+                  className="picker-item-main"
+                  style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}
+                >
+                  <div
+                    className="picker-item-header"
+                    style={{ display: 'flex', alignItems: 'center', gap: '8px' }}
+                  >
+                    <span
+                      className="picker-sku"
+                      data-testid={`picker-sku-${prod.id}`}
+                      style={{
+                        fontFamily: 'var(--it-font-mono)',
+                        fontWeight: 700,
+                        color: 'var(--it-green-text)',
+                        fontSize: '12px',
+                      }}
+                    >
                       {prod.sku}
                     </span>
-                    <span className="picker-name">{prod.name}</span>
-                    {prod.serial_tracking_enabled && (
-                      <span className="badge badge-serial" title="Serial Number Tracking Required">
-                        SERIAL
-                      </span>
-                    )}
+                    <span
+                      className="picker-name"
+                      style={{ fontSize: '13px', fontWeight: 600, color: 'var(--it-text-primary)' }}
+                    >
+                      {prod.name}
+                    </span>
+                    {prod.serial_tracking_enabled && <Badge status="SENT" label="SERIAL" />}
                   </div>
-                  <div className="picker-item-details">
+                  <div
+                    className="picker-item-details"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px',
+                      fontSize: '11px',
+                      color: 'var(--it-text-secondary)',
+                    }}
+                  >
                     {prod.brand && (
-                      <span className="picker-detail">
+                      <span
+                        className="picker-detail"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
                         <Tag size={12} /> {prod.brand} {prod.model ? `(${prod.model})` : ''}
                       </span>
                     )}
                     <span className="picker-detail">Cat: {prod.category}</span>
                     <span className="picker-detail">Unit: {prod.unit}</span>
                     {prod.barcode && (
-                      <span className="picker-detail">
+                      <span
+                        className="picker-detail"
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      >
                         <Barcode size={12} /> {prod.barcode}
                       </span>
                     )}
                   </div>
                   {prod.alternate_names && (
-                    <div className="picker-alt-names">Aliases: {prod.alternate_names}</div>
+                    <div
+                      className="picker-alt-names"
+                      style={{
+                        fontSize: '11px',
+                        color: 'var(--it-text-secondary)',
+                        fontStyle: 'italic',
+                      }}
+                    >
+                      Aliases: {prod.alternate_names}
+                    </div>
                   )}
                 </div>
-                {isSelected && <Check size={16} className="picker-check-icon" />}
+                {isSelected && <Check size={16} style={{ color: 'var(--it-green)' }} />}
               </div>
             );
           })

@@ -6,6 +6,7 @@ import { receiveStock } from '../services/tauriTransactionService';
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { CreateTransactionInput } from '../types/transaction';
+import { Button, TextInput, NumericInput, Select } from '@inven-tory/ui';
 
 export const ReceiveStockView: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);
@@ -20,7 +21,6 @@ export const ReceiveStockView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
 
-  // Mock user/device IDs - in real app these come from auth/session
   const userId = 'USER-DEMO';
   const deviceId = 'DEV-DEMO';
 
@@ -118,122 +118,81 @@ export const ReceiveStockView: React.FC = () => {
   };
 
   return (
-    <div className="receive-stock-view" data-testid="receive-stock-view">
+    <div
+      className="receive-stock-view"
+      data-testid="receive-stock-view"
+      style={{ maxWidth: '640px' }}
+    >
       <div className="view-header">
-        <h2 className="view-title">Receive Stock</h2>
-        <p className="view-subtitle">Record incoming inventory (FR-MOV-001, Section 13.1)</p>
+        <div>
+          <h2 className="view-title">Receive Stock</h2>
+          <p className="view-subtitle">Record incoming inventory (FR-MOV-001, Section 13.1)</p>
+        </div>
       </div>
 
       {success && (
-        <div
-          className="success-banner"
-          style={{
-            marginBottom: '16px',
-            padding: '12px',
-            backgroundColor: '#dcfce7',
-            border: '1px solid #22c55e',
-            borderRadius: '6px',
-            color: '#166534',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-          }}
-        >
-          <Check size={20} />
+        <div className="it-toast it-toast--success" style={{ marginBottom: '16px' }}>
+          <Check size={16} aria-hidden="true" />
           <span>Stock received successfully. Transaction recorded and balance updated.</span>
         </div>
       )}
 
       {error && (
-        <div
-          className="error-banner"
-          style={{
-            marginBottom: '16px',
-            padding: '12px',
-            backgroundColor: '#fee2e2',
-            border: '1px solid #ef4444',
-            borderRadius: '6px',
-            color: '#991b1b',
-          }}
-        >
-          {error}
+        <div className="it-toast it-toast--error" style={{ marginBottom: '16px' }}>
+          <span>{error}</span>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="transaction-form">
+      <form
+        onSubmit={handleSubmit}
+        className="transaction-form"
+        style={{
+          backgroundColor: 'var(--it-card)',
+          border: '1px solid var(--it-border)',
+          borderRadius: 'var(--it-r-lg)',
+          padding: '24px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '20px',
+        }}
+      >
         {/* Store Selection */}
-        <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label
-            htmlFor="store-select"
-            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
-          >
-            Store *
-          </label>
-          <select
-            id="store-select"
-            value={selectedStoreId}
-            onChange={(e) => setSelectedStoreId(e.target.value)}
-            required
-            style={{
-              width: '100%',
-              padding: '10px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px',
-              fontSize: '14px',
-            }}
-          >
-            {stores.map((store) => (
-              <option key={store.id} value={store.id}>
-                {store.name} ({store.code})
-              </option>
-            ))}
-          </select>
-        </div>
+        <Select
+          id="store-select"
+          label="Store"
+          required
+          value={selectedStoreId}
+          onChange={(e) => setSelectedStoreId(e.target.value)}
+          options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+        />
 
         {/* Product Search */}
-        <div className="form-group" style={{ marginBottom: '20px', position: 'relative' }}>
-          <label
-            htmlFor="product-search"
-            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
-          >
-            Product *
-          </label>
-          <div style={{ position: 'relative' }}>
-            <input
-              id="product-search"
-              type="text"
-              value={productQuery}
-              onChange={(e) => setProductQuery(e.target.value)}
-              placeholder="Search by name, SKU, barcode..."
-              required
+        <div style={{ position: 'relative' }}>
+          <TextInput
+            id="product-search"
+            label="Product"
+            required
+            value={productQuery}
+            onChange={(e) => setProductQuery(e.target.value)}
+            placeholder="Search by name, SKU, barcode..."
+          />
+          {selectedProduct && (
+            <button
+              type="button"
+              onClick={clearProduct}
               style={{
-                width: '100%',
-                padding: '10px',
-                paddingRight: selectedProduct ? '40px' : '10px',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                fontSize: '14px',
+                position: 'absolute',
+                right: '8px',
+                top: '34px',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                color: 'var(--it-text-secondary)',
               }}
-            />
-            {selectedProduct && (
-              <button
-                type="button"
-                onClick={clearProduct}
-                style={{
-                  position: 'absolute',
-                  right: '8px',
-                  top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  padding: '4px',
-                }}
-              >
-                <X size={16} />
-              </button>
-            )}
-          </div>
+            >
+              <X size={16} />
+            </button>
+          )}
 
           {/* Search Results Dropdown */}
           {searchResults.length > 0 && !selectedProduct && (
@@ -243,14 +202,14 @@ export const ReceiveStockView: React.FC = () => {
                 top: '100%',
                 left: 0,
                 right: 0,
-                backgroundColor: 'white',
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
+                backgroundColor: 'var(--it-card)',
+                border: '1px solid var(--it-border)',
+                borderRadius: 'var(--it-r-md)',
                 marginTop: '4px',
-                maxHeight: '300px',
+                maxHeight: '240px',
                 overflowY: 'auto',
                 zIndex: 10,
-                boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)',
+                boxShadow: 'var(--it-shadow-md)',
               }}
             >
               {searchResults.map((product) => (
@@ -258,16 +217,27 @@ export const ReceiveStockView: React.FC = () => {
                   key={product.id}
                   onClick={() => handleProductSelect(product)}
                   style={{
-                    padding: '12px',
+                    padding: '10px 14px',
                     cursor: 'pointer',
-                    borderBottom: '1px solid #f3f4f6',
-                    transition: 'background-color 0.15s',
+                    borderBottom: '1px solid var(--it-border)',
                   }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = '#f9fafb')}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'white')}
+                  onMouseEnter={(e) =>
+                    (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
+                  }
+                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                 >
-                  <div style={{ fontWeight: '500', marginBottom: '4px' }}>{product.name}</div>
-                  <div style={{ fontSize: '12px', color: '#6b7280' }}>
+                  <div
+                    style={{ fontWeight: 600, fontSize: '13px', color: 'var(--it-text-primary)' }}
+                  >
+                    {product.name}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: '12px',
+                      color: 'var(--it-text-secondary)',
+                      fontFamily: 'var(--it-font-mono)',
+                    }}
+                  >
                     SKU: {product.sku} {product.barcode && `• Barcode: ${product.barcode}`}
                   </div>
                 </div>
@@ -281,16 +251,17 @@ export const ReceiveStockView: React.FC = () => {
               style={{
                 marginTop: '8px',
                 padding: '8px 12px',
-                backgroundColor: '#f0fdf4',
-                border: '1px solid #22c55e',
-                borderRadius: '6px',
+                backgroundColor: 'var(--it-green-surface)',
+                border: '1px solid var(--it-green-border)',
+                borderRadius: 'var(--it-r-md)',
                 fontSize: '13px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '8px',
+                color: 'var(--it-green-text)',
               }}
             >
-              <Package size={16} style={{ color: '#16a34a' }} />
+              <Package size={16} />
               <span>
                 {selectedProduct.name} ({selectedProduct.sku})
               </span>
@@ -299,111 +270,40 @@ export const ReceiveStockView: React.FC = () => {
         </div>
 
         {/* Quantity */}
-        <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label
-            htmlFor="quantity"
-            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
-          >
-            Quantity *
-          </label>
-          <input
-            id="quantity"
-            type="number"
-            min="1"
-            value={quantity}
-            onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-            required
-            style={{
-              width: '100%',
-              padding: '10px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px',
-              fontSize: '14px',
-            }}
-          />
-        </div>
+        <NumericInput
+          id="quantity"
+          label="Quantity"
+          required
+          value={quantity}
+          min={1}
+          onChange={(v) => setQuantity(Math.max(1, v))}
+        />
 
         {/* Reference Number */}
-        <div className="form-group" style={{ marginBottom: '20px' }}>
-          <label
-            htmlFor="reference-number"
-            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
-          >
-            Receipt / Reference Number
-          </label>
-          <input
-            id="reference-number"
-            type="text"
-            value={referenceNumber}
-            onChange={(e) => setReferenceNumber(e.target.value)}
-            placeholder="e.g., R-1002, INV-2024-001"
-            style={{
-              width: '100%',
-              padding: '10px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px',
-              fontSize: '14px',
-            }}
-          />
-        </div>
+        <TextInput
+          id="reference-number"
+          label="Receipt / Reference Number"
+          value={referenceNumber}
+          onChange={(e) => setReferenceNumber(e.target.value)}
+          placeholder="e.g., R-1002, INV-2024-001"
+        />
 
         {/* Supplier (Optional) */}
-        <div className="form-group" style={{ marginBottom: '24px' }}>
-          <label
-            htmlFor="supplier"
-            style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}
-          >
-            Supplier (Optional)
-          </label>
-          <input
-            id="supplier"
-            type="text"
-            value={supplier}
-            onChange={(e) => setSupplier(e.target.value)}
-            placeholder="e.g., Acme Electronics"
-            style={{
-              width: '100%',
-              padding: '10px',
-              border: '1px solid #d1d5db',
-              borderRadius: '6px',
-              fontSize: '14px',
-            }}
-          />
-          <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-            Free-text reference only. Full supplier entity coming in Issue 21.
-          </div>
-        </div>
+        <TextInput
+          id="supplier"
+          label="Supplier (Optional)"
+          value={supplier}
+          onChange={(e) => setSupplier(e.target.value)}
+          placeholder="e.g., Acme Electronics"
+          hint="Free-text reference only. Full supplier entity coming in Issue 21."
+        />
 
         {/* Submit Button */}
-        <div className="form-actions" style={{ display: 'flex', gap: '12px' }}>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            style={{
-              flex: 1,
-              padding: '12px',
-              backgroundColor: isSubmitting ? '#9ca3af' : '#22c55e',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              fontSize: '14px',
-              fontWeight: '500',
-              cursor: isSubmitting ? 'not-allowed' : 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-            }}
-          >
-            {isSubmitting ? (
-              'Processing...'
-            ) : (
-              <>
-                <ArrowDownCircle size={18} />
-                Receive Stock
-              </>
-            )}
-          </button>
+        <div style={{ marginTop: '8px' }}>
+          <Button type="submit" variant="primary" loading={isSubmitting} style={{ width: '100%' }}>
+            <ArrowDownCircle size={18} />
+            Receive Stock
+          </Button>
         </div>
       </form>
     </div>

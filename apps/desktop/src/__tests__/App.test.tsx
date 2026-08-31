@@ -1,7 +1,17 @@
+import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ThemeProvider, ToastProvider } from '@inven-tory/ui';
 import App from '../App';
 import * as tauriStoreService from '../services/tauriStoreService';
+
+function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
+  return render(
+    <ThemeProvider>
+      <ToastProvider>{ui}</ToastProvider>
+    </ThemeProvider>,
+  );
+}
 
 describe('Desktop Shell Application', () => {
   const mockStores = [
@@ -31,7 +41,7 @@ describe('Desktop Shell Application', () => {
   });
 
   it('renders persistent header with brand title, offline/online badge, and pending sync badge', async () => {
-    render(<App />);
+    renderWithProviders(<App />);
 
     expect(screen.getByTestId('app-header')).toBeInTheDocument();
     expect(screen.getByText('INVENTORY Tory')).toBeInTheDocument();
@@ -45,7 +55,7 @@ describe('Desktop Shell Application', () => {
   });
 
   it('renders left sidebar navigation and switches views when clicked', async () => {
-    render(<App />);
+    renderWithProviders(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('stores-table')).toBeInTheDocument();
@@ -85,7 +95,7 @@ describe('Desktop Shell Application', () => {
   });
 
   it('displays the seeded store list from SQLite on the Dashboard smoke test view', async () => {
-    render(<App />);
+    renderWithProviders(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('stores-table')).toBeInTheDocument();
@@ -98,12 +108,12 @@ describe('Desktop Shell Application', () => {
   });
 
   it('handles store loading errors gracefully', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'error').mockImplementation((): void => {});
     vi.spyOn(tauriStoreService, 'getStores').mockRejectedValueOnce(
       new Error('Failed to connect to SQLite database'),
     );
 
-    render(<App />);
+    renderWithProviders(<App />);
 
     await waitFor(() => {
       expect(screen.getByTestId('error-state')).toBeInTheDocument();

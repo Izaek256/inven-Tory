@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
-import { X, Package, AlertCircle } from 'lucide-react';
+import { Modal, TextInput, Select, Button } from '@inven-tory/ui';
+import { AlertCircle } from 'lucide-react';
 
 interface ProductModalProps {
   isOpen: boolean;
@@ -70,8 +71,6 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     setError(null);
   }, [product, isOpen]);
 
-  if (!isOpen) return null;
-
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
@@ -126,236 +125,177 @@ export const ProductModal: React.FC<ProductModalProps> = ({
   };
 
   return (
-    <div className="modal-backdrop" data-testid="product-modal-backdrop">
-      <div className="modal-card modal-lg" data-testid="product-modal">
-        <div className="modal-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <Package size={20} color="var(--accent-primary)" />
-            <h3 className="modal-title">{isEdit ? 'Edit Product' : 'Add New Product (v1.0.0)'}</h3>
-          </div>
-          <button
-            type="button"
-            className="btn-icon"
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={isEdit ? 'Edit Product' : 'Add New Product (v1.0.0)'}
+      size="lg"
+      footer={
+        <>
+          <Button
+            variant="secondary"
             onClick={onClose}
-            data-testid="product-modal-close"
+            disabled={submitting}
+            data-testid="product-modal-cancel"
           >
-            <X size={18} />
-          </button>
+            Discard
+          </Button>
+          <Button
+            variant="primary"
+            onClick={handleSubmit}
+            loading={submitting}
+            data-testid="product-modal-submit"
+          >
+            {isEdit ? 'Save Changes' : 'Create Product'}
+          </Button>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} data-testid="product-modal">
+        {error && (
+          <div
+            className="it-toast it-toast--error"
+            style={{ marginBottom: '16px' }}
+            data-testid="product-modal-error"
+          >
+            <AlertCircle size={16} aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <TextInput
+            id="prod-sku"
+            label="SKU / Product ID"
+            required
+            placeholder="e.g. ELEC-IPHONE15PRO"
+            value={sku}
+            onChange={(e) => setSku(e.target.value.toUpperCase())}
+            disabled={isEdit || submitting}
+            data-testid="product-sku-input"
+            hint={
+              isEdit
+                ? 'SKU is unique and immutable once created (FR-PROD-001).'
+                : 'Unique master item identifier (FR-PROD-001).'
+            }
+          />
+
+          <TextInput
+            id="prod-name"
+            label="Product Name"
+            required
+            placeholder="e.g. Apple iPhone 15 Pro 256GB"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={submitting}
+            data-testid="product-name-input"
+          />
+
+          <TextInput
+            id="prod-brand"
+            label="Brand"
+            placeholder="e.g. Apple, Samsung, Sony"
+            value={brand}
+            onChange={(e) => setBrand(e.target.value)}
+            disabled={submitting}
+            data-testid="product-brand-input"
+          />
+
+          <TextInput
+            id="prod-model"
+            label="Model Number"
+            placeholder="e.g. A3102, SM-S928B"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            disabled={submitting}
+            data-testid="product-model-input"
+          />
+
+          <TextInput
+            id="prod-category"
+            label="Category"
+            required
+            placeholder="Select or type category..."
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            disabled={submitting}
+            data-testid="product-category-input"
+          />
+
+          <Select
+            id="prod-unit"
+            label="Unit of Measure"
+            required
+            value={unit}
+            onChange={(e) => setUnit(e.target.value)}
+            disabled={submitting}
+            data-testid="product-unit-input"
+            options={DEFAULT_UNITS.map((u) => ({ value: u, label: u }))}
+          />
+
+          <TextInput
+            id="prod-barcode"
+            label="Barcode (EAN / UPC / Internal)"
+            placeholder="e.g. 195949012345"
+            value={barcode}
+            onChange={(e) => setBarcode(e.target.value)}
+            disabled={submitting}
+            data-testid="product-barcode-input"
+          />
+
+          <TextInput
+            id="prod-alt-names"
+            label="Alternate Search Aliases"
+            placeholder="e.g. iPhone 15 Pro, Apple 15"
+            value={alternateNames}
+            onChange={(e) => setAlternateNames(e.target.value)}
+            disabled={submitting}
+            data-testid="product-alt-names-input"
+          />
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="modal-body">
-            {error && (
-              <div className="alert alert-danger" data-testid="product-modal-error">
-                <AlertCircle size={16} />
-                <span>{error}</span>
-              </div>
-            )}
-
-            <div className="form-grid">
-              {/* SKU */}
-              <div className="form-group">
-                <label htmlFor="prod-sku" className="form-label">
-                  SKU / Product ID <span className="required">*</span>
-                </label>
-                <input
-                  id="prod-sku"
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. ELEC-IPHONE15PRO"
-                  value={sku}
-                  onChange={(e) => setSku(e.target.value.toUpperCase())}
-                  disabled={isEdit || submitting}
-                  data-testid="product-sku-input"
-                  autoFocus={!isEdit}
-                />
-                <span className="form-hint">
-                  {isEdit
-                    ? 'SKU is unique and immutable once created (FR-PROD-001).'
-                    : 'Unique master item identifier (FR-PROD-001).'}
-                </span>
-              </div>
-
-              {/* Name */}
-              <div className="form-group">
-                <label htmlFor="prod-name" className="form-label">
-                  Product Name <span className="required">*</span>
-                </label>
-                <input
-                  id="prod-name"
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. Apple iPhone 15 Pro 256GB"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  disabled={submitting}
-                  data-testid="product-name-input"
-                  autoFocus={isEdit}
-                />
-              </div>
-
-              {/* Brand */}
-              <div className="form-group">
-                <label htmlFor="prod-brand" className="form-label">
-                  Brand
-                </label>
-                <input
-                  id="prod-brand"
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. Apple, Samsung, Sony"
-                  value={brand}
-                  onChange={(e) => setBrand(e.target.value)}
-                  disabled={submitting}
-                  data-testid="product-brand-input"
-                />
-              </div>
-
-              {/* Model */}
-              <div className="form-group">
-                <label htmlFor="prod-model" className="form-label">
-                  Model Number
-                </label>
-                <input
-                  id="prod-model"
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. A3102, SM-S928B"
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  disabled={submitting}
-                  data-testid="product-model-input"
-                />
-              </div>
-
-              {/* Category */}
-              <div className="form-group">
-                <label htmlFor="prod-category" className="form-label">
-                  Category <span className="required">*</span>
-                </label>
-                <input
-                  id="prod-category"
-                  type="text"
-                  list="categories-list"
-                  className="form-input"
-                  placeholder="Select or type category..."
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
-                  disabled={submitting}
-                  data-testid="product-category-input"
-                />
-                <datalist id="categories-list">
-                  {DEFAULT_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat} />
-                  ))}
-                </datalist>
-              </div>
-
-              {/* Unit */}
-              <div className="form-group">
-                <label htmlFor="prod-unit" className="form-label">
-                  Unit of Measure <span className="required">*</span>
-                </label>
-                <select
-                  id="prod-unit"
-                  className="form-select"
-                  value={unit}
-                  onChange={(e) => setUnit(e.target.value)}
-                  disabled={submitting}
-                  data-testid="product-unit-input"
-                >
-                  {DEFAULT_UNITS.map((u) => (
-                    <option key={u} value={u}>
-                      {u}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Barcode */}
-              <div className="form-group">
-                <label htmlFor="prod-barcode" className="form-label">
-                  Barcode (EAN / UPC / Internal)
-                </label>
-                <input
-                  id="prod-barcode"
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. 195949012345"
-                  value={barcode}
-                  onChange={(e) => setBarcode(e.target.value)}
-                  disabled={submitting}
-                  data-testid="product-barcode-input"
-                />
-              </div>
-
-              {/* Alternate Names */}
-              <div className="form-group">
-                <label htmlFor="prod-alt-names" className="form-label">
-                  Alternate Search Aliases
-                </label>
-                <input
-                  id="prod-alt-names"
-                  type="text"
-                  className="form-input"
-                  placeholder="e.g. iPhone 15 Pro, Apple 15"
-                  value={alternateNames}
-                  onChange={(e) => setAlternateNames(e.target.value)}
-                  disabled={submitting}
-                  data-testid="product-alt-names-input"
-                />
-              </div>
-            </div>
-
-            {/* Checkbox Toggles */}
-            <div className="form-checkbox-group" style={{ marginTop: '16px' }}>
-              <label className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={serialTrackingEnabled}
-                  onChange={(e) => setSerialTrackingEnabled(e.target.checked)}
-                  disabled={submitting}
-                  data-testid="product-serial-tracking-toggle"
-                />
-                <span>Enable Serial Number Tracking (FR-PROD-002)</span>
-              </label>
-
-              {!isEdit && (
-                <label className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={isActive}
-                    onChange={(e) => setIsActive(e.target.checked)}
-                    disabled={submitting}
-                    data-testid="product-active-toggle"
-                  />
-                  <span>Product Active State</span>
-                </label>
-              )}
-            </div>
-          </div>
-
-          <div className="modal-footer">
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={onClose}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '16px' }}>
+          <label
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              cursor: 'pointer',
+              fontSize: '13px',
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={serialTrackingEnabled}
+              onChange={(e) => setSerialTrackingEnabled(e.target.checked)}
               disabled={submitting}
-              data-testid="product-modal-cancel"
+              data-testid="product-serial-tracking-toggle"
+            />
+            <span>Enable Serial Number Tracking (FR-PROD-002)</span>
+          </label>
+
+          {!isEdit && (
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                fontSize: '13px',
+              }}
             >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={submitting}
-              data-testid="product-modal-submit"
-            >
-              {submitting ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Product'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+              <input
+                type="checkbox"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+                disabled={submitting}
+                data-testid="product-active-toggle"
+              />
+              <span>Product Active State</span>
+            </label>
+          )}
+        </div>
+      </form>
+    </Modal>
   );
 };

@@ -1,5 +1,3 @@
-import '@testing-library/jest-dom';
-
 // Polyfill window.matchMedia for jsdom (not implemented in jsdom)
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
