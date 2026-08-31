@@ -32,8 +32,14 @@ from sqlalchemy.ext.asyncio import (
 from app.core.security import hash_password
 from app.db import Base, get_db
 from app.main import app
+from app.models.audit_event import AuditEvent  # noqa: F401 — registers with Base.metadata
 from app.models.device import Device
+from app.models.inventory_transaction import InventoryTransaction  # noqa: F401
+from app.models.product import Product  # noqa: F401
+from app.models.stock_balance import StockBalance  # noqa: F401
 from app.models.store import Store
+from app.models.sync_receipt import SyncReceipt  # noqa: F401
+from app.models.transfer import Transfer  # noqa: F401
 from app.models.user import User
 
 # ---------------------------------------------------------------------------

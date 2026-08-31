@@ -48,7 +48,7 @@ API_V1_PREFIX = "/api/v1"
 app.include_router(auth.router, prefix=API_V1_PREFIX)
 app.include_router(devices.router, prefix=API_V1_PREFIX)
 
-# Future routers (Issue 14+):
-#   Issue 15: sync push/pull  →  app/api/v1/sync.py
+# Future routers (Issue 15+):
+#   Issue 15: sync push/pull  →  app/api/v1/sync.py  (wires ingestion service)
 #   Issue 14: products/stores →  app/api/v1/products.py  app/api/v1/stores.py
 #   Issue 17: audit log       →  app/api/v1/audit.py
