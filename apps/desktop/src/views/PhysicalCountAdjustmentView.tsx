@@ -104,6 +104,8 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
   const [reason, setReason] = useState<string>('');
   const [reasonError, setReasonError] = useState<string | null>(null);
+  const [elevatedPermissionChecked, setElevatedPermissionChecked] = useState<boolean>(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -207,20 +209,25 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   const handleApprove = async (): Promise<void> => {
     setError(null);
     setReasonError(null);
+    setPermissionError(null);
+
+    let hasError = false;
 
     if (!reason.trim()) {
       const msg = 'A reason is required for adjustment approval.';
       setReasonError(msg);
       setError(msg);
-      return;
+      hasError = true;
     }
 
-    if (!hasAdjustmentPermission) {
-      const msg =
-        'You do not have permission to approve stock adjustments. STORE_MANAGER role or above required.';
-      setError(msg);
-      return;
+    if (!elevatedPermissionChecked) {
+      const msg = 'Elevated permission is required to approve stock adjustments.';
+      setPermissionError(msg);
+      if (!hasError) setError(msg);
+      hasError = true;
     }
+
+    if (hasError) return;
 
     if (variance === null || systemQty === null || !selectedProduct) {
       setError('Session state is invalid. Please restart the count.');
@@ -258,6 +265,8 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     setCountedQty('');
     setReason('');
     setReasonError(null);
+    setPermissionError(null);
+    setElevatedPermissionChecked(false);
     setError(null);
     setApprovedTransaction(null);
     setIsSubmitting(false);
@@ -736,23 +745,44 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
             }}
             data-testid="permission-gate"
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
-              <ShieldCheck
-                size={16}
-                color={hasAdjustmentPermission ? 'var(--it-green)' : 'var(--it-red)'}
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: '10px',
+                fontSize: '13px',
+                cursor: 'pointer',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={elevatedPermissionChecked}
+                onChange={(e): void => {
+                  setElevatedPermissionChecked(e.target.checked);
+                  if (permissionError) setPermissionError(null);
+                  if (error) setError(null);
+                }}
+                data-testid="elevated-permission-checkbox"
+                style={{ marginTop: '2px', accentColor: 'var(--it-green)' }}
               />
               <span style={{ color: 'var(--it-text-primary)' }}>
+                <ShieldCheck
+                  size={14}
+                  color={hasAdjustmentPermission ? 'var(--it-green)' : 'var(--it-text-secondary)'}
+                  style={{ display: 'inline', verticalAlign: 'middle', marginRight: '4px' }}
+                />
+                I confirm I have elevated permission to approve this stock adjustment
                 {hasAdjustmentPermission
-                  ? `Adjustment approved by role: ${userRole}`
-                  : `Insufficient role: ${userRole} — STORE_MANAGER or above required`}
+                  ? ` (role: ${userRole})`
+                  : ` — Note: your current role (${userRole}) may not authorise this`}
               </span>
-            </div>
-            {!hasAdjustmentPermission && (
+            </label>
+            {permissionError && (
               <p
-                style={{ marginTop: '4px', fontSize: '12px', color: 'var(--it-red-text)' }}
+                style={{ marginTop: '6px', fontSize: '12px', color: 'var(--it-red-text)' }}
                 data-testid="permission-error"
               >
-                You do not have permission to approve stock adjustments.
+                {permissionError}
               </p>
             )}
           </div>
@@ -765,6 +795,8 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
                 setStep('count');
                 setError(null);
                 setReasonError(null);
+                setPermissionError(null);
+                setElevatedPermissionChecked(false);
               }}
               data-testid="back-to-count-btn"
             >

@@ -37,7 +37,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   const activeCount = stores.filter((s) => s.is_active).length;
   const isAuthorized =
-    userRole === 'GLOBAL_ADMIN' || userRole === 'INVENTORY_MANAGER' || userRole === 'STORE_MANAGER';
+    userRole === 'GLOBAL_ADMIN' ||
+    userRole === 'ADMIN' ||
+    userRole === 'INVENTORY_MANAGER' ||
+    userRole === 'STORE_MANAGER';
 
   const handleOpenCreateModal = (): void => {
     setActionError(null);

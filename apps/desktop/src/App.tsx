@@ -180,32 +180,33 @@ export function App(): React.ReactElement {
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
-  if (authState === 'loading') {
-    return (
-      <div
-        style={{
-          minHeight: '100vh',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          backgroundColor: 'var(--it-bg)',
-          color: 'var(--it-text-secondary)',
-          fontSize: '14px',
-        }}
-        data-testid="auth-loading"
-      >
-        Loading…
-      </div>
-    );
-  }
-
-  if (authState === 'unauthenticated') {
-    return <LoginView deviceId={deviceId} onLoginSuccess={handleLoginSuccess} />;
-  }
 
   const currentUserRole = session?.role ?? 'STORE_CLERK';
 
   const renderView = (): React.ReactElement => {
+    if (authState === 'loading') {
+      return (
+        <div
+          style={{
+            minHeight: '60vh',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: 'var(--it-bg)',
+            color: 'var(--it-text-secondary)',
+            fontSize: '14px',
+          }}
+          data-testid="auth-loading"
+        >
+          Loading…
+        </div>
+      );
+    }
+
+    if (authState === 'unauthenticated') {
+      return <LoginView deviceId={deviceId} onLoginSuccess={handleLoginSuccess} />;
+    }
+
     switch (currentView) {
       case 'dashboard':
         return (
@@ -259,7 +260,9 @@ export function App(): React.ReactElement {
         onLogout={handleLogout}
       />
       <div className="app-body">
-        <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+        {authState !== 'loading' && authState !== 'unauthenticated' && (
+          <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+        )}
         <main className="app-content">
           {authState === 'expired_offline' && session && (
             <OfflineAuthBanner

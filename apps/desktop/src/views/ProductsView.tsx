@@ -45,7 +45,10 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
 
   // Role-based authorization backed by the real auth session (Issue 25)
   const isAuthorized =
-    userRole === 'GLOBAL_ADMIN' || userRole === 'INVENTORY_MANAGER' || userRole === 'STORE_MANAGER';
+    userRole === 'GLOBAL_ADMIN' ||
+    userRole === 'ADMIN' ||
+    userRole === 'INVENTORY_MANAGER' ||
+    userRole === 'STORE_MANAGER';
 
   const fetchProductsList = useCallback(async () => {
     setLoading(true);
