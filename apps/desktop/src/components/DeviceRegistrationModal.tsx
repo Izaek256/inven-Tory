@@ -53,7 +53,7 @@ export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Register Local Device (FR-STORE-003 Stub)"
+      title="Register Device (FR-STORE-003)"
       size="md"
       footer={
         <>
@@ -77,11 +77,6 @@ export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = (
       }
     >
       <form onSubmit={handleSubmit} data-testid="device-modal">
-        <div className="it-toast it-toast--info" style={{ marginBottom: '16px', fontSize: '12px' }}>
-          <strong>TODO(issue-13):</strong> Provisional local device registration stub. Full cloud
-          auth and device token pairing will arrive in Issue 13.
-        </div>
-
         {error && (
           <div
             className="it-toast it-toast--error"

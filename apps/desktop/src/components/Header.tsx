@@ -2,13 +2,17 @@ import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp } from '../services/tauriSyncService';
-import { Badge, ThemeToggle, Select } from '@inven-tory/ui';
+import { Badge, ThemeToggle, Select, Button } from '@inven-tory/ui';
+import { LogOut, User } from 'lucide-react';
+import type { AuthSession } from '../types/auth';
 
 interface HeaderProps {
   stores: Store[];
   activeStoreId: string | null;
   onSelectStore: (storeId: string) => void;
   interactiveTimeMs?: number | null;
+  currentUser?: AuthSession | null;
+  onLogout?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,6 +20,8 @@ export const Header: React.FC<HeaderProps> = ({
   activeStoreId,
   onSelectStore,
   interactiveTimeMs,
+  currentUser,
+  onLogout,
 }) => {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -135,6 +141,38 @@ export const Header: React.FC<HeaderProps> = ({
           <div className="perf-timer-badge" data-testid="perf-timer">
             Interactive: {interactiveTimeMs.toFixed(0)}ms
           </div>
+        )}
+
+        {/* Current user identity */}
+        {currentUser && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '12px',
+              color: 'var(--it-text-secondary)',
+            }}
+            data-testid="current-user-indicator"
+          >
+            <User size={14} aria-hidden="true" />
+            <span>{currentUser.full_name ?? currentUser.username}</span>
+            <Badge status="SENT" label={currentUser.role} />
+          </div>
+        )}
+
+        {/* Logout button */}
+        {onLogout && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onLogout}
+            title="Sign out"
+            data-testid="header-logout-btn"
+          >
+            <LogOut size={14} aria-hidden="true" />
+            <span>Sign Out</span>
+          </Button>
         )}
       </div>
     </header>

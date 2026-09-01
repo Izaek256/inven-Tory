@@ -16,7 +16,8 @@ interface DashboardViewProps {
   loading: boolean;
   error: string | null;
   onRetry: () => void;
-  userRole?: string; // Provisional role restriction — TODO(issue-13)
+  /** Current user's role from the auth session (Issue 25). */
+  userRole?: string;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -35,7 +36,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [actionError, setActionError] = useState<string | null>(null);
 
   const activeCount = stores.filter((s) => s.is_active).length;
-  const isAuthorized = userRole === 'ADMIN' || userRole === 'MANAGER';
+  const isAuthorized =
+    userRole === 'GLOBAL_ADMIN' || userRole === 'INVENTORY_MANAGER' || userRole === 'STORE_MANAGER';
 
   const handleOpenCreateModal = (): void => {
     setActionError(null);

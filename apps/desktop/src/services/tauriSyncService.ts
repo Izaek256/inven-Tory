@@ -55,8 +55,13 @@ import {
 export interface SyncConfig {
   /** Base URL of the API server, e.g. http://localhost:8000/api/v1 */
   apiBaseUrl: string;
-  /** JWT Bearer token for authenticated requests */
-  accessToken: string;
+  /**
+   * JWT Bearer token for authenticated requests.
+   * If omitted, tauriSyncService will attempt to obtain it from tauriAuthService.
+   * If null/empty and tauriAuthService returns null (expired offline), sync is
+   * skipped but pending transactions are NOT discarded (Section 21 offline rule).
+   */
+  accessToken?: string;
   /** Number of outbox events per push batch (default: 100, SYNC-010) */
   batchSize?: number;
   /** Abort signal for cancelling in-flight fetch calls */
@@ -316,6 +321,27 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
   if (_syncInProgress) {
     return getSyncStatus();
   }
+
+  // Resolve access token — prefer explicit config.accessToken, then auth service.
+  let resolvedToken = config.accessToken;
+  if (!resolvedToken) {
+    try {
+      const { getAccessToken } = await import('./tauriAuthService');
+      resolvedToken = (await getAccessToken()) ?? undefined;
+    } catch {
+      resolvedToken = undefined;
+    }
+  }
+
+  // Offline-token-expiry guard (Section 21): if we have no token because the
+  // token expired while offline, skip the sync entirely — but do NOT discard
+  // pending transactions.  The outbox continues to queue; sync resumes after
+  // re-authentication.
+  if (!resolvedToken) {
+    _mockLastOutcome = 'offline';
+    return getSyncStatus();
+  }
+
   _syncInProgress = true;
 
   const batchSize = config.batchSize ?? 100;
@@ -365,7 +391,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
       try {
         const pushResp = await _httpPush(
           config.apiBaseUrl,
-          config.accessToken,
+          resolvedToken,
           itemsWithRows.map((x) => x.item),
           config.signal,
         );
@@ -437,7 +463,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     // ── Pull loop (only if push didn't error out) ─────────────────────────
     if (!hadRetryableError) {
       try {
-        pullResponse = await _httpPull(config.apiBaseUrl, config.accessToken, config.signal);
+        pullResponse = await _httpPull(config.apiBaseUrl, resolvedToken, config.signal);
         // eslint-disable-next-line no-console
         console.info(
           `[SyncService] Pull complete: ${pullResponse.products.length} products, ` +

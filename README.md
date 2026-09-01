@@ -159,6 +159,140 @@ pytest   # configuration in root pyproject.toml
 npm test --workspaces --if-present
 ```
 
+### Testing Authentication (Issue 25)
+
+The authentication system uses FastAPI Users. Here's how to test the authentication flow:
+
+#### 1. Test API Authentication Endpoints
+
+Start the API server:
+```bash
+cd services/api
+uvicorn app.main:app --reload --port 8000
+```
+
+Test the FastAPI Users endpoints using curl or a tool like Postman:
+
+**Register a new user:**
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "test@example.com",
+    "password": "SecurePassword123!",
+    "username": "testuser",
+    "full_name": "Test User",
+    "role": "STORE_CLERK"
+  }'
+```
+
+**Login with username (desktop):**
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "testuser",
+    "password": "SecurePassword123!",
+    "device_id": "test-device-001"
+  }'
+```
+
+**Login with email (web/mobile):**
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/jwt/login \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=test@example.com&password=SecurePassword123!"
+```
+
+**Get current user profile:**
+```bash
+curl -X GET http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer <your_access_token>"
+```
+
+**Refresh access token:**
+```bash
+curl -X POST http://localhost:8000/api/v1/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{"refresh_token": "<your_refresh_token>"}'
+```
+
+#### 2. Test Desktop App Authentication
+
+1. Start the desktop app in development mode:
+```bash
+cd apps/desktop
+npm run dev
+```
+
+2. Register a device first (if not already registered)
+3. Use the login screen with the username/password you created
+4. Verify the token is cached in Tauri secure storage
+5. Test offline behavior: disconnect network, let token expire, verify local operations still work
+
+#### 3. Test Web Dashboard Authentication
+
+1. Start the web dashboard:
+```bash
+cd apps/web
+npm run dev
+```
+
+2. Navigate to the login screen
+3. Use email/password to log in
+4. Verify the token is stored in localStorage
+5. Test logout functionality
+
+#### 4. Test Mobile Companion Authentication
+
+1. Start the mobile app:
+```bash
+cd apps/mobile
+npm run dev
+```
+
+2. Navigate to the login screen
+3. Use email/password to log in
+4. Verify the token is stored in localStorage
+5. Test logout functionality
+
+#### 5. Test Permission Checks
+
+Test that permission dependencies work correctly:
+
+```bash
+# Try to access an admin endpoint as a regular user (should fail with 403)
+curl -X POST http://localhost:8000/api/v1/users \
+  -H "Authorization: Bearer <regular_user_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"email": "new@example.com", "password": "password"}'
+```
+
+#### 6. Test Device Revocation
+
+1. Create a user and register a device
+2. Login with that device
+3. Revoke the device (via device management endpoint)
+4. Try to use the same token — should be rejected with 401
+
+#### 7. Run Authentication Tests
+
+The desktop app has authentication tests:
+```bash
+cd apps/desktop
+npm test -- AuthService.test
+```
+
+#### 8. Mock Data Audit
+
+Verify no mock data exists in the codebase:
+```bash
+# Search for mock, dummy, placeholder, fake
+grep -r "mock\|dummy\|placeholder\|fake" --include="*.ts" --include="*.tsx" --include="*.py" --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=infra/seed/dev_only
+```
+
+Expected: Zero hits outside of explicitly-labeled dev-fixture paths.
+
 ---
 
 ## CI
