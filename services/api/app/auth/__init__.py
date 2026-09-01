@@ -26,8 +26,8 @@ __all__ = [
 
 
 async def get_user_db(
-    session: AsyncSession = Depends(get_db),
-) -> AsyncGenerator[SQLAlchemyUserDatabase, None]:  # noqa: B008
+    session: AsyncSession = Depends(get_db),  # noqa: B008
+) -> AsyncGenerator[SQLAlchemyUserDatabase, None]:
     """
     Dependency that yields a SQLAlchemyUserDatabase instance.
 
@@ -37,8 +37,8 @@ async def get_user_db(
 
 
 async def get_user_manager(
-    user_db: SQLAlchemyUserDatabase = Depends(get_user_db),
-) -> AsyncGenerator[UserManager, None]:  # noqa: B008
+    user_db: SQLAlchemyUserDatabase = Depends(get_user_db),  # noqa: B008
+) -> AsyncGenerator[UserManager, None]:
     """
     Dependency that yields a UserManager instance.
 
