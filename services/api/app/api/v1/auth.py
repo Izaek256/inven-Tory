@@ -15,6 +15,7 @@ FastAPI Users provides:
   POST /api/v1/auth/register        — user registration
   POST /api/v1/auth/forgot-password — password reset request
   POST /api/v1/auth/reset-password  — password reset with token
+  GET  /api/v1/auth/users           — user management endpoints
 
 Custom endpoints added:
   POST /api/v1/auth/login           — login with device verification (desktop primary)
@@ -66,12 +67,10 @@ router.include_router(
 )
 router.include_router(
     fastapi_users.get_register_router(UserRead, UserCreate),
-    prefix="/register",
     tags=["auth"],
 )
 router.include_router(
     fastapi_users.get_reset_password_router(),
-    prefix="/reset-password",
     tags=["auth"],
 )
 router.include_router(
@@ -170,11 +169,11 @@ async def login(
         raise _unauthorized
 
     # 2. Verify password using FastAPI Users' password manager
-    user_manager_dep = get_user_manager()
-    user_manager = await user_manager_dep.__anext__()
-    if not await user_manager.verify(body.password, user):
-        logger.warning("LOGIN_FAILURE reason=wrong_password username=%s", body.username)
-        raise _unauthorized
+    async for user_manager in get_user_manager():
+        if not await user_manager.verify(body.password, user):
+            logger.warning("LOGIN_FAILURE reason=wrong_password username=%s", body.username)
+            raise _unauthorized
+        break
 
     # 3. Verify device is registered and active
     dev_result = await db.execute(select(Device).where(Device.id == body.device_id))
@@ -252,7 +251,13 @@ async def refresh_token(
     if not user_id:
         raise _invalid
 
-    result = await db.execute(select(User).where(User.id == int(user_id)))
+    try:
+        user_id_int = int(user_id)
+    except ValueError:
+        logger.warning("REFRESH_FAILURE reason=invalid_user_id_format user_id=%s", user_id)
+        raise _invalid
+
+    result = await db.execute(select(User).where(User.id == user_id_int))
     user: User | None = result.scalars().first()
 
     if user is None or not user.is_active:
@@ -326,28 +331,27 @@ async def change_password(
     (stateless JWT). Clients should treat this as an implicit logout signal
     and prompt for re-authentication.
     """
-    user_manager_dep = get_user_manager()
-    user_manager = await user_manager_dep.__anext__()
+    async for user_manager in get_user_manager():
+        # Verify current password
+        if not await user_manager.verify(body.current_password, current_user):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Current password is incorrect.",
+            )
 
-    # Verify current password
-    if not await user_manager.verify(body.current_password, current_user):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Current password is incorrect.",
+        if body.new_password == body.current_password:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="New password must differ from the current password.",
+            )
+
+        # Update password using FastAPI Users manager
+        await user_manager.update(
+            current_user,
+            {"password": body.new_password},
+            safe=True,
         )
-
-    if body.new_password == body.current_password:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="New password must differ from the current password.",
-        )
-
-    # Update password using FastAPI Users manager
-    await user_manager.update(
-        current_user,
-        {"password": body.new_password},
-        safe=True,
-    )
+        break
 
     logger.info("PASSWORD_CHANGED user_id=%s", current_user.id)
 

@@ -31,7 +31,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # Drop the existing foreign key constraint
-    op.drop_constraint("fk_devices_registered_by_user_id", "devices", type_="foreignkey")
+    # The constraint was unnamed in 0001_initial_postgres_schema, so Postgres
+    # assigned the default name: devices_registered_by_user_id_fkey
+    op.drop_constraint("devices_registered_by_user_id_fkey", "devices", type_="foreignkey")
 
     # Change the column type from String(36) to Integer
     op.alter_column(
@@ -64,8 +66,9 @@ def downgrade() -> None:
         existing_nullable=True,
     )
 
+    # Recreate with the default Postgres constraint name
     op.create_foreign_key(
-        "fk_devices_registered_by_user_id",
+        "devices_registered_by_user_id_fkey",
         "devices",
         "users",
         ["registered_by_user_id"],

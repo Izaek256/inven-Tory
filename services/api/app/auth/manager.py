@@ -36,7 +36,7 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
         self, user: User, token: str, request: Request | None = None
     ) -> None:
         """Hook called after verification request — log for audit."""
-        print(f"Verification requested for user {user.id}. Verification token: {token}")
+        print(f"Verification requested for user {user.id}.")
 
     async def on_after_update(
         self,
@@ -67,7 +67,14 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
             "SYNC",
         }
 
-        role = user_create.get("role")
+        # Handle both dict and Pydantic model inputs
+        if hasattr(user_create, "dict"):
+            # Pydantic model
+            role = getattr(user_create, "role", None)
+        else:
+            # Dict
+            role = user_create.get("role")
+
         if role and str(role) not in valid_roles:
             raise exceptions.InvalidUserException(
                 f"Invalid role '{role}'. Must be one of: {', '.join(sorted(valid_roles))}"
