@@ -29,6 +29,8 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # SQLite table-rebuild to change id from String(36) to Integer autoincrement
+    # Disable foreign key constraints temporarily to allow dropping the users table
+    op.execute("PRAGMA foreign_keys = OFF")
 
     # 1. Create the replacement table
     op.create_table(
@@ -65,9 +67,14 @@ def upgrade() -> None:
     # 5. Recreate indexes
     op.create_index("ix_users_username", "users", ["username"], unique=True)
 
+    # Re-enable foreign key constraints
+    op.execute("PRAGMA foreign_keys = ON")
+
 
 def downgrade() -> None:
     # Revert to UUID-based schema (data loss: integer IDs cannot be converted back to UUIDs)
+    # Disable foreign key constraints temporarily to allow dropping the users table
+    op.execute("PRAGMA foreign_keys = OFF")
 
     op.drop_index("ix_users_username", table_name="users")
 
@@ -98,3 +105,6 @@ def downgrade() -> None:
     op.rename_table("_users_old", "users")
 
     op.create_index("ix_users_username", "users", ["username"], unique=True)
+
+    # Re-enable foreign key constraints
+    op.execute("PRAGMA foreign_keys = ON")
