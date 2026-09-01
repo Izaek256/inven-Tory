@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # ── Database ───────────────────────────────────────────────────────────────
-    database_url: str = "postgresql+asyncpg://invtory:changeme@localhost:5432/invtory"
+    database_url: str = "postgresql+asyncpg://postgres:changeme@localhost:5432/inventory"
 
     # ── Security ───────────────────────────────────────────────────────────────
     secret_key: str = "CHANGE_ME_IN_PRODUCTION"
