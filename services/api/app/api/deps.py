@@ -15,14 +15,18 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi_users import FastAPIUsers
+from jose import JWTError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import auth_backend, get_user_manager
 from app.auth.user import User
 from app.core.permissions import Permission, role_has_permission
+from app.core.security import decode_access_token
 from app.db import get_db
+from app.models.device import Device
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +35,7 @@ fastapi_users = FastAPIUsers[User, int](get_user_manager, [auth_backend])
 
 
 async def get_current_user(
+    request: Request,
     user: User = Depends(fastapi_users.current_user(active=True)),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> User:
@@ -49,16 +54,34 @@ async def get_current_user(
     """
     # FastAPI Users already validated the token and user is_active
     # Now we need to verify device revocation if device_id is in the token
-    # Note: FastAPI Users standard tokens don't include device_id, so this check
-    # only applies to our custom login endpoint tokens
+    auth_header = request.headers.get("authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.replace("Bearer ", "")
+        try:
+            payload = decode_access_token(token)
+            device_id = payload.get("device_id")
 
-    # For endpoints that use our custom login (with device_id), we'd need to
-    # extract device_id from the token. Since FastAPI Users doesn't expose this,
-    # we'll skip device verification for standard FastAPI Users routes and
-    # handle it in the custom login endpoint instead.
+            # Check device revocation if device_id is present (from our custom login)
+            if device_id and device_id != "REFRESH_NO_DEVICE":
+                device_result = await db.execute(select(Device).where(Device.id == device_id))
+                device: Device | None = device_result.scalars().first()
 
-    # For now, return the user as-is. Device verification is handled in the
-    # custom /auth/login endpoint which issues tokens with device_id claims.
+                if device is None or not device.is_active:
+                    logger.warning(
+                        "AUTH_FAILURE device_revoked user_id=%s device_id=%s",
+                        user.id,
+                        device_id,
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Device has been revoked",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+        except (JWTError, KeyError, AttributeError):
+            # If we can't decode or check device, fall through to return user
+            # This allows standard FastAPI Users routes to work
+            pass
+
     return user
 
 

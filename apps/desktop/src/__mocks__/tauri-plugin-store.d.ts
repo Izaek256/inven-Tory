@@ -11,7 +11,4 @@ export interface Store {
   save(): Promise<void>;
 }
 
-export function load(
-  path: string,
-  options?: { autoSave?: boolean }
-): Promise<Store>;
+export function load(path: string, options?: { autoSave?: boolean }): Promise<Store>;

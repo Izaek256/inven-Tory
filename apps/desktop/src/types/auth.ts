@@ -26,7 +26,7 @@ export interface AccessTokenResponse {
 
 /** Response from GET /api/v1/auth/me */
 export interface UserProfile {
-  id: string;
+  id: number; // Changed to number for FastAPI Users integer ID
   username: string;
   email: string | null;
   full_name: string | null;

@@ -18,7 +18,6 @@ import asyncio
 import logging
 import os
 import sys
-import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -29,9 +28,9 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger("dev_seed_postgres")
 
 # Dev-only passwords — clearly labeled, never used in production
+# User IDs are now auto-increment integers (FastAPI Users), so we don't specify them
 DEV_USERS = [
     {
-        "id": "USER-ADMIN-01",
         "username": "admin",
         "email": "admin@inventory.local",
         "full_name": "System Administrator",
@@ -40,7 +39,6 @@ DEV_USERS = [
         "assigned_store_id": None,
     },
     {
-        "id": "USER-MGR-01",
         "username": "manager_alpha",
         "email": "manager.alpha@inventory.local",
         "full_name": "Alpha Store Manager",
@@ -49,7 +47,6 @@ DEV_USERS = [
         "assigned_store_id": "STORE-ALPHA",
     },
     {
-        "id": "USER-CLERK-01",
         "username": "clerk_alpha",
         "email": "clerk.alpha@inventory.local",
         "full_name": "Alpha Clerk",
@@ -58,7 +55,6 @@ DEV_USERS = [
         "assigned_store_id": "STORE-ALPHA",
     },
     {
-        "id": "USER-AUDITOR-01",
         "username": "auditor",
         "email": "auditor@inventory.local",
         "full_name": "Auditor User",
@@ -112,10 +108,9 @@ async def seed() -> None:
 
         # Users
         for u in DEV_USERS:
-            existing = await session.scalar(select(User).where(User.id == u["id"]))
+            existing = await session.scalar(select(User).where(User.username == u["username"]))
             if not existing:
                 session.add(User(
-                    id=u["id"],
                     username=u["username"],
                     email=u["email"],
                     full_name=u["full_name"],

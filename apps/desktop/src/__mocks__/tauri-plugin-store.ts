@@ -5,10 +5,7 @@
  * The actual Tauri plugin only exists in the compiled desktop app.
  */
 
-export async function load(
-  _path: string,
-  _options?: { autoSave?: boolean }
-): Promise<Store> {
+export async function load(_path: string, _options?: { autoSave?: boolean }): Promise<Store> {
   return new Store();
 }
 

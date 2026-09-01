@@ -75,23 +75,21 @@ DEV_STORES = [
 ]
 
 # Dev-only identity cache entries (no passwords — see schema note above).
+# User IDs are now auto-increment integers (FastAPI Users), so we don't specify them
 DEV_USERS = [
     {
-        "id": "USER-ADMIN-01",
         "username": "admin",
         "email": "admin@inventory.local",
         "full_name": "System Administrator",
         "role": "GLOBAL_ADMIN",
     },
     {
-        "id": "USER-MGR-01",
         "username": "manager_alpha",
         "email": "manager.alpha@inventory.local",
         "full_name": "Alpha Store Manager",
         "role": "STORE_MANAGER",
     },
     {
-        "id": "USER-CLERK-01",
         "username": "clerk_alpha",
         "email": "clerk.alpha@inventory.local",
         "full_name": "Alpha Clerk",
@@ -200,9 +198,8 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
 
         # Users (identity cache — no passwords)
         for u in DEV_USERS:
-            if not session.scalar(select(User).where(User.id == u["id"])):
+            if not session.scalar(select(User).where(User.username == u["username"])):
                 session.add(User(
-                    id=u["id"],
                     username=u["username"],
                     email=u["email"],
                     full_name=u["full_name"],
@@ -227,6 +224,10 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
 
         # Initial stock
         now = current_utc_now()
+        # Get the admin user ID (should be ID 1 since it's created first)
+        admin_user = session.scalar(select(User).where(User.username == "admin"))
+        admin_user_id = admin_user.id if admin_user else 1
+        
         for store_id, product_id, qty in INITIAL_STOCK:
             if not session.scalar(
                 select(StockBalance).where(
@@ -246,7 +247,7 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
                     quantity_delta=qty,
                     occurred_at=now,
                     recorded_at=now,
-                    user_id="USER-ADMIN-01",
+                    user_id=admin_user_id,
                     device_id=device_id,
                     reference_number="DEV-SEED-INITIAL",
                     reason_code="INITIAL_STOCK",
