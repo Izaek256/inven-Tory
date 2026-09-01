@@ -1,73 +1,22 @@
 """
-FastAPI Users user model with custom fields — Issue 25.
+FastAPI Users Pydantic schemas — Issue 25.
 
-Extends the FastAPI Users base model with our custom fields:
-- role (System Administrator / Inventory Manager / Store Manager / Store Clerk / Auditor-Viewer / Sync Service)
-- assigned_store_id (nullable, for store-scoped roles)
-
-The existing User ORM model in app/models/user.py will be migrated to inherit from
-FastAPI Users' base model to maintain compatibility with the library's expectations.
+The ORM ``User`` model lives in ``app.models.user`` (single source of truth).
+This module re-exports it for FastAPI Users compatibility and provides the
+Pydantic read/create/update schemas that FastAPI Users requires.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import datetime
 
 from fastapi_users import schemas
-from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTable
-from sqlalchemy import DateTime, ForeignKey, String
-from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db import Base
+# Re-export the canonical ORM model so the rest of the auth package can
+# import ``User`` from here without creating a second SQLAlchemy mapper.
+from app.models.user import User
 
-
-class User(SQLAlchemyBaseUserTable[int], Base):
-    """
-    FastAPI Users user model with custom fields.
-
-    Inherits from FastAPI Users' SQLAlchemyBaseUserTable which provides:
-    - id (integer, auto-increment)
-    - email (string, unique, nullable)
-    - hashed_password (string, nullable)
-    - is_active (boolean)
-    - is_superuser (boolean)
-    - is_verified (boolean)
-
-    Custom fields added:
-    - role: SRS §4 user type
-    - assigned_store_id: nullable FK to stores.id for store-scoped roles
-    - full_name: display name
-    - created_at/updated_at: audit timestamps
-    """
-
-    __tablename__ = "users"
-
-    # FastAPI Users base fields (inherited, listed here for clarity):
-    # id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # email: Mapped[str] = mapped_column(String, nullable=False)
-    # hashed_password: Mapped[str] = mapped_column(String, nullable=False)
-    # is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    # is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    # is_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-
-    # Custom fields
-    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
-    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    # SRS §4: GLOBAL_ADMIN | INVENTORY_MANAGER | STORE_MANAGER | STORE_CLERK | AUDITOR | SYNC
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="STORE_CLERK")
-    # NULL for global/admin roles; set for store-scoped roles (Issue 25)
-    assigned_store_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("stores.id"), nullable=True, index=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-        nullable=False,
-    )
+__all__ = ["User", "UserCreate", "UserRead", "UserUpdate"]
 
 
 # ---------------------------------------------------------------------------

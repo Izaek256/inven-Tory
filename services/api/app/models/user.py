@@ -19,7 +19,7 @@ Custom fields:
 from datetime import UTC, datetime
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTable
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -34,12 +34,14 @@ class User(SQLAlchemyBaseUserTable[int], Base):
     FastAPI Users user model with custom fields.
 
     Inherits from FastAPI Users' SQLAlchemyBaseUserTable which provides:
-    - id (integer, auto-increment)
     - email (string, unique, required)
     - hashed_password (string, required)
     - is_active (boolean)
     - is_superuser (boolean)
     - is_verified (boolean)
+
+    We define id explicitly (integer PK) since SQLAlchemyBaseUserTable[int]
+    does not auto-generate it — the concrete subclass must declare it.
 
     Custom fields added:
     - username: unique username for login
@@ -50,6 +52,10 @@ class User(SQLAlchemyBaseUserTable[int], Base):
     """
 
     __tablename__ = "users"
+
+    # Primary key — must be declared explicitly; SQLAlchemyBaseUserTable[int]
+    # does not provide it (only UUID variant does via GUID).
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
     # Custom fields
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
