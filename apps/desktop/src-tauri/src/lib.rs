@@ -2128,6 +2128,7 @@ pub fn run() {
     println!("[TAURI-LOG] Initializing INVENTORY Tory Desktop Shell...");
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_stores,
             commands::create_store,

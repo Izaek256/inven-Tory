@@ -22,8 +22,6 @@
  * in-memory store so tests stay in-process.
  */
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { isTauriEnvironment } from './tauriStoreService';
 import type { AuthSession, TokenResponse, UserRole } from '../types/auth';
 
@@ -54,9 +52,8 @@ async function _secureWrite(session: AuthSession): Promise<void> {
   if (isTauriEnvironment()) {
     try {
       // Dynamic import so the module tree-shakes cleanly in web/test builds.
-      // @ts-expect-error - Tauri module only available in Tauri builds
       const { load } = await import('@tauri-apps/plugin-store');
-      const store = (await load(STORE_FILE, { autoSave: true })) as any;
+      const store = await load(STORE_FILE, { autoSave: true });
       await store.set(SESSION_KEY, session);
       await store.save();
     } catch (err) {
@@ -72,10 +69,8 @@ async function _secureWrite(session: AuthSession): Promise<void> {
 async function _secureRead(): Promise<AuthSession | null> {
   if (isTauriEnvironment()) {
     try {
-      // @ts-expect-error - Tauri module only available in Tauri builds
       const { load } = await import('@tauri-apps/plugin-store');
-      const store = (await load(STORE_FILE, { autoSave: false })) as any;
-      // @ts-expect-error - Tauri store.get is untyped
+      const store = await load(STORE_FILE, { autoSave: false });
       const val = await store.get<AuthSession>(SESSION_KEY);
       return val ?? null;
     } catch {
@@ -89,9 +84,8 @@ async function _secureClear(): Promise<void> {
   _memSession = null;
   if (isTauriEnvironment()) {
     try {
-      // @ts-expect-error - Tauri module only available in Tauri builds
       const { load } = await import('@tauri-apps/plugin-store');
-      const store = (await load(STORE_FILE, { autoSave: true })) as any;
+      const store = await load(STORE_FILE, { autoSave: true });
       await store.delete(SESSION_KEY);
       await store.save();
     } catch {
