@@ -20,7 +20,8 @@ import {
 import { Package, Plus, Edit2, Power, Barcode, Sparkles, AlertTriangle, X } from 'lucide-react';
 
 interface ProductsViewProps {
-  userRole?: string; // Provisional role restriction - TODO(issue-13)
+  /** Current user's role from the auth session (Issue 25). */
+  userRole?: string;
 }
 
 export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }) => {
@@ -42,8 +43,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   const [pickerDemoOpen, setPickerDemoOpen] = useState(false);
   const [selectedPickerProduct, setSelectedPickerProduct] = useState<Product | null>(null);
 
-  // Provisional role authorization
-  const isAuthorized = userRole === 'ADMIN' || userRole === 'MANAGER';
+  // Role-based authorization backed by the real auth session (Issue 25)
+  const isAuthorized =
+    userRole === 'GLOBAL_ADMIN' || userRole === 'INVENTORY_MANAGER' || userRole === 'STORE_MANAGER';
 
   const fetchProductsList = useCallback(async () => {
     setLoading(true);

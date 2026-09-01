@@ -27,6 +27,11 @@ import {
 
 type Step = 'count' | 'approve' | 'done';
 
+interface PhysicalCountAdjustmentViewProps {
+  /** Current user's role from the auth session — enforces permission gate. */
+  userRole?: string;
+}
+
 function varianceLabel(delta: number): React.ReactElement {
   if (delta === 0)
     return (
@@ -53,12 +58,40 @@ function varianceLabel(delta: number): React.ReactElement {
   );
 }
 
-export const PhysicalCountAdjustmentView: React.FC = () => {
-  const userId = 'USER-DEMO';
-  const deviceId = 'DEV-DEMO';
+export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewProps> = ({
+  userRole = 'STORE_CLERK',
+}) => {
+  // Auth: resolve user/device from the active session instead of hardcoded values.
+  const [sessionUserId, setSessionUserId] = useState<string>('');
+  const [sessionDeviceId, setSessionDeviceId] = useState<string>('');
+
+  useEffect(() => {
+    const loadSession = async (): Promise<void> => {
+      try {
+        const { getSession } = await import('../services/tauriAuthService');
+        const s = await getSession();
+        if (s) {
+          setSessionUserId(s.user_id);
+        }
+        // device_id is stored separately in the secure store
+        if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+          const { load } = await import('@tauri-apps/plugin-store');
+          const store = await load('auth.dat', { autoSave: false });
+          const devId = await store.get<string>('device_id');
+          setSessionDeviceId(devId ?? '');
+        }
+      } catch {
+        // Non-Tauri / test environment — leave empty; Tauri commands use their own context
+      }
+    };
+    void loadSession();
+  }, []);
+
+  // Role-based permission: ADJUSTMENT permission is STORE_MANAGER and above.
+  const hasAdjustmentPermission =
+    userRole === 'GLOBAL_ADMIN' || userRole === 'INVENTORY_MANAGER' || userRole === 'STORE_MANAGER';
 
   const [step, setStep] = useState<Step>('count');
-
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>('');
   const [productQuery, setProductQuery] = useState<string>('');
@@ -71,8 +104,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
 
   const [reason, setReason] = useState<string>('');
   const [reasonError, setReasonError] = useState<string | null>(null);
-  const [hasElevatedPermission, setHasElevatedPermission] = useState<boolean>(false);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -176,7 +207,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
   const handleApprove = async (): Promise<void> => {
     setError(null);
     setReasonError(null);
-    setPermissionError(null);
 
     if (!reason.trim()) {
       const msg = 'A reason is required for adjustment approval.';
@@ -185,10 +215,9 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
       return;
     }
 
-    if (!hasElevatedPermission) {
+    if (!hasAdjustmentPermission) {
       const msg =
-        'Elevated permission is required to approve stock adjustments (provisional check).';
-      setPermissionError(msg);
+        'You do not have permission to approve stock adjustments. STORE_MANAGER role or above required.';
       setError(msg);
       return;
     }
@@ -205,8 +234,8 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
         product_id: selectedProduct.id,
         quantity_delta: variance,
         reason: reason.trim(),
-        user_id: userId,
-        device_id: deviceId,
+        user_id: sessionUserId,
+        device_id: sessionDeviceId,
         count_reference: `COUNT-${selectedStoreId}-${selectedProduct.id}-${Date.now()}`,
       };
 
@@ -229,8 +258,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
     setCountedQty('');
     setReason('');
     setReasonError(null);
-    setPermissionError(null);
-    setHasElevatedPermission(false);
     setError(null);
     setApprovedTransaction(null);
     setIsSubmitting(false);
@@ -665,7 +692,7 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
                 <tr>
                   <td style={{ padding: '8px 14px' }}>Responsible User</td>
                   <td style={{ padding: '8px 14px' }} data-testid="summary-user">
-                    {userId}
+                    {sessionUserId || '—'}
                   </td>
                 </tr>
               </tbody>
@@ -709,48 +736,24 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
             }}
             data-testid="permission-gate"
           >
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '10px',
-                cursor: 'pointer',
-                fontSize: '13px',
-                color: 'var(--it-text-primary)',
-              }}
-            >
-              <input
-                id="elevated-permission-checkbox"
-                type="checkbox"
-                checked={hasElevatedPermission}
-                onChange={(e): void => {
-                  setHasElevatedPermission(e.target.checked);
-                  if (permissionError) setPermissionError(null);
-                  if (error) setError(null);
-                }}
-                data-testid="elevated-permission-checkbox"
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px' }}>
+              <ShieldCheck
+                size={16}
+                color={hasAdjustmentPermission ? 'var(--it-green)' : 'var(--it-red)'}
               />
-              <ShieldCheck size={16} color="var(--it-green)" />
-              <span>
-                I confirm I have elevated permission to approve stock adjustments
-                <em style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>
-                  {' '}
-                  (provisional — Issue 13/14)
-                </em>
+              <span style={{ color: 'var(--it-text-primary)' }}>
+                {hasAdjustmentPermission
+                  ? `Adjustment approved by role: ${userRole}`
+                  : `Insufficient role: ${userRole} — STORE_MANAGER or above required`}
               </span>
-            </label>
-            {permissionError && (
-              <span
-                style={{
-                  display: 'block',
-                  marginTop: '4px',
-                  fontSize: '12px',
-                  color: 'var(--it-red-text)',
-                }}
+            </div>
+            {!hasAdjustmentPermission && (
+              <p
+                style={{ marginTop: '4px', fontSize: '12px', color: 'var(--it-red-text)' }}
                 data-testid="permission-error"
               >
-                {permissionError}
-              </span>
+                You do not have permission to approve stock adjustments.
+              </p>
             )}
           </div>
 
@@ -762,7 +765,6 @@ export const PhysicalCountAdjustmentView: React.FC = () => {
                 setStep('count');
                 setError(null);
                 setReasonError(null);
-                setPermissionError(null);
               }}
               data-testid="back-to-count-btn"
             >

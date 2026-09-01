@@ -172,7 +172,6 @@ function App(): React.ReactElement {
         return <DashboardOverview storeIds={storeIds} onNavigate={setCurrentView} />;
     }
   };
-
   return (
     <div className="app-container" data-testid="web-app-container">
       {/* ── Header ── */}

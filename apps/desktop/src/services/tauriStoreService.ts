@@ -157,8 +157,9 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
 }
 
 /**
- * Device registration stub (FR-STORE-003).
- * TODO(issue-13): Replace with full server-side OAuth device pairing in Issue 13
+ * Device registration — FR-STORE-003.
+ * Calls the register_device Tauri IPC command which writes to local SQLite.
+ * The registered device_id is then used in the login flow.
  */
 export async function registerDevice(storeId: string, deviceName: string): Promise<Device> {
   if (isTauriEnvironment()) {

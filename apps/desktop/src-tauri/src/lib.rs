@@ -397,8 +397,8 @@ pub mod commands {
         Ok(store)
     }
 
-    // FR-STORE-003: Device registration stub
-    // TODO(issue-13): Replace with full server-side OAuth device pairing workflow in Issue 13
+    // FR-STORE-003: Device registration — writes to local SQLite.
+    // The returned device_id is used in the login flow (Issue 25).
     #[tauri::command]
     pub fn register_device(store_id: String, device_name: String) -> Result<Device, String> {
         let db_path = get_db_path();
@@ -2128,6 +2128,7 @@ pub fn run() {
     println!("[TAURI-LOG] Initializing INVENTORY Tory Desktop Shell...");
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
             commands::get_stores,
             commands::create_store,

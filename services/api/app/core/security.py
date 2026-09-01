@@ -93,11 +93,20 @@ def decode_access_token(token: str) -> dict[str, Any]:
     return payload
 
 
+def decode_refresh_token(token: str) -> dict[str, Any]:
+    """Decode and validate a refresh token; raise JWTError on any failure."""
+    payload: dict[str, Any] = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+    if payload.get("type") != TOKEN_TYPE_REFRESH:
+        raise JWTError("wrong token type")
+    return payload
+
+
 __all__ = [
     "ALGORITHM",
     "create_access_token",
     "create_refresh_token",
     "decode_access_token",
+    "decode_refresh_token",
     "hash_password",
     "verify_password",
 ]

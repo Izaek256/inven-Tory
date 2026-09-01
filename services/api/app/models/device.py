@@ -7,7 +7,7 @@ A revoked device (is_active=False) is rejected on every authenticated request.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -34,9 +34,9 @@ class Device(Base):
         DateTime(timezone=True), default=_utc_now, nullable=False
     )
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # User who registered the device
-    registered_by_user_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=True
+    # User who registered the device (integer ID to match FastAPI Users)
+    registered_by_user_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("users.id"), nullable=True
     )
     # Optional revocation notes
     revocation_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
