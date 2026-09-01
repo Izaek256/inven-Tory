@@ -37,7 +37,9 @@ def upgrade() -> None:
         sa.Column("username", sa.String(length=100), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=True),
         sa.Column("full_name", sa.String(length=255), nullable=True),
-        sa.Column("role", sa.String(length=50), nullable=False, server_default=sa.text("'STORE_CLERK'")),
+        sa.Column(
+            "role", sa.String(length=50), nullable=False, server_default=sa.text("'STORE_CLERK'")
+        ),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),
@@ -75,7 +77,9 @@ def downgrade() -> None:
         sa.Column("username", sa.String(length=100), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=True),
         sa.Column("full_name", sa.String(length=255), nullable=True),
-        sa.Column("role", sa.String(length=50), nullable=False, server_default=sa.text("'STORE_CLERK'")),
+        sa.Column(
+            "role", sa.String(length=50), nullable=False, server_default=sa.text("'STORE_CLERK'")
+        ),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("1")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.PrimaryKeyConstraint("id"),

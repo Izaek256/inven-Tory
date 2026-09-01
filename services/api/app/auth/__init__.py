@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import AsyncGenerator
+from collections.abc import AsyncGenerator
 
 from fastapi import Depends
 from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
@@ -14,18 +14,20 @@ from app.auth.user import User, UserCreate, UserRead, UserUpdate
 from app.db import get_db
 
 __all__ = [
-    "get_user_db",
-    "get_user_manager",
-    "auth_backend",
     "User",
     "UserCreate",
+    "UserManager",
     "UserRead",
     "UserUpdate",
-    "UserManager",
+    "auth_backend",
+    "get_user_db",
+    "get_user_manager",
 ]
 
 
-async def get_user_db(session: AsyncSession = Depends(get_db)) -> AsyncGenerator[SQLAlchemyUserDatabase, None]:
+async def get_user_db(
+    session: AsyncSession = Depends(get_db),
+) -> AsyncGenerator[SQLAlchemyUserDatabase, None]:  # noqa: B008
     """
     Dependency that yields a SQLAlchemyUserDatabase instance.
 
@@ -34,7 +36,9 @@ async def get_user_db(session: AsyncSession = Depends(get_db)) -> AsyncGenerator
     yield SQLAlchemyUserDatabase(session, User)
 
 
-async def get_user_manager(user_db: SQLAlchemyUserDatabase = Depends(get_user_db)) -> AsyncGenerator[UserManager, None]:
+async def get_user_manager(
+    user_db: SQLAlchemyUserDatabase = Depends(get_user_db),
+) -> AsyncGenerator[UserManager, None]:  # noqa: B008
     """
     Dependency that yields a UserManager instance.
 

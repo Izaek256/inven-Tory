@@ -73,8 +73,10 @@ def downgrade() -> None:
         sa.Column("username", sa.String(length=100), nullable=False),
         sa.Column("email", sa.String(length=255), nullable=True),
         sa.Column(
-            "hashed_password", sa.String(length=255), nullable=False,
-            server_default=sa.text("'DOWNGRADE_SENTINEL'")
+            "hashed_password",
+            sa.String(length=255),
+            nullable=False,
+            server_default=sa.text("'DOWNGRADE_SENTINEL'"),
         ),
         sa.Column("full_name", sa.String(length=255), nullable=True),
         sa.Column(

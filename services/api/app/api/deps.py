@@ -17,14 +17,12 @@ from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, status
 from fastapi_users import FastAPIUsers
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import auth_backend, get_user_manager
 from app.auth.user import User
 from app.core.permissions import Permission, role_has_permission
 from app.db import get_db
-from app.models.device import Device
 
 logger = logging.getLogger(__name__)
 

@@ -17,16 +17,12 @@ Custom fields:
 """
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTable
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
-
-if TYPE_CHECKING:
-    from fastapi_users_db_sqlalchemy.generics import ID
 
 
 def _utc_now() -> datetime:

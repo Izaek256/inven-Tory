@@ -12,16 +12,13 @@ FastAPI Users' base model to maintain compatibility with the library's expectati
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
 
+from fastapi_users import schemas
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTable
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
-
-if TYPE_CHECKING:
-    from fastapi_users_db_sqlalchemy.generics import ID
 
 
 class User(SQLAlchemyBaseUserTable[int], Base):

@@ -27,18 +27,17 @@ Auth backend: JWT Bearer transport (compatible with Tauri secure storage).
 from __future__ import annotations
 
 import logging
-from typing import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_users import FastAPIUsers
+from jose import JWTError
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, require_permission
-from app.auth import auth_backend, get_user_db, get_user_manager
+from app.api.deps import get_current_user, get_db
+from app.auth import auth_backend, get_user_manager
 from app.auth.user import User, UserCreate, UserRead, UserUpdate
-from app.core.permissions import Permission, Role
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -246,7 +245,7 @@ async def refresh_token(
 
     try:
         payload = decode_refresh_token(body.refresh_token)
-    except Exception:
+    except JWTError:
         raise _invalid
 
     user_id: str | None = payload.get("sub")

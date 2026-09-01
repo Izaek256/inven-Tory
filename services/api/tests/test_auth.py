@@ -104,8 +104,12 @@ async def _seed(
     return store, user, device
 
 
-def _auth_headers(client: TestClient, username: str, password: str, device_id: str) -> dict[str, str]:
-    resp = client.post(LOGIN_URL, json={"username": username, "password": password, "device_id": device_id})
+def _auth_headers(
+    client: TestClient, username: str, password: str, device_id: str
+) -> dict[str, str]:
+    resp = client.post(
+        LOGIN_URL, json={"username": username, "password": password, "device_id": device_id}
+    )
     assert resp.status_code == 200, resp.json()
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
@@ -118,9 +122,15 @@ def _auth_headers(client: TestClient, username: str, password: str, device_id: s
 async def test_login_success(client: TestClient, db_session: AsyncSession) -> None:
     """Valid credentials + active device → 200 with both tokens and profile fields."""
     _store, _user, device = await _seed(
-        db_session, store_code="A01", username="alice", password="correct", user_role="STORE_MANAGER"
+        db_session,
+        store_code="A01",
+        username="alice",
+        password="correct",
+        user_role="STORE_MANAGER",
     )
-    resp = client.post(LOGIN_URL, json={"username": "alice", "password": "correct", "device_id": device.id})
+    resp = client.post(
+        LOGIN_URL, json={"username": "alice", "password": "correct", "device_id": device.id}
+    )
 
     assert resp.status_code == 200
     body = resp.json()
@@ -136,24 +146,36 @@ async def test_login_success(client: TestClient, db_session: AsyncSession) -> No
 
 async def test_login_wrong_password(client: TestClient, db_session: AsyncSession) -> None:
     _s, _u, device = await _seed(db_session, store_code="A02", username="bob", password="real")
-    resp = client.post(LOGIN_URL, json={"username": "bob", "password": "wrong", "device_id": device.id})
+    resp = client.post(
+        LOGIN_URL, json={"username": "bob", "password": "wrong", "device_id": device.id}
+    )
     assert resp.status_code == 401
 
 
 async def test_login_unknown_user(client: TestClient, db_session: AsyncSession) -> None:
-    resp = client.post(LOGIN_URL, json={"username": "nobody", "password": "x", "device_id": str(uuid.uuid4())})
+    resp = client.post(
+        LOGIN_URL, json={"username": "nobody", "password": "x", "device_id": str(uuid.uuid4())}
+    )
     assert resp.status_code == 401
 
 
 async def test_login_inactive_user(client: TestClient, db_session: AsyncSession) -> None:
-    _s, _u, device = await _seed(db_session, store_code="A03", username="charlie", password="pw", user_active=False)
-    resp = client.post(LOGIN_URL, json={"username": "charlie", "password": "pw", "device_id": device.id})
+    _s, _u, device = await _seed(
+        db_session, store_code="A03", username="charlie", password="pw", user_active=False
+    )
+    resp = client.post(
+        LOGIN_URL, json={"username": "charlie", "password": "pw", "device_id": device.id}
+    )
     assert resp.status_code == 401
 
 
 async def test_login_revoked_device(client: TestClient, db_session: AsyncSession) -> None:
-    _s, _user, device = await _seed(db_session, store_code="A04", username="dave", password="pw", device_active=False)
-    resp = client.post(LOGIN_URL, json={"username": "dave", "password": "pw", "device_id": device.id})
+    _s, _user, device = await _seed(
+        db_session, store_code="A04", username="dave", password="pw", device_active=False
+    )
+    resp = client.post(
+        LOGIN_URL, json={"username": "dave", "password": "pw", "device_id": device.id}
+    )
     assert resp.status_code == 401
 
 
@@ -169,8 +191,12 @@ def test_login_missing_fields(client: TestClient) -> None:
 
 async def test_refresh_success(client: TestClient, db_session: AsyncSession) -> None:
     """Valid refresh token → 200 with new access token."""
-    _s, _u, device = await _seed(db_session, store_code="B01", username="refresh_user", password="pw123")
-    login_resp = client.post(LOGIN_URL, json={"username": "refresh_user", "password": "pw123", "device_id": device.id})
+    _s, _u, device = await _seed(
+        db_session, store_code="B01", username="refresh_user", password="pw123"
+    )
+    login_resp = client.post(
+        LOGIN_URL, json={"username": "refresh_user", "password": "pw123", "device_id": device.id}
+    )
     assert login_resp.status_code == 200
     refresh_token = login_resp.json()["refresh_token"]
 
@@ -257,10 +283,14 @@ async def test_register_duplicate_username(client: TestClient, db_session: Async
     )
     headers = _auth_headers(client, "admin_dup", "pw", device.id)
     # First create succeeds
-    resp1 = client.post(REGISTER_URL, json={"username": "dup_name", "password": "Secure1234!"}, headers=headers)
+    resp1 = client.post(
+        REGISTER_URL, json={"username": "dup_name", "password": "Secure1234!"}, headers=headers
+    )
     assert resp1.status_code == 201
     # Second create with same username → 409
-    resp2 = client.post(REGISTER_URL, json={"username": "dup_name", "password": "Secure5678!"}, headers=headers)
+    resp2 = client.post(
+        REGISTER_URL, json={"username": "dup_name", "password": "Secure5678!"}, headers=headers
+    )
     assert resp2.status_code == 409
 
 
@@ -270,7 +300,9 @@ async def test_register_duplicate_username(client: TestClient, db_session: Async
 
 
 async def test_change_password_success(client: TestClient, db_session: AsyncSession) -> None:
-    _s, _u, device = await _seed(db_session, store_code="E01", username="chg_pw_user", password="oldpass123")
+    _s, _u, device = await _seed(
+        db_session, store_code="E01", username="chg_pw_user", password="oldpass123"
+    )
     headers = _auth_headers(client, "chg_pw_user", "oldpass123", device.id)
     resp = client.post(
         CHANGE_PASSWORD_URL,
@@ -281,7 +313,9 @@ async def test_change_password_success(client: TestClient, db_session: AsyncSess
 
 
 async def test_change_password_wrong_current(client: TestClient, db_session: AsyncSession) -> None:
-    _s, _u, device = await _seed(db_session, store_code="E02", username="chg_wrong", password="correct")
+    _s, _u, device = await _seed(
+        db_session, store_code="E02", username="chg_wrong", password="correct"
+    )
     headers = _auth_headers(client, "chg_wrong", "correct", device.id)
     resp = client.post(
         CHANGE_PASSWORD_URL,
@@ -297,7 +331,9 @@ async def test_change_password_wrong_current(client: TestClient, db_session: Asy
 
 
 async def test_logout_success(client: TestClient, db_session: AsyncSession) -> None:
-    _s, _u, device = await _seed(db_session, store_code="F01", username="logout_user", password="pw")
+    _s, _u, device = await _seed(
+        db_session, store_code="F01", username="logout_user", password="pw"
+    )
     headers = _auth_headers(client, "logout_user", "pw", device.id)
     resp = client.post(LOGOUT_URL, headers=headers)
     assert resp.status_code == 200
