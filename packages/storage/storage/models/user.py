@@ -11,13 +11,13 @@ and the user's id/username/role for offline display purposes.
 The hashed_password column was present in migration 0001 and is removed in
 migration 0002_drop_sqlite_password_column.
 
-The ID type changed from UUID string to integer in migration 0003 to match
-FastAPI Users' integer auto-increment IDs.
+The ID is a String(36) matching the UUID-style identifiers used throughout the
+local storage package (stores, products, devices all use String(36) PKs).
 """
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String
+from sqlalchemy import Boolean, DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from storage.db import Base
@@ -32,7 +32,7 @@ class User(Base):
 
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     # NO hashed_password column — authentication is central-only (Issue 25)

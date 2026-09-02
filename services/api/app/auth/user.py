@@ -28,6 +28,7 @@ class UserRead(schemas.BaseUser[int]):
     """Schema for reading user data (includes custom fields)."""
 
     username: str
+    email: str  # Required by FastAPI Users
     full_name: str | None
     role: str
     assigned_store_id: str | None
@@ -39,6 +40,7 @@ class UserCreate(schemas.BaseUserCreate):
     """Schema for creating a new user (includes custom fields)."""
 
     username: str
+    email: str  # Required by FastAPI Users
     full_name: str | None = None
     role: str = "STORE_CLERK"
     assigned_store_id: str | None = None

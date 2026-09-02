@@ -30,6 +30,9 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # SQLite table-rebuild to remove the hashed_password column.
+    # Disable foreign key constraints temporarily to allow dropping the users table
+    op.execute("PRAGMA foreign_keys = OFF")
+
     # 1. Create the replacement table
     op.create_table(
         "_users_new",
@@ -64,9 +67,15 @@ def upgrade() -> None:
     # 5. Recreate indexes
     op.create_index("ix_users_username", "users", ["username"], unique=True)
 
+    # Re-enable foreign key constraints
+    op.execute("PRAGMA foreign_keys = ON")
+
 
 def downgrade() -> None:
     # Restore hashed_password column (filled with sentinel value — data is lost)
+    # Disable foreign key constraints temporarily to allow dropping the users table
+    op.execute("PRAGMA foreign_keys = OFF")
+
     op.create_table(
         "_users_old",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -100,3 +109,6 @@ def downgrade() -> None:
     op.drop_table("users")
     op.rename_table("_users_old", "users")
     op.create_index("ix_users_username", "users", ["username"], unique=True)
+
+    # Re-enable foreign key constraints
+    op.execute("PRAGMA foreign_keys = ON")

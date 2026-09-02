@@ -43,9 +43,7 @@ class InventoryTransaction(Base):
     recorded_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, nullable=False
     )
-    user_id: Mapped[str] = mapped_column(
-        String(36), ForeignKey("users.id"), nullable=False, index=True
-    )
+    user_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     device_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("devices.id"), nullable=False, index=True
     )

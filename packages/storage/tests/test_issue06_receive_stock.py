@@ -57,7 +57,6 @@ def test_issue06_receive_stock_workflow(tmp_path):
         user = User(
             id="USER-TEST",
             username="testuser",
-            hashed_password="hashed_password_here",
             role="CASHIER",
         )
         session.add(user)
@@ -204,7 +203,6 @@ def test_issue06_multiple_receives_accumulate_balance(tmp_path):
         user = User(
             id="USER-TEST2",
             username="testuser2",
-            hashed_password="hashed_password_here",
             role="CASHIER",
         )
         session.add(user)

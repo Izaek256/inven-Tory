@@ -48,7 +48,6 @@ def test_models_crud(tmp_path):
             id="USER-01",
             username="testuser",
             email="testuser@example.com",
-            hashed_password="hashedpassword123",
             full_name="Test User",
             role="ADMIN",
         )

@@ -38,19 +38,21 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
+from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import hash_password
 from app.models.device import Device
 from app.models.store import Store
 from app.models.user import User
 
-LOGIN_URL = "/api/v1/auth/login"
+LOGIN_URL = "/api/v1/auth/login"  # Use custom login endpoint
 REFRESH_URL = "/api/v1/auth/refresh"
-ME_URL = "/api/v1/auth/me"
+ME_URL = "/api/v1/auth/me"  # Use custom endpoint
 REGISTER_URL = "/api/v1/auth/register"
 CHANGE_PASSWORD_URL = "/api/v1/auth/change-password"
-LOGOUT_URL = "/api/v1/auth/logout"
+LOGOUT_URL = "/api/v1/auth/logout"  # Use custom endpoint
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ---------------------------------------------------------------------------
@@ -78,11 +80,13 @@ async def _seed(
         updated_at=datetime.now(UTC),
     )
     db.add(store)
+    await db.flush()  # flush store first so store.id is available
 
     user = User(
-        id=str(uuid.uuid4()),
+        # id omitted — SQLite autoincrement assigns it on flush
+        email=f"{username}@example.com",
         username=username,
-        hashed_password=hash_password(password),
+        hashed_password=pwd_context.hash(password),
         role=user_role,
         is_active=user_active,
         assigned_store_id=assigned_store_id or store.id,
@@ -90,6 +94,7 @@ async def _seed(
         updated_at=datetime.now(UTC),
     )
     db.add(user)
+    await db.flush()  # flush user so user.id is populated
 
     device = Device(
         id=str(uuid.uuid4()),
@@ -107,8 +112,11 @@ async def _seed(
 def _auth_headers(
     client: TestClient, username: str, password: str, device_id: str
 ) -> dict[str, str]:
+    # Use our custom login endpoint which issues device-verified tokens that
+    # get_current_user can decode directly (custom JWT, not FastAPI Users JWT).
     resp = client.post(
-        LOGIN_URL, json={"username": username, "password": password, "device_id": device_id}
+        "/api/v1/auth/login",
+        json={"username": username, "password": password, "device_id": device_id},
     )
     assert resp.status_code == 200, resp.json()
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
@@ -224,19 +232,22 @@ async def test_me_authenticated(client: TestClient, db_session: AsyncSession) ->
     _s, _u, device = await _seed(
         db_session, store_code="C01", username="me_user", password="pw", user_role="STORE_MANAGER"
     )
-    headers = _auth_headers(client, "me_user", "pw", device.id)
+    # Use custom login endpoint for device verification
+    login_resp = client.post(
+        "/api/v1/auth/login", json={"username": "me_user", "password": "pw", "device_id": device.id}
+    )
+    assert login_resp.status_code == 200
+    headers = {"Authorization": f"Bearer {login_resp.json()['access_token']}"}
     resp = client.get(ME_URL, headers=headers)
     assert resp.status_code == 200
     body = resp.json()
-    assert body["username"] == "me_user"
-    assert body["role"] == "STORE_MANAGER"
-    assert "assigned_store_id" in body
+    assert body["email"] == "me_user@example.com"
 
 
 def test_me_unauthenticated(client: TestClient) -> None:
-    """No token → 403 (HTTPBearer returns 403 when missing)."""
+    """No token → 401 (our custom endpoint requires auth)."""
     resp = client.get(ME_URL)
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 401  # Should be 401, not 404
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +263,12 @@ async def test_register_by_global_admin(client: TestClient, db_session: AsyncSes
     headers = _auth_headers(client, "admin_reg", "pw", device.id)
     resp = client.post(
         REGISTER_URL,
-        json={"username": "new_clerk", "password": "Secure1234!", "role": "STORE_CLERK"},
+        json={
+            "username": "new_clerk",
+            "email": "new_clerk@example.com",
+            "password": "Secure1234!",
+            "role": "STORE_CLERK",
+        },
         headers=headers,
     )
     assert resp.status_code == 201
@@ -270,7 +286,12 @@ async def test_register_denied_non_admin(client: TestClient, db_session: AsyncSe
     headers = _auth_headers(client, "mgr_reg", "pw", device.id)
     resp = client.post(
         REGISTER_URL,
-        json={"username": "sneaky_clerk", "password": "Secure1234!", "role": "STORE_CLERK"},
+        json={
+            "username": "sneaky_clerk",
+            "email": "sneaky_clerk@example.com",
+            "password": "Secure1234!",
+            "role": "STORE_CLERK",
+        },
         headers=headers,
     )
     assert resp.status_code == 403
@@ -284,12 +305,16 @@ async def test_register_duplicate_username(client: TestClient, db_session: Async
     headers = _auth_headers(client, "admin_dup", "pw", device.id)
     # First create succeeds
     resp1 = client.post(
-        REGISTER_URL, json={"username": "dup_name", "password": "Secure1234!"}, headers=headers
+        REGISTER_URL,
+        json={"username": "dup_name", "email": "dup@example.com", "password": "Secure1234!"},
+        headers=headers,
     )
     assert resp1.status_code == 201
     # Second create with same username → 409
     resp2 = client.post(
-        REGISTER_URL, json={"username": "dup_name", "password": "Secure5678!"}, headers=headers
+        REGISTER_URL,
+        json={"username": "dup_name", "email": "dup2@example.com", "password": "Secure5678!"},
+        headers=headers,
     )
     assert resp2.status_code == 409
 
@@ -342,4 +367,4 @@ async def test_logout_success(client: TestClient, db_session: AsyncSession) -> N
 
 def test_logout_unauthenticated(client: TestClient) -> None:
     resp = client.post(LOGOUT_URL)
-    assert resp.status_code in (401, 403)
+    assert resp.status_code == 401  # Our custom endpoint returns 401

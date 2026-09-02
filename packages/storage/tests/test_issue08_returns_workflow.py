@@ -74,7 +74,6 @@ def _seed_fixtures(session_factory) -> tuple[str, str]:
             User(
                 id="USER-DEMO",
                 username="demo",
-                hashed_password="hashed",
                 role="CASHIER",
             )
         )

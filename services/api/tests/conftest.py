@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
+from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -29,7 +30,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-from app.core.security import hash_password
 from app.db import Base, get_db
 from app.main import app
 from app.models.audit_event import AuditEvent  # noqa: F401 — registers with Base.metadata
@@ -46,6 +46,8 @@ from app.models.user import User
 # Engine — in-memory SQLite (aiosqlite)
 # ---------------------------------------------------------------------------
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 @pytest.fixture(scope="session")
@@ -111,10 +113,11 @@ async def _make_store(db: AsyncSession, **kwargs: Any) -> Store:
 
 
 async def _make_user(db: AsyncSession, **kwargs: Any) -> User:
+    username = kwargs.get("username", f"user_{uuid.uuid4().hex[:8]}")
     user = User(
-        id=str(uuid.uuid4()),
-        username=kwargs.get("username", f"user_{uuid.uuid4().hex[:8]}"),
-        hashed_password=hash_password(kwargs.get("password", "secret123")),
+        email=f"{username}@example.com",  # FastAPI Users requires email
+        username=username,
+        hashed_password=pwd_context.hash(kwargs.get("password", "secret123")),
         role=kwargs.get("role", "STORE_MANAGER"),
         is_active=kwargs.get("is_active", True),
         created_at=datetime.now(UTC),
@@ -125,7 +128,7 @@ async def _make_user(db: AsyncSession, **kwargs: Any) -> User:
     return user
 
 
-async def _make_device(db: AsyncSession, store_id: str, user_id: str, **kwargs: Any) -> Device:
+async def _make_device(db: AsyncSession, store_id: str, user_id: int, **kwargs: Any) -> Device:
     device = Device(
         id=str(uuid.uuid4()),
         store_id=store_id,

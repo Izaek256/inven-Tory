@@ -43,9 +43,7 @@ def setup_initial_database(db_url: str):
         session.add_all([store, prod])
         session.commit()
 
-        user = User(
-            id="USR-1", username="testuser", hashed_password="hash", role="MANAGER", is_active=True
-        )
+        user = User(id="USR-1", username="testuser", role="MANAGER", is_active=True)
         device = Device(
             id="DEV-1", store_id="STORE-DURABLE-A", device_name="Test Device", is_active=True
         )
