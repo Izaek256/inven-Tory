@@ -92,6 +92,14 @@ DEV_STORES = [
     },
 ]
 
+# Well-known virtual device for the web dashboard.
+# Login requires a registered device_id; the web app always sends this ID.
+WEB_DASHBOARD_DEVICE = {
+    "id": "WEB-DASHBOARD-DEVICE",
+    "store_id": "STORE-ALPHA",   # anchored to Alpha; any active store works
+    "device_name": "Web Management Dashboard",
+}
+
 
 def run_migrations(db_url: str) -> None:
     """Run all pending Alembic migrations programmatically."""
@@ -180,6 +188,34 @@ async def seed() -> None:
                 logger.info("Created user: %s (%s)", u["username"], u["role"])
             else:
                 logger.info("User already exists: %s", u["username"])
+
+        await session.flush()
+
+        # ── Web Dashboard Device ───────────────────────────────────────────────
+        # The web app always sends device_id=WEB-DASHBOARD-DEVICE at login.
+        # Without this row every web dashboard login returns 401.
+        d = WEB_DASHBOARD_DEVICE
+        existing_dev = await session.scalar(select(Device).where(Device.id == d["id"]))
+        if not existing_dev:
+            session.add(
+                Device(
+                    id=d["id"],
+                    store_id=d["store_id"],
+                    device_name=d["device_name"],
+                    is_active=True,
+                    registered_at=now,
+                )
+            )
+            logger.info("Created device: %s (%s)", d["device_name"], d["id"])
+        else:
+            # Re-activate in case it was accidentally revoked
+            if not existing_dev.is_active:
+                existing_dev.is_active = True
+                existing_dev.revocation_reason = None
+                existing_dev.revoked_at = None
+                logger.info("Re-activated device: %s", d["id"])
+            else:
+                logger.info("Device already exists and is active: %s", d["id"])
 
         await session.commit()
         logger.info("PostgreSQL dev seed complete.")
