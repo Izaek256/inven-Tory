@@ -1,0 +1,51 @@
+#!/bin/sh
+# Pre-commit hook for inven-Tory (Windows Git Bash, Linux, macOS)
+#
+# Runs Prettier on every staged TypeScript / TSX file across all workspaces.
+# Automatically rewrites the file in-place and re-stages it, so the commit
+# always lands with correct formatting — no manual intervention needed.
+#
+# Install once per clone:
+#   git config core.hooksPath .githooks
+# (This is already in the repo's .gitconfig setup via npm run prepare.)
+
+set -e
+
+# Collect staged *.ts / *.tsx files (not deleted ones)
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.(ts|tsx)$' || true)
+
+if [ -z "$STAGED" ]; then
+    exit 0
+fi
+
+echo "==> Running Prettier on staged TypeScript files..."
+
+# Find the Prettier binary — prefer a workspace node_modules install,
+# fall back to whatever is on PATH.
+if [ -f "apps/desktop/node_modules/.bin/prettier" ]; then
+    PRETTIER="apps/desktop/node_modules/.bin/prettier"
+elif [ -f "node_modules/.bin/prettier" ]; then
+    PRETTIER="node_modules/.bin/prettier"
+elif command -v prettier >/dev/null 2>&1; then
+    PRETTIER="prettier"
+else
+    echo "WARNING: Prettier not found. Skipping format check."
+    echo "Run 'npm install' in the repo root or apps/desktop to install it."
+    exit 0
+fi
+
+FAILED=0
+for FILE in $STAGED; do
+    if [ -f "$FILE" ]; then
+        "$PRETTIER" --write "$FILE" 2>/dev/null
+        git add "$FILE"
+    fi
+done
+
+if [ $FAILED -ne 0 ]; then
+    echo "x Pre-commit formatting failed. Fix the issues above and try again."
+    exit 1
+fi
+
+echo "==> Prettier formatting applied and files re-staged. [OK]"
+exit 0
