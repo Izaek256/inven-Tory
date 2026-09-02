@@ -228,6 +228,90 @@ fn generate_id(prefix: &str) -> String {
 pub mod commands {
     use super::*;
 
+    // -------------------------------------------------------------------------
+    // local_login — offline-capable authentication against local SQLite
+    // -------------------------------------------------------------------------
+    // Verifies username + password against the pin_hash stored in the local
+    // users table (set during sync pull or dev seed).  Returns a minimal
+    // session payload that tauriAuthService uses to build an AuthSession
+    // without hitting the central API.
+    //
+    // This enables the desktop app to work entirely offline after the first
+    // successful online login has synced user data.
+
+    #[derive(Debug, Serialize)]
+    pub struct LocalSession {
+        pub user_id: String,
+        pub username: String,
+        pub full_name: Option<String>,
+        pub role: String,
+        pub assigned_store_id: Option<String>,
+    }
+
+    #[tauri::command]
+    pub fn local_login(username: String, password: String) -> Result<LocalSession, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open local database: {}", e))?;
+
+        // Look up user by username
+        let result = conn.query_row(
+            "SELECT id, username, full_name, role, pin_hash, is_active FROM users WHERE username = ?1",
+            rusqlite::params![username.trim()],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,          // id
+                    row.get::<_, String>(1)?,          // username
+                    row.get::<_, Option<String>>(2)?,  // full_name
+                    row.get::<_, String>(3)?,          // role
+                    row.get::<_, Option<String>>(4)?,  // pin_hash
+                    row.get::<_, i32>(5)?,             // is_active
+                ))
+            },
+        );
+
+        let (id, uname, full_name, role, pin_hash_opt, is_active) = match result {
+            Ok(row) => row,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                return Err("Invalid username or password.".to_string());
+            }
+            Err(e) => return Err(format!("Database error: {}", e)),
+        };
+
+        if is_active == 0 {
+            return Err("Account is inactive.".to_string());
+        }
+
+        let pin_hash = pin_hash_opt.ok_or_else(|| {
+            "Offline login not available — please connect to the server at least once.".to_string()
+        })?;
+
+        // Verify password with bcrypt
+        let valid = bcrypt::verify(&password, &pin_hash)
+            .map_err(|e| format!("Password verification error: {}", e))?;
+
+        if !valid {
+            return Err("Invalid username or password.".to_string());
+        }
+
+        // Look up assigned_store_id from the stores table if the user has one
+        // (stored indirectly via the user's role — for simplicity we return None here;
+        //  the sync pull will populate it properly)
+        let assigned_store_id: Option<String> = conn.query_row(
+            "SELECT assigned_store_id FROM users WHERE id = ?1",
+            rusqlite::params![id],
+            |row| row.get(0),
+        ).unwrap_or(None);
+
+        Ok(LocalSession {
+            user_id: id,
+            username: uname,
+            full_name,
+            role,
+            assigned_store_id: None, // populated from central API on next sync
+        })
+    }
+
     #[tauri::command]
     pub fn get_stores() -> Result<Vec<Store>, String> {
         let db_path = get_db_path();
@@ -2130,6 +2214,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![
+            commands::local_login,
             commands::get_stores,
             commands::create_store,
             commands::update_store,

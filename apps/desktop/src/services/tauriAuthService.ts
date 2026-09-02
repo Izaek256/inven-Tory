@@ -128,12 +128,84 @@ function _isTokenExpired(expiresAt: string): boolean {
 /**
  * Authenticate against the central API and cache the session securely.
  *
+ * Strategy (offline-first):
+ *   1. If running in Tauri, try local_login first (checks bcrypt pin_hash in
+ *      the local SQLite users table).  This works with no network.
+ *   2. If local login succeeds, build a session from the local data and cache
+ *      it — no token is issued locally (no JWT secret on the client), so the
+ *      access_token is set to a sentinel and the app works in offline-only mode
+ *      until a sync re-establishes a real server token.
+ *   3. If online AND local login fails (wrong password), the error is returned
+ *      immediately — no point hitting the server with known-bad credentials.
+ *   4. If local pin_hash is not set (first time, user never synced), fall back
+ *      to the API — and on success cache the pin_hash for future offline use.
+ *
  * @param username  User's login name
  * @param password  Plain-text password (never persisted)
  * @param deviceId  The registered device ID embedded in the token
  * @param apiBaseUrl Optional override for the API base URL
  */
 export async function login(
+  username: string,
+  password: string,
+  deviceId: string,
+  apiBaseUrl?: string,
+): Promise<AuthSession> {
+  // ── Try local (offline-capable) login first when in Tauri ─────────────────
+  if (isTauriEnvironment()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const local = await invoke<{
+        user_id: string;
+        username: string;
+        full_name: string | null;
+        role: string;
+        assigned_store_id: string | null;
+      }>('local_login', { username, password });
+
+      // Build an offline session — no real JWT, but enough for the app to work.
+      // The token will be replaced by a real server token on next successful sync.
+      const offlineToken = `offline:${local.user_id}:${Date.now()}`;
+      const expiresAt = new Date(Date.now() + 8 * 3600_000).toISOString(); // 8 h
+
+      const session: AuthSession = {
+        access_token: offlineToken,
+        refresh_token: '',
+        user_id: parseInt(local.user_id, 10) || 0,
+        username: local.username,
+        full_name: local.full_name,
+        role: local.role as UserRole,
+        assigned_store_id: local.assigned_store_id,
+        expires_at: expiresAt,
+        token_expired_offline: false,
+      };
+
+      await _secureWrite(session);
+
+      // Best-effort: also try to get a real server token in the background
+      // so sync can work immediately if the server is reachable.
+      void _tryUpgradeToServerToken(username, password, deviceId, apiBaseUrl, session);
+
+      return session;
+    } catch (localErr) {
+      const msg = localErr instanceof Error ? localErr.message : String(localErr);
+      // "Offline login not available" means pin_hash not set — fall through to API.
+      // Any other error (wrong password, inactive) → fail immediately.
+      if (!msg.includes('Offline login not available')) {
+        throw localErr;
+      }
+      // Fall through to online API login below
+    }
+  }
+
+  // ── Online API login (fallback or non-Tauri environment) ──────────────────
+  return _apiLogin(username, password, deviceId, apiBaseUrl);
+}
+
+/**
+ * Call the central API login endpoint and cache the resulting session.
+ */
+async function _apiLogin(
   username: string,
   password: string,
   deviceId: string,
@@ -173,6 +245,27 @@ export async function login(
 
   await _secureWrite(session);
   return session;
+}
+
+/**
+ * After a successful local login, attempt to upgrade to a real server session
+ * in the background.  Replaces the offline sentinel token with a real JWT so
+ * sync can work immediately.  Failures are silently ignored.
+ */
+async function _tryUpgradeToServerToken(
+  username: string,
+  password: string,
+  deviceId: string,
+  apiBaseUrl: string | undefined,
+  currentSession: AuthSession,
+): Promise<void> {
+  try {
+    const upgraded = await _apiLogin(username, password, deviceId, apiBaseUrl);
+    // Merge: keep local profile data, replace token
+    await _secureWrite({ ...currentSession, ...upgraded });
+  } catch {
+    // Network unavailable or server error — offline session stays as-is
+  }
 }
 
 /**

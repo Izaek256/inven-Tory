@@ -28,14 +28,17 @@ def current_utc_now() -> datetime:
 
 
 class User(Base):
-    """Local identity cache — populated by sync pull, never holds a password."""
+    """Local identity cache — populated by sync pull, never holds a central password."""
 
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False, index=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
-    # NO hashed_password column — authentication is central-only (Issue 25)
+    # pin_hash: bcrypt hash of the user's offline PIN/password.
+    # Set during sync pull or by the dev seed. Enables local login without
+    # a network connection (Section 21 offline-first requirement).
+    pin_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="STORE_CLERK")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

@@ -82,18 +82,21 @@ DEV_USERS = [
         "email": "admin@inventory.local",
         "full_name": "System Administrator",
         "role": "GLOBAL_ADMIN",
+        "password": "DevAdmin2026!",   # DEV-ONLY — hashed into pin_hash
     },
     {
         "username": "manager_alpha",
         "email": "manager.alpha@inventory.local",
         "full_name": "Alpha Store Manager",
         "role": "STORE_MANAGER",
+        "password": "DevManager2026!",  # DEV-ONLY
     },
     {
         "username": "clerk_alpha",
         "email": "clerk.alpha@inventory.local",
         "full_name": "Alpha Clerk",
         "role": "STORE_CLERK",
+        "password": "DevClerk2026!",    # DEV-ONLY
     },
 ]
 
@@ -196,16 +199,25 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
                 session.add(Store(id=s["id"], code=s["code"], name=s["name"],
                                   address=s["address"], is_active=True))
 
-        # Users (identity cache — no passwords)
+        # Users (identity cache + offline pin_hash)
         for u in DEV_USERS:
-            if not session.scalar(select(User).where(User.username == u["username"])):
+            existing = session.scalar(select(User).where(User.username == u["username"]))
+            if not existing:
+                from passlib.context import CryptContext
+                _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
                 session.add(User(
                     username=u["username"],
                     email=u["email"],
                     full_name=u["full_name"],
                     role=u["role"],
+                    pin_hash=_pwd.hash(u["password"]),
                     is_active=True,
                 ))
+            elif existing.pin_hash is None:
+                # Back-fill pin_hash if the row already existed without it
+                from passlib.context import CryptContext
+                _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
+                existing.pin_hash = _pwd.hash(u["password"])
 
         session.flush()
 
