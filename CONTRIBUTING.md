@@ -89,12 +89,22 @@ Before marking a PR as ready for review, confirm:
 - [ ] Branch is up to date with `develop`.
 - [ ] CI passes (lint + unit tests green).
 - [ ] All new Python files pass `ruff check` and `black --check`.
+- [ ] **All new/edited TypeScript files formatted: run `npm run format` before pushing.**
 - [ ] All new TypeScript files pass `eslint` and `prettier --check`.
 - [ ] New functionality is covered by unit tests.
 - [ ] No `.env` files committed (only `.env.example` updates).
 - [ ] No commented-out code left in the diff.
 - [ ] Acceptance criteria in the issue are met.
 - [ ] CHANGELOG or relevant docs updated if required.
+
+> **Tip — one command to format everything:**
+> ```bash
+> npm run format          # prettier --write across all workspaces
+> npm run format:check    # verify before push (same as CI)
+> ```
+> The pre-commit hook auto-formats staged `.ts`/`.tsx` files on every
+> `git commit`, so you only need to run the above manually if you bypass
+> the hook or edit files outside Git.
 
 ---
 
@@ -148,6 +158,30 @@ Run locally:
 ```bash
 npm run lint --workspaces
 npm run format:check --workspaces
+```
+
+### Git hooks
+
+The repo ships with hooks in `.githooks/`:
+
+| Hook | Trigger | What it does |
+|---|---|---|
+| `pre-commit` | `git commit` | Runs `prettier --write` on every staged `.ts`/`.tsx` file and re-stages it automatically. The commit always lands formatted. |
+| `pre-push` | `git push` | Runs `ruff`, `black`, and `prettier --check` across all workspaces. Blocks the push if any check fails. |
+
+Hooks are activated automatically when you run `npm install` at the repo root
+(the `prepare` script runs `git config core.hooksPath .githooks`).
+
+If you cloned before this was added, run once:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Or reinstall with:
+
+```bash
+npm install
 ```
 
 ---

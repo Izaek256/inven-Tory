@@ -15,7 +15,8 @@
     "test": "npm run test --workspaces --if-present",
     "format": "npm run format --workspaces --if-present",
     "format:check": "npm run format:check --workspaces --if-present",
-    "seed": "python3 -m storage.seed || .venv/bin/python -m storage.seed"
+    "seed": "python3 -m storage.seed || .venv/bin/python -m storage.seed",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "engines": {
     "node": ">=20.0.0",

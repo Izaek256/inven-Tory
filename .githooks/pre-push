@@ -1,10 +1,18 @@
 #!/bin/sh
 # Pre-push hook for inven-Tory (Cross-Platform: Windows Git Bash, Linux, macOS)
-# Enforces ruff + black compliance before pushing to remote.
+# Enforces:
+#   1. ruff  — Python import sorting / linting  (services/, packages/)
+#   2. black — Python formatting                (services/, packages/)
+#   3. Prettier format:check — TypeScript/TSX   (all npm workspaces)
+#
+# Install once per clone:
+#   git config core.hooksPath .githooks
+
+set -e
 
 echo "==> Running pre-push lint checks..."
 
-# Detect Python inside virtual environment
+# ── Python interpreter ────────────────────────────────────────────────────────
 if [ -f ".venv/Scripts/python.exe" ]; then
     PYTHON=".venv/Scripts/python.exe"
 elif [ -f ".venv/bin/python" ]; then
@@ -13,7 +21,7 @@ else
     PYTHON="python"
 fi
 
-# 1. Run ruff check
+# ── 1. ruff ───────────────────────────────────────────────────────────────────
 echo "--> Checking ruff..."
 $PYTHON -m ruff check services/ packages/
 RUFF_RES=$?
@@ -23,7 +31,7 @@ if [ $RUFF_RES -ne 0 ]; then
     exit 1
 fi
 
-# 2. Run black check
+# ── 2. black ──────────────────────────────────────────────────────────────────
 echo "--> Checking black..."
 $PYTHON -m black --check services/ packages/
 BLACK_RES=$?
@@ -31,6 +39,27 @@ BLACK_RES=$?
 if [ $BLACK_RES -ne 0 ]; then
     echo "x black check failed! Run 'make lint' or '$PYTHON -m black services/ packages/' to format code."
     exit 1
+fi
+
+# ── 3. Prettier (TypeScript / TSX across all npm workspaces) ─────────────────
+# Only run if npm workspaces are installed (node_modules present).
+if [ -d "apps/desktop/node_modules" ] || [ -d "node_modules" ]; then
+    echo "--> Checking Prettier (all workspaces)..."
+
+    # Use npm's built-in workspace runner — each workspace's format:check script
+    # calls 'prettier --check src' against its own config.
+    npm run format:check --workspaces --if-present
+    PRETTIER_RES=$?
+
+    if [ $PRETTIER_RES -ne 0 ]; then
+        echo ""
+        echo "x Prettier format:check failed!"
+        echo "  Run: npm run format --workspaces --if-present"
+        echo "  Or fix a single file: npx prettier --write <path/to/file.ts>"
+        exit 1
+    fi
+else
+    echo "--> Skipping Prettier check (node_modules not installed)."
 fi
 
 echo "==> Pre-push lint checks passed successfully! [OK]"
