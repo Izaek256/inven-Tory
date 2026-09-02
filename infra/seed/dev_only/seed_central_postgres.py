@@ -93,6 +93,23 @@ DEV_STORES = [
 ]
 
 
+def run_migrations(db_url: str) -> None:
+    """Run all pending Alembic migrations programmatically."""
+    import subprocess
+
+    env = os.environ.copy()
+    env["DATABASE_URL"] = db_url
+
+    alembic_ini = repo_root / "infra" / "migrations" / "alembic.ini"
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"],
+        env=env,
+        cwd=str(repo_root / "services" / "api"),
+    )
+    if result.returncode != 0:
+        raise RuntimeError("Alembic migrations failed — check the output above.")
+
+
 async def seed() -> None:
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -108,6 +125,11 @@ async def seed() -> None:
     db_url = os.environ.get("INVEN_TORY_DB_URL") or settings.database_url
 
     logger.info("Connecting to: %s", _redact_url(db_url))
+
+    # Run migrations first so all tables exist
+    logger.info("Running Alembic migrations...")
+    run_migrations(db_url)
+    logger.info("Migrations up to date.")
 
     engine = create_async_engine(db_url, echo=False)
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
