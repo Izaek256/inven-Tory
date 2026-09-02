@@ -77,11 +77,9 @@ export const DeviceRegistrationModal: React.FC<DeviceRegistrationModalProps> = (
       }
     >
       <form onSubmit={handleSubmit} data-testid="device-modal">
-        <p
-          style={{ fontSize: '12px', color: 'var(--it-text-secondary)', marginBottom: '16px' }}
-        >
-          FR-STORE-003 Stub — Device registration links a physical terminal to a store
-          location and embeds the device ID in every transaction for audit purposes.
+        <p style={{ fontSize: '12px', color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
+          FR-STORE-003 Stub — Device registration links a physical terminal to a store location and
+          embeds the device ID in every transaction for audit purposes.
         </p>
         {error && (
           <div

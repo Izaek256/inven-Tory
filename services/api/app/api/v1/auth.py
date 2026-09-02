@@ -29,15 +29,19 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi_users import FastAPIUsers
+from fastapi_users import exceptions as fu_exceptions
 from jose import JWTError
+from passlib.context import CryptContext
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.auth import auth_backend, get_user_manager
+from app.auth.manager import UserManager
 from app.auth.user import User, UserCreate, UserRead, UserUpdate
 from app.core.security import (
     create_access_token,
@@ -63,10 +67,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 router.include_router(
     fastapi_users.get_auth_router(auth_backend),
     prefix="/jwt",
-    tags=["auth"],
-)
-router.include_router(
-    fastapi_users.get_register_router(UserRead, UserCreate),
     tags=["auth"],
 )
 router.include_router(
@@ -123,6 +123,56 @@ class LogoutResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# POST /api/v1/auth/register  (GLOBAL_ADMIN only — AT-011)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/register",
+    response_model=UserRead,
+    summary="Register a new user (GLOBAL_ADMIN only)",
+    status_code=status.HTTP_201_CREATED,
+)
+async def register(
+    body: UserCreate,
+    request: Request,
+    current_user: User = Depends(get_current_user),  # noqa: B008
+    user_manager: UserManager = Depends(get_user_manager),  # noqa: B008
+) -> UserRead:
+    """
+    Create a new user account.
+
+    AT-011: only GLOBAL_ADMIN may register users; any other role gets 403.
+    Duplicate email or username returns 409.
+    """
+    if current_user.role != "GLOBAL_ADMIN":
+        logger.warning(
+            "AUTHZ_FAILURE register_denied user_id=%s role=%s",
+            current_user.id,
+            current_user.role,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only GLOBAL_ADMIN may register new users.",
+        )
+
+    try:
+        created = await user_manager.create(body, safe=True, request=request)
+    except fu_exceptions.UserAlreadyExists:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with that email or username already exists.",
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A user with that email or username already exists.",
+        )
+
+    return UserRead.model_validate(created)
+
+
+# ---------------------------------------------------------------------------
 # POST /api/v1/auth/login (custom with device verification)
 # ---------------------------------------------------------------------------
 
@@ -168,12 +218,13 @@ async def login(
         logger.warning("LOGIN_FAILURE reason=user_missing_or_inactive username=%s", body.username)
         raise _unauthorized
 
-    # 2. Verify password using FastAPI Users' password manager
-    async for user_manager in get_user_manager():
-        if not await user_manager.verify(body.password, user):
-            logger.warning("LOGIN_FAILURE reason=wrong_password username=%s", body.username)
-            raise _unauthorized
-        break
+    # 2. Verify password using bcrypt directly
+    from passlib.context import CryptContext
+
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    if not pwd_context.verify(body.password, user.hashed_password):
+        logger.warning("LOGIN_FAILURE reason=wrong_password username=%s", body.username)
+        raise _unauthorized
 
     # 3. Verify device is registered and active
     dev_result = await db.execute(select(Device).where(Device.id == body.device_id))
@@ -309,6 +360,39 @@ async def logout(
 
 
 # ---------------------------------------------------------------------------
+# GET /api/v1/auth/me (custom wrapper for current user profile)
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/me",
+    summary="Get current user profile",
+    status_code=status.HTTP_200_OK,
+)
+async def get_me(
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> dict[str, object]:
+    """
+    Return the authenticated user's profile.
+
+    This endpoint works with both custom login tokens and FastAPI Users tokens.
+    """
+    return {
+        "id": current_user.id,
+        "email": current_user.email,
+        "username": current_user.username,
+        "full_name": current_user.full_name,
+        "role": current_user.role,
+        "assigned_store_id": current_user.assigned_store_id,
+        "is_active": current_user.is_active,
+        "is_superuser": current_user.is_superuser,
+        "is_verified": current_user.is_verified,
+        "created_at": current_user.created_at.isoformat(),
+        "updated_at": current_user.updated_at.isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST /api/v1/auth/change-password (custom using FastAPI Users manager)
 # ---------------------------------------------------------------------------
 
@@ -331,27 +415,25 @@ async def change_password(
     (stateless JWT). Clients should treat this as an implicit logout signal
     and prompt for re-authentication.
     """
-    async for user_manager in get_user_manager():
-        # Verify current password
-        if not await user_manager.verify(body.current_password, current_user):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Current password is incorrect.",
-            )
+    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-        if body.new_password == body.current_password:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="New password must differ from the current password.",
-            )
-
-        # Update password using FastAPI Users manager
-        await user_manager.update(
-            current_user,
-            {"password": body.new_password},
-            safe=True,
+    # Verify current password
+    if not pwd_context.verify(body.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect.",
         )
-        break
+
+    if body.new_password == body.current_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must differ from the current password.",
+        )
+
+    # Update password using bcrypt
+    current_user.hashed_password = pwd_context.hash(body.new_password)
+    db.add(current_user)
+    await db.flush()
 
     logger.info("PASSWORD_CHANGED user_id=%s", current_user.id)
 

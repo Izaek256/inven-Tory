@@ -59,9 +59,10 @@ async def _seed_store(db: AsyncSession, code: str | None = None) -> Store:
 async def _seed_user(db: AsyncSession) -> User:
     from app.core.security import hash_password
 
+    username = f"u_{uuid.uuid4().hex[:8]}"
     user = User(
-        id=_uid(),
-        username=f"u_{uuid.uuid4().hex[:8]}",
+        email=f"{username}@example.com",
+        username=username,
         hashed_password=hash_password("pw"),
         role="STORE_MANAGER",
         is_active=True,
@@ -73,14 +74,14 @@ async def _seed_user(db: AsyncSession) -> User:
     return user
 
 
-async def _seed_device(db: AsyncSession, store_id: str, user_id: str) -> Device:
+async def _seed_device(db: AsyncSession, store_id: str, user_id: int | str) -> Device:
     device = Device(
         id=_uid(),
         store_id=store_id,
         device_name="POS Terminal",
         is_active=True,
         registered_at=datetime.now(UTC),
-        registered_by_user_id=user_id,
+        registered_by_user_id=int(user_id) if user_id is not None else None,
     )
     db.add(device)
     await db.flush()
@@ -115,7 +116,7 @@ async def _seed_base(
 def _payload(
     store_id: str,
     product_id: str,
-    user_id: str,
+    user_id: int | str,
     device_id: str,
     *,
     transaction_id: str | None = None,
@@ -130,7 +131,7 @@ def _payload(
         movement_type=movement_type,
         quantity_delta=quantity_delta,
         occurred_at=datetime.now(UTC),
-        user_id=user_id,
+        user_id=str(user_id),
         device_id=device_id,
         stock_bucket=stock_bucket,
     )
@@ -325,7 +326,7 @@ async def test_ingest_rejects_missing_store_id(db_session: AsyncSession) -> None
         movement_type="RECEIPT",
         quantity_delta=5,
         occurred_at=datetime.now(UTC),
-        user_id=user.id,
+        user_id=str(user.id),
         device_id=device.id,
     )
 

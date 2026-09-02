@@ -48,7 +48,7 @@ def _uid() -> str:
 def _tx_item(
     store_id: str,
     product_id: str,
-    user_id: str,
+    user_id: int | str,
     device_id: str,
     *,
     transaction_id: str | None = None,
@@ -65,7 +65,7 @@ def _tx_item(
         "movement_type": movement_type,
         "quantity_delta": quantity_delta,
         "occurred_at": occurred_at.isoformat(),
-        "user_id": user_id,
+        "user_id": str(user_id),
         "device_id": device_id,
         "stock_bucket": stock_bucket,
     }
@@ -86,9 +86,10 @@ async def _seed_store(db: AsyncSession, code: str | None = None) -> Store:
 
 
 async def _seed_user(db: AsyncSession, role: str = "STORE_MANAGER") -> User:
+    username = f"u_{uuid.uuid4().hex[:8]}"
     user = User(
-        id=_uid(),
-        username=f"u_{uuid.uuid4().hex[:8]}",
+        email=f"{username}@example.com",
+        username=username,
         hashed_password=hash_password("pw"),
         role=role,
         is_active=True,
@@ -100,14 +101,14 @@ async def _seed_user(db: AsyncSession, role: str = "STORE_MANAGER") -> User:
     return user
 
 
-async def _seed_device(db: AsyncSession, store_id: str, user_id: str) -> Device:
+async def _seed_device(db: AsyncSession, store_id: str, user_id: int | str) -> Device:
     device = Device(
         id=_uid(),
         store_id=store_id,
         device_name="POS Terminal",
         is_active=True,
         registered_at=datetime.now(UTC),
-        registered_by_user_id=user_id,
+        registered_by_user_id=int(user_id) if user_id is not None else None,
     )
     db.add(device)
     await db.flush()
@@ -129,8 +130,8 @@ async def _seed_product(db: AsyncSession) -> Product:
     return product
 
 
-def _auth_header(user_id: str, device_id: str, role: str = "STORE_MANAGER") -> dict:
-    token = create_access_token(user_id=user_id, role=role, device_id=device_id)
+def _auth_header(user_id: int | str, device_id: str, role: str = "STORE_MANAGER") -> dict:
+    token = create_access_token(user_id=str(user_id), role=role, device_id=device_id)
     return {"Authorization": f"Bearer {token}"}
 
 

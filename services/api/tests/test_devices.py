@@ -33,8 +33,8 @@ def _revoke_url(device_id: str) -> str:
     return f"/api/v1/devices/{device_id}/revoke"
 
 
-def _auth_headers(user_id: str, role: str, device_id: str) -> dict[str, str]:
-    token = create_access_token(user_id=user_id, role=role, device_id=device_id)
+def _auth_headers(user_id: int | str, role: str, device_id: str) -> dict[str, str]:
+    token = create_access_token(user_id=str(user_id), role=role, device_id=device_id)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -57,7 +57,7 @@ async def _seed_base(
     db.add(store)
 
     user = User(
-        id=str(uuid.uuid4()),
+        email=f"{username}@example.com",
         username=username,
         hashed_password=hash_password("pw"),
         role=role,
@@ -73,9 +73,11 @@ async def _seed_base(
         device_name="Auth Device",
         is_active=device_active,
         registered_at=datetime.now(UTC),
-        registered_by_user_id=user.id,
     )
     db.add(device)
+    await db.flush()
+    # Set registered_by_user_id after flush so user.id (autoincrement) is populated
+    device.registered_by_user_id = user.id
     await db.flush()
     return store, user, device
 
@@ -87,7 +89,7 @@ async def _seed_base(
 
 async def test_register_device_success(client: TestClient, db_session: AsyncSession) -> None:
     """STORE_MANAGER can register a new device → 201."""
-    store, user, auth_device = await _seed_base(db_session, "D01", "mgr_d01")
+    store, user, auth_device = await _seed_base(db_session, "DV01", "mgr_d01")
 
     resp = client.post(
         REGISTER_URL,
@@ -107,7 +109,7 @@ async def test_register_device_idempotent_hardware_id(
     client: TestClient, db_session: AsyncSession
 ) -> None:
     """Same hardware_id registered twice → same device id returned both times."""
-    store, user, auth_device = await _seed_base(db_session, "D02", "mgr_d02")
+    store, user, auth_device = await _seed_base(db_session, "DV02", "mgr_d02")
     hw_id = f"HW-{uuid.uuid4().hex[:12]}"
     headers = _auth_headers(user.id, user.role, auth_device.id)
 
@@ -144,7 +146,7 @@ async def test_register_device_clerk_forbidden(
     client: TestClient, db_session: AsyncSession
 ) -> None:
     """STORE_CLERK does not have DEVICE_REGISTER permission → 403."""
-    store, user, auth_device = await _seed_base(db_session, "D03", "clerk_d03", role="STORE_CLERK")
+    store, user, auth_device = await _seed_base(db_session, "DV03", "clerk_d03", role="STORE_CLERK")
 
     resp = client.post(
         REGISTER_URL,
@@ -156,11 +158,11 @@ async def test_register_device_clerk_forbidden(
 
 async def test_register_device_inactive_store(client: TestClient, db_session: AsyncSession) -> None:
     """Registering to an inactive store → 404."""
-    _store, user, auth_device = await _seed_base(db_session, "D04", "mgr_d04")
+    _store, user, auth_device = await _seed_base(db_session, "DV04", "mgr_d04")
 
     inactive = Store(
         id=str(uuid.uuid4()),
-        code="D04-CLOSED",
+        code="DV04-CLOSED",
         name="Closed Store",
         is_active=False,
         created_at=datetime.now(UTC),
@@ -184,7 +186,7 @@ async def test_register_device_inactive_store(client: TestClient, db_session: As
 
 async def test_revoke_device_success(client: TestClient, db_session: AsyncSession) -> None:
     """STORE_MANAGER can revoke a device → 200, is_active=False."""
-    store, user, auth_device = await _seed_base(db_session, "D05", "mgr_d05")
+    store, user, auth_device = await _seed_base(db_session, "DV05", "mgr_d05")
 
     target = Device(
         id=str(uuid.uuid4()),
@@ -218,12 +220,12 @@ async def test_revoked_device_token_rejected(client: TestClient, db_session: Asy
     must be rejected with 401.
     """
     store, clerk_user, victim_device = await _seed_base(
-        db_session, "D06", "clerk_d06", role="STORE_CLERK"
+        db_session, "DV06", "clerk_d06", role="STORE_CLERK"
     )
 
     # Create an admin who can revoke
     admin = User(
-        id=str(uuid.uuid4()),
+        email="admin_d06@example.com",
         username="admin_d06",
         hashed_password=hash_password("pw"),
         role="GLOBAL_ADMIN",
@@ -232,6 +234,7 @@ async def test_revoked_device_token_rejected(client: TestClient, db_session: Asy
         updated_at=datetime.now(UTC),
     )
     db_session.add(admin)
+    await db_session.flush()  # flush to get autoincrement id
     admin_device = Device(
         id=str(uuid.uuid4()),
         store_id=store.id,
@@ -262,7 +265,7 @@ async def test_revoked_device_token_rejected(client: TestClient, db_session: Asy
 
 async def test_revoke_already_revoked_device(client: TestClient, db_session: AsyncSession) -> None:
     """Revoking an already-revoked device → 409 Conflict."""
-    store, user, auth_device = await _seed_base(db_session, "D07", "mgr_d07")
+    store, user, auth_device = await _seed_base(db_session, "DV07", "mgr_d07")
 
     pre_revoked = Device(
         id=str(uuid.uuid4()),
@@ -285,7 +288,7 @@ async def test_revoke_already_revoked_device(client: TestClient, db_session: Asy
 
 async def test_revoke_unknown_device(client: TestClient, db_session: AsyncSession) -> None:
     """Revoking a non-existent device → 404."""
-    _store, user, auth_device = await _seed_base(db_session, "D08", "mgr_d08")
+    _store, user, auth_device = await _seed_base(db_session, "DV08", "mgr_d08")
 
     resp = client.post(
         _revoke_url(str(uuid.uuid4())),

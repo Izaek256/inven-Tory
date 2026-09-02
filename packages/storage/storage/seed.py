@@ -89,7 +89,6 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
                 "email": "admin@inventory.local",
                 "full_name": "System Administrator",
                 "role": "ADMIN",
-                "hashed_password": "pbkdf2:sha256:dummyhashadmin",
             },
             {
                 "id": "USER-MGR-01",
@@ -97,7 +96,6 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
                 "email": "manager.alpha@inventory.local",
                 "full_name": "Alpha Store Manager",
                 "role": "MANAGER",
-                "hashed_password": "pbkdf2:sha256:dummyhashmgr",
             },
             {
                 "id": "USER-CASHIER-01",
@@ -105,7 +103,6 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
                 "email": "cashier.alpha@inventory.local",
                 "full_name": "Alpha Cashier",
                 "role": "CASHIER",
-                "hashed_password": "pbkdf2:sha256:dummyhashcashier",
             },
         ]
 
@@ -119,7 +116,7 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
                         email=u["email"],
                         full_name=u["full_name"],
                         role=u["role"],
-                        hashed_password=u["hashed_password"],
+                        # hashed_password removed in migration 0002 — auth is central-only
                         is_active=True,
                     )
                 )

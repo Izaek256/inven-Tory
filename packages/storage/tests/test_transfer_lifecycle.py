@@ -42,7 +42,6 @@ def setup_test_db(tmp_path):
             id="USER-1",
             username="manager",
             email="manager@example.com",
-            hashed_password="hashed_pw",
         )
         device_a = Device(id="DEV-A", store_id="STORE-A", device_name="POS-A")
         device_b = Device(id="DEV-B", store_id="STORE-B", device_name="POS-B")

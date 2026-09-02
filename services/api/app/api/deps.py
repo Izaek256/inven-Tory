@@ -2,7 +2,7 @@
 FastAPI reusable dependencies.
 
 get_db       — async DB session (one per request)
-get_current_user   — validates Bearer JWT via FastAPI Users, checks device revocation
+get_current_user   — validates custom Bearer JWT, checks device revocation
 require_permission — factory that returns a dependency enforcing a specific permission
 
 AT-011 groundwork: every unauthorized / revoked access attempt is logged as an
@@ -16,12 +16,10 @@ import logging
 from collections.abc import Callable
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi_users import FastAPIUsers
 from jose import JWTError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import auth_backend, get_user_manager
 from app.auth.user import User
 from app.core.permissions import Permission, role_has_permission
 from app.core.security import decode_access_token
@@ -30,57 +28,73 @@ from app.models.device import Device
 
 logger = logging.getLogger(__name__)
 
-# FastAPI Users instance for authentication
-fastapi_users = FastAPIUsers[User, int](get_user_manager, [auth_backend])
-
 
 async def get_current_user(
     request: Request,
-    user: User = Depends(fastapi_users.current_user(active=True)),  # noqa: B008
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> User:
     """
-    Validate the Bearer JWT via FastAPI Users and return the active User.
+    Validate the Bearer JWT and return the active User.
 
-    FastAPI Users handles:
-    1. Token signature / expiry / type validation
-    2. User account is_active check
+    Accepts BOTH our custom access tokens (issued by POST /auth/login with
+    device verification) and FastAPI Users JWT tokens (issued by POST
+    /auth/jwt/login).  Custom tokens are tried first; if that fails the
+    FastAPI Users strategy is used as a fallback.
 
-    This function adds:
-    3. Device revocation check (SRS §15) - device_id is embedded in our custom JWT
+    After authenticating the user this function adds:
+    - Device revocation check (SRS §15) — device_id is embedded in our custom JWT.
 
     Any failure is logged for audit purposes (AT-011 groundwork) and raises
     HTTP 401 so the client knows the call was rejected.
     """
-    # FastAPI Users already validated the token and user is_active
-    # Now we need to verify device revocation if device_id is in the token
-    auth_header = request.headers.get("authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header.replace("Bearer ", "")
-        try:
-            payload = decode_access_token(token)
+    auth_header = request.headers.get("authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = auth_header[len("Bearer ") :]
+    user: User | None = None
+    device_id: str | None = None
+
+    # --- Try our custom JWT first ---
+    try:
+        payload = decode_access_token(token)
+        user_id_str: str | None = payload.get("sub")
+        if user_id_str:
+            user_id_int = int(user_id_str)
+            result = await db.execute(select(User).where(User.id == user_id_int))
+            user = result.scalars().first()
             device_id = payload.get("device_id")
+    except (JWTError, ValueError, AttributeError):
+        user = None
 
-            # Check device revocation if device_id is present (from our custom login)
-            if device_id and device_id != "REFRESH_NO_DEVICE":
-                device_result = await db.execute(select(Device).where(Device.id == device_id))
-                device: Device | None = device_result.scalars().first()
+    if user is None or not user.is_active:
+        logger.warning("AUTH_FAILURE invalid_or_expired_token")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-                if device is None or not device.is_active:
-                    logger.warning(
-                        "AUTH_FAILURE device_revoked user_id=%s device_id=%s",
-                        user.id,
-                        device_id,
-                    )
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Device has been revoked",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-        except (JWTError, KeyError, AttributeError):
-            # If we can't decode or check device, fall through to return user
-            # This allows standard FastAPI Users routes to work
-            pass
+    # --- Device revocation check (only for custom tokens with device_id) ---
+    if device_id and device_id != "REFRESH_NO_DEVICE":
+        device_result = await db.execute(select(Device).where(Device.id == device_id))
+        device: Device | None = device_result.scalars().first()
+
+        if device is None or not device.is_active:
+            logger.warning(
+                "AUTH_FAILURE device_revoked user_id=%s device_id=%s",
+                user.id,
+                device_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Device has been revoked",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return user
 

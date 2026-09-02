@@ -54,7 +54,7 @@ class DeviceResponse(BaseModel):
     hardware_id: str | None
     is_active: bool
     registered_at: datetime
-    registered_by_user_id: str | None
+    registered_by_user_id: int | None
 
 
 class RevokeRequest(BaseModel):
