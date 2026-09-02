@@ -126,14 +126,111 @@ function _isTokenExpired(expiresAt: string): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * Authenticate against the central API and cache the session securely.
+ * Authenticate — offline-first strategy:
  *
- * @param username  User's login name
- * @param password  Plain-text password (never persisted)
- * @param deviceId  The registered device ID embedded in the token
- * @param apiBaseUrl Optional override for the API base URL
+ * 1. Tauri app: invoke local_login Rust command (bcrypt against SQLite).
+ *    Works with zero network. Background-upgrades to a real JWT when online.
+ * 2. Dev browser (VITE_DEV_DEVICE_ID set, not Tauri): use a local mock
+ *    session so the dev server never needs the API running.
+ * 3. Production browser / API-only: POST to /api/v1/auth/login.
  */
 export async function login(
+  username: string,
+  password: string,
+  deviceId: string,
+  apiBaseUrl?: string,
+): Promise<AuthSession> {
+  // ── 1. Tauri native app — local SQLite bcrypt check ───────────────────────
+  if (isTauriEnvironment()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const local = await invoke<{
+        user_id: string;
+        username: string;
+        full_name: string | null;
+        role: string;
+        assigned_store_id: string | null;
+      }>('local_login', { username, password });
+
+      const offlineToken = `offline:${local.user_id}:${Date.now()}`;
+      const expiresAt = new Date(Date.now() + 8 * 3600_000).toISOString();
+
+      const session: AuthSession = {
+        access_token: offlineToken,
+        refresh_token: '',
+        user_id: parseInt(local.user_id, 10) || 0,
+        username: local.username,
+        full_name: local.full_name,
+        role: local.role as UserRole,
+        assigned_store_id: local.assigned_store_id,
+        expires_at: expiresAt,
+        token_expired_offline: false,
+      };
+
+      await _secureWrite(session);
+      // Background: try to get a real server JWT for sync
+      void _tryUpgradeToServerToken(username, password, deviceId, apiBaseUrl, session);
+      return session;
+    } catch (localErr) {
+      const msg = localErr instanceof Error ? localErr.message : String(localErr);
+      if (!msg.includes('Offline login not available')) {
+        throw localErr;
+      }
+      // pin_hash not set yet — fall through to API
+    }
+  }
+
+  // ── 2. Vite dev browser with DEV_DEVICE_ID set — skip the network ─────────
+  // The desktop Vite dev server runs in a browser context where __TAURI_INTERNALS__
+  // is absent. When VITE_DEV_DEVICE_ID is set we know we're in desktop-dev mode
+  // and should not fire cross-origin preflight requests at the API.
+  if (import.meta.env.VITE_DEV_DEVICE_ID) {
+    return _devBrowserLogin(username, password);
+  }
+
+  // ── 3. Real API login (production or web app) ─────────────────────────────
+  return _apiLogin(username, password, deviceId, apiBaseUrl);
+}
+
+/**
+ * DEV-ONLY: browser-mode login for the desktop Vite dev server.
+ * Only active when VITE_DEV_DEVICE_ID is set (apps/desktop/.env, gitignored).
+ * Matches against the same credentials as the local SQLite seed so offline
+ * dev works without cargo/Tauri compilation and without the API running.
+ */
+async function _devBrowserLogin(username: string, password: string): Promise<AuthSession> {
+  const DEV_USERS: Record<string, { password: string; role: UserRole; full_name: string }> = {
+    admin: { password: 'DevAdmin2026!', role: 'GLOBAL_ADMIN' as UserRole, full_name: 'System Administrator' },
+    manager_alpha: { password: 'DevManager2026!', role: 'STORE_MANAGER' as UserRole, full_name: 'Alpha Store Manager' },
+    clerk_alpha: { password: 'DevClerk2026!', role: 'STORE_CLERK' as UserRole, full_name: 'Alpha Clerk' },
+  };
+
+  const match = DEV_USERS[username.trim()];
+  if (!match || match.password !== password) {
+    throw new Error('Invalid username or password.');
+  }
+
+  const expiresAt = new Date(Date.now() + 8 * 3600_000).toISOString();
+  const session: AuthSession = {
+    access_token: `dev-offline:${username}:${Date.now()}`,
+    refresh_token: '',
+    user_id: 0,
+    username: username.trim(),
+    full_name: match.full_name,
+    role: match.role,
+    assigned_store_id: null,
+    expires_at: expiresAt,
+    token_expired_offline: false,
+  };
+
+  await _secureWrite(session);
+  return session;
+}
+
+/**
+ * Call the central API login endpoint and cache the resulting session.
+ */
+async function _apiLogin(
   username: string,
   password: string,
   deviceId: string,
@@ -173,6 +270,27 @@ export async function login(
 
   await _secureWrite(session);
   return session;
+}
+
+/**
+ * After a successful local login, attempt to upgrade to a real server session
+ * in the background.  Replaces the offline sentinel token with a real JWT so
+ * sync can work immediately.  Failures are silently ignored.
+ */
+async function _tryUpgradeToServerToken(
+  username: string,
+  password: string,
+  deviceId: string,
+  apiBaseUrl: string | undefined,
+  currentSession: AuthSession,
+): Promise<void> {
+  try {
+    const upgraded = await _apiLogin(username, password, deviceId, apiBaseUrl);
+    // Merge: keep local profile data, replace token
+    await _secureWrite({ ...currentSession, ...upgraded });
+  } catch {
+    // Network unavailable or server error — offline session stays as-is
+  }
 }
 
 /**

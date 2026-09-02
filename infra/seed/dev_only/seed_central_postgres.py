@@ -92,6 +92,24 @@ DEV_STORES = [
     },
 ]
 
+# Well-known virtual device for the web dashboard.
+# Login requires a registered device_id; the web app always sends this ID.
+WEB_DASHBOARD_DEVICE = {
+    "id": "WEB-DASHBOARD-DEVICE",
+    "store_id": "STORE-ALPHA",   # anchored to Alpha; any active store works
+    "device_name": "Web Management Dashboard",
+}
+
+# Well-known dev device for the desktop app.
+# Used as a fallback when VITE_DEV_DEVICE_ID is set in apps/desktop/.env,
+# so developers can log in without going through the full device-registration
+# wizard during local development.
+DEV_DESKTOP_DEVICE = {
+    "id": "DEV-DESKTOP-DEVICE",
+    "store_id": "STORE-ALPHA",
+    "device_name": "Dev Desktop (local development)",
+}
+
 
 def run_migrations(db_url: str) -> None:
     """Run all pending Alembic migrations programmatically."""
@@ -180,6 +198,60 @@ async def seed() -> None:
                 logger.info("Created user: %s (%s)", u["username"], u["role"])
             else:
                 logger.info("User already exists: %s", u["username"])
+
+        await session.flush()
+
+        # ── Web Dashboard Device ───────────────────────────────────────────────
+        # The web app always sends device_id=WEB-DASHBOARD-DEVICE at login.
+        # Without this row every web dashboard login returns 401.
+        d = WEB_DASHBOARD_DEVICE
+        existing_dev = await session.scalar(select(Device).where(Device.id == d["id"]))
+        if not existing_dev:
+            session.add(
+                Device(
+                    id=d["id"],
+                    store_id=d["store_id"],
+                    device_name=d["device_name"],
+                    is_active=True,
+                    registered_at=now,
+                )
+            )
+            logger.info("Created device: %s (%s)", d["device_name"], d["id"])
+        else:
+            # Re-activate in case it was accidentally revoked
+            if not existing_dev.is_active:
+                existing_dev.is_active = True
+                existing_dev.revocation_reason = None
+                existing_dev.revoked_at = None
+                logger.info("Re-activated device: %s", d["id"])
+            else:
+                logger.info("Device already exists and is active: %s", d["id"])
+
+        # ── Dev Desktop Device ────────────────────────────────────────────────
+        # Fallback device for local development — used when VITE_DEV_DEVICE_ID
+        # is set in apps/desktop/.env so developers can log in without running
+        # the full device-registration wizard.
+        dd = DEV_DESKTOP_DEVICE
+        existing_dd = await session.scalar(select(Device).where(Device.id == dd["id"]))
+        if not existing_dd:
+            session.add(
+                Device(
+                    id=dd["id"],
+                    store_id=dd["store_id"],
+                    device_name=dd["device_name"],
+                    is_active=True,
+                    registered_at=now,
+                )
+            )
+            logger.info("Created device: %s (%s)", dd["device_name"], dd["id"])
+        else:
+            if not existing_dd.is_active:
+                existing_dd.is_active = True
+                existing_dd.revocation_reason = None
+                existing_dd.revoked_at = None
+                logger.info("Re-activated device: %s", dd["id"])
+            else:
+                logger.info("Device already exists and is active: %s", dd["id"])
 
         await session.commit()
         logger.info("PostgreSQL dev seed complete.")

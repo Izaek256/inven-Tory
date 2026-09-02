@@ -28,3 +28,4 @@ chrono = "0.4"
 
 # SQLite — implemented in Issue 03
 rusqlite = { version = "0.31", features = ["bundled"] }
+bcrypt = "0.15"
