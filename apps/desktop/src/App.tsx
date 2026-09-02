@@ -52,12 +52,16 @@ async function getStoredDeviceId(): Promise<string> {
       const { load } = await import('@tauri-apps/plugin-store');
       const store = await load('auth.dat', { autoSave: false });
       const id = await store.get<string>(DEVICE_ID_STORE_KEY);
-      return id ?? '';
+      if (id) return id;
     }
   } catch {
-    // Fall through to empty string
+    // Fall through to dev fallback
   }
-  return '';
+  // DEV-ONLY fallback: use VITE_DEV_DEVICE_ID when no device is registered.
+  // This is set in apps/desktop/.env and matches the seed in
+  // infra/seed/dev_only/seed_central_postgres.py.
+  // In production this env var is not set so the string is empty.
+  return import.meta.env.VITE_DEV_DEVICE_ID ?? '';
 }
 
 export function App(): React.ReactElement {

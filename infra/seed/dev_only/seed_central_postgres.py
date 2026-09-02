@@ -100,6 +100,16 @@ WEB_DASHBOARD_DEVICE = {
     "device_name": "Web Management Dashboard",
 }
 
+# Well-known dev device for the desktop app.
+# Used as a fallback when VITE_DEV_DEVICE_ID is set in apps/desktop/.env,
+# so developers can log in without going through the full device-registration
+# wizard during local development.
+DEV_DESKTOP_DEVICE = {
+    "id": "DEV-DESKTOP-DEVICE",
+    "store_id": "STORE-ALPHA",
+    "device_name": "Dev Desktop (local development)",
+}
+
 
 def run_migrations(db_url: str) -> None:
     """Run all pending Alembic migrations programmatically."""
@@ -216,6 +226,32 @@ async def seed() -> None:
                 logger.info("Re-activated device: %s", d["id"])
             else:
                 logger.info("Device already exists and is active: %s", d["id"])
+
+        # ── Dev Desktop Device ────────────────────────────────────────────────
+        # Fallback device for local development — used when VITE_DEV_DEVICE_ID
+        # is set in apps/desktop/.env so developers can log in without running
+        # the full device-registration wizard.
+        dd = DEV_DESKTOP_DEVICE
+        existing_dd = await session.scalar(select(Device).where(Device.id == dd["id"]))
+        if not existing_dd:
+            session.add(
+                Device(
+                    id=dd["id"],
+                    store_id=dd["store_id"],
+                    device_name=dd["device_name"],
+                    is_active=True,
+                    registered_at=now,
+                )
+            )
+            logger.info("Created device: %s (%s)", dd["device_name"], dd["id"])
+        else:
+            if not existing_dd.is_active:
+                existing_dd.is_active = True
+                existing_dd.revocation_reason = None
+                existing_dd.revoked_at = None
+                logger.info("Re-activated device: %s", dd["id"])
+            else:
+                logger.info("Device already exists and is active: %s", dd["id"])
 
         await session.commit()
         logger.info("PostgreSQL dev seed complete.")
