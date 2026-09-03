@@ -2,69 +2,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
 import { isTauriEnvironment } from './tauriStoreService';
 
-let MOCK_PRODUCTS: Product[] = [
-  {
-    id: 'PROD-IPHONE15PRO',
-    sku: 'ELEC-IPHONE15PRO',
-    name: 'Apple iPhone 15 Pro 256GB',
-    brand: 'Apple',
-    model: 'A3102',
-    category: 'Smartphones',
-    unit: 'pcs',
-    barcode: '195949012345',
-    alternate_names: 'iPhone 15 Pro, Apple Phone 15',
-    serial_tracking_enabled: true,
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'PROD-SAMSUNGS24',
-    sku: 'ELEC-SAMSUNG-S24',
-    name: 'Samsung Galaxy S24 Ultra',
-    brand: 'Samsung',
-    model: 'SM-S928B',
-    category: 'Smartphones',
-    unit: 'pcs',
-    barcode: '880609501234',
-    alternate_names: 'S24 Ultra, Samsung Galaxy Phone',
-    serial_tracking_enabled: true,
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'PROD-MACBOOKM3',
-    sku: 'ELEC-MACBOOK-M3',
-    name: 'Apple MacBook Air 15" M3',
-    brand: 'Apple',
-    model: 'MRYM3LL/A',
-    category: 'Laptops',
-    unit: 'pcs',
-    barcode: '195949567890',
-    alternate_names: 'MacBook Air M3, MBA 15',
-    serial_tracking_enabled: true,
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'PROD-SONYXM5',
-    sku: 'ELEC-SONY-XM5',
-    name: 'Sony WH-1000XM5 Wireless Headphones',
-    brand: 'Sony',
-    model: 'WH1000XM5/B',
-    category: 'Audio',
-    unit: 'pcs',
-    barcode: '027242922112',
-    alternate_names: 'XM5, Sony ANC Headphones',
-    serial_tracking_enabled: false,
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-];
-
 /**
  * Fetch all products from local SQLite DB.
  */

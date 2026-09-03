@@ -29,9 +29,7 @@ interface SellStockInput {
   device_id: string;
 }
 
-/**
- * Helper function for mock balance retrieval (web/test).
- */
+// @visibleForTesting
 export function getMockBalance(
   storeId: string,
   productId: string,
@@ -48,9 +46,7 @@ export function getMockBalance(
   return 0;
 }
 
-/**
- * Helper function for mock balance update (web/test).
- */
+// @visibleForTesting
 export function setMockBalance(
   storeId: string,
   productId: string,
@@ -65,19 +61,8 @@ export function setMockBalance(
   }
 }
 
-let mockPendingOutboxCount = 0;
-
-export function getMockPendingOutboxCount(): number {
-  return mockPendingOutboxCount;
-}
-
-export function setMockPendingOutboxCount(count: number): void {
-  mockPendingOutboxCount = count;
-}
-
-export function incrementMockPendingOutboxCount(by: number = 1): void {
-  mockPendingOutboxCount += by;
-}
+// @visibleForTesting
+export const MOCK_STOCK_BALANCES = new Map<string, number>();
 
 /**
  * Get current count of pending/sending outbox events (Issue 12).
@@ -89,10 +74,13 @@ export async function getPendingOutboxCount(): Promise<number> {
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransactionService] Error invoking get_pending_outbox_count:', err);
-      return mockPendingOutboxCount;
+      throw new Error(`Failed to get pending outbox count: ${String(err)}`);
     }
   }
-  return mockPendingOutboxCount;
+
+  throw new Error(
+    '[TauriTransactionService] getPendingOutboxCount() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -263,12 +251,6 @@ export async function getStockBalanceForBucket(
     '[TauriTransactionService] getStockBalanceForBucket() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
   );
 }
-
-/**
- * In-memory stock balance map for the mock environment (web/test).
- * Keyed by "store_id::product_id" or "store_id::product_id::bucket".
- */
-export const MOCK_STOCK_BALANCES = new Map<string, number>();
 
 /**
  * Physical count reconciliation — create an ADJUSTMENT transaction (FR-MOV-006, Section 13.4, AT-008).

@@ -1,39 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Store, CreateStoreInput, UpdateStoreInput, Device } from '../types/store';
 
-// Fallback seed data for browser vitest and web preview
-let MOCK_STORES: Store[] = [
-  {
-    id: 'STORE-ALPHA',
-    code: 'ALPHA',
-    name: 'Store Alpha (Main Flagship)',
-    address: '100 Electronics Way, Tech District',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'STORE-BETA',
-    code: 'BETA',
-    name: 'Store Beta (Downtown)',
-    address: '45 Market Street, Central City',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-  {
-    id: 'STORE-GAMMA',
-    code: 'GAMMA',
-    name: 'Store Gamma (Suburban)',
-    address: '888 Commerce Blvd, Westside',
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  },
-];
-
-const MOCK_DEVICES: Device[] = [];
-
 /**
  * Check if current runtime environment is inside a Tauri shell.
  */

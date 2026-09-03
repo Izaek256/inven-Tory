@@ -27,7 +27,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, require_permission
+from app.core.permissions import Permission
 from app.models.inventory_transaction import InventoryTransaction
 from app.models.product import Product
 from app.models.stock_balance import StockBalance
@@ -54,6 +55,47 @@ class ProductSearchResult(BaseModel):
     barcode: str | None
     is_active: bool
     low_stock_threshold: int | None
+
+
+class ProductListItem(BaseModel):
+    id: str
+    sku: str
+    name: str
+    brand: str | None
+    model: str | None
+    category: str
+    unit: str
+    barcode: str | None
+    alternate_names: str | None
+    serial_tracking_enabled: bool
+    is_active: bool
+
+
+class CreateProductRequest(BaseModel):
+    sku: str
+    name: str
+    brand: str | None = None
+    model: str | None = None
+    category: str
+    unit: str = "pcs"
+    barcode: str | None = None
+    alternate_names: str | None = None
+    serial_tracking_enabled: bool = False
+
+
+class UpdateProductRequest(BaseModel):
+    name: str
+    brand: str | None = None
+    model: str | None = None
+    category: str
+    unit: str = "pcs"
+    barcode: str | None = None
+    alternate_names: str | None = None
+    serial_tracking_enabled: bool = False
+
+
+class ToggleProductActiveRequest(BaseModel):
+    is_active: bool
 
 
 class ProductSearchResponse(BaseModel):
@@ -103,6 +145,187 @@ class ProductHistoryResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # GET /api/v1/products/search
 # ---------------------------------------------------------------------------
+
+
+@router.get(
+    "",
+    response_model=list[ProductListItem],
+    status_code=status.HTTP_200_OK,
+    summary="List all products",
+)
+async def list_products(
+    is_active: bool | None = Query(default=None, description="Filter by active status"),
+    offset: int = Query(default=0, ge=0, description="Pagination offset"),
+    limit: int = Query(default=100, ge=1, le=500, description="Maximum results to return"),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(get_current_user),  # noqa: B008
+) -> list[ProductListItem]:
+    """
+    Return a list of all products with basic information.
+    Requires authentication.
+    """
+    stmt = select(Product).order_by(Product.name).offset(offset).limit(limit)
+    if is_active is not None:
+        stmt = stmt.where(Product.is_active == is_active)
+    result = await db.execute(stmt)
+    products = result.scalars().all()
+
+    return [
+        ProductListItem(
+            id=p.id,
+            sku=p.sku,
+            name=p.name,
+            brand=p.brand,
+            model=p.model,
+            category=p.category,
+            unit=p.unit or "pcs",
+            barcode=p.barcode,
+            alternate_names=p.alternate_names,
+            serial_tracking_enabled=bool(p.serial_tracking_enabled),
+            is_active=bool(p.is_active),
+        )
+        for p in products
+    ]
+
+
+@router.post(
+    "",
+    response_model=ProductListItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new product",
+)
+async def create_product(
+    request: CreateProductRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.PRODUCT_ADMIN)),  # noqa: B008
+) -> ProductListItem:
+    """
+    Create a new product with the given fields.
+    Validates that the SKU is unique (409 on duplicate).
+    """
+    # Check for duplicate SKU
+    existing = await db.execute(select(Product).where(Product.sku == request.sku))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Product with SKU '{request.sku}' already exists",
+        )
+
+    import uuid
+
+    product = Product(
+        id=str(uuid.uuid4()),
+        sku=request.sku,
+        name=request.name,
+        brand=request.brand,
+        model=request.model,
+        category=request.category,
+        unit=request.unit,
+        barcode=request.barcode,
+        alternate_names=request.alternate_names,
+        serial_tracking_enabled=request.serial_tracking_enabled,
+        is_active=True,
+    )
+    db.add(product)
+    await db.commit()
+    await db.refresh(product)
+
+    return ProductListItem(
+        id=product.id,
+        sku=product.sku,
+        name=product.name,
+        brand=product.brand,
+        model=product.model,
+        category=product.category,
+        unit=product.unit or "pcs",
+        barcode=product.barcode,
+        alternate_names=product.alternate_names,
+        serial_tracking_enabled=bool(product.serial_tracking_enabled),
+        is_active=bool(product.is_active),
+    )
+
+
+@router.put(
+    "/{product_id}",
+    response_model=ProductListItem,
+    status_code=status.HTTP_200_OK,
+    summary="Update product fields",
+)
+async def update_product(
+    product_id: str,
+    request: UpdateProductRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.PRODUCT_ADMIN)),  # noqa: B008
+) -> ProductListItem:
+    """
+    Update a product's fields. SKU and ID are immutable.
+    """
+    product = await db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    product.name = request.name
+    product.brand = request.brand
+    product.model = request.model
+    product.category = request.category
+    product.unit = request.unit
+    product.barcode = request.barcode
+    product.alternate_names = request.alternate_names
+    product.serial_tracking_enabled = request.serial_tracking_enabled
+    await db.commit()
+    await db.refresh(product)
+
+    return ProductListItem(
+        id=product.id,
+        sku=product.sku,
+        name=product.name,
+        brand=product.brand,
+        model=product.model,
+        category=product.category,
+        unit=product.unit or "pcs",
+        barcode=product.barcode,
+        alternate_names=product.alternate_names,
+        serial_tracking_enabled=bool(product.serial_tracking_enabled),
+        is_active=bool(product.is_active),
+    )
+
+
+@router.patch(
+    "/{product_id}/toggle-active",
+    response_model=ProductListItem,
+    status_code=status.HTTP_200_OK,
+    summary="Toggle product active status",
+)
+async def toggle_product_active(
+    product_id: str,
+    request: ToggleProductActiveRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.PRODUCT_ADMIN)),  # noqa: B008
+) -> ProductListItem:
+    """
+    Activate or deactivate a product.
+    """
+    product = await db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    product.is_active = request.is_active
+    await db.commit()
+    await db.refresh(product)
+
+    return ProductListItem(
+        id=product.id,
+        sku=product.sku,
+        name=product.name,
+        brand=product.brand,
+        model=product.model,
+        category=product.category,
+        unit=product.unit or "pcs",
+        barcode=product.barcode,
+        alternate_names=product.alternate_names,
+        serial_tracking_enabled=bool(product.serial_tracking_enabled),
+        is_active=bool(product.is_active),
+    )
 
 
 @router.get(

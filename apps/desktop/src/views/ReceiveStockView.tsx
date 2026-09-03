@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ArrowDownCircle, X, Check } from 'lucide-react';
+import { Package, ArrowDownCircle, X, Check, AlertCircle } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
 import { searchProducts } from '../services/tauriProductService';
 import { receiveStock } from '../services/tauriTransactionService';
@@ -166,173 +166,197 @@ export const ReceiveStockView: React.FC = () => {
 
       {error && (
         <div className="it-toast it-toast--error" style={{ marginBottom: '16px' }}>
+          <AlertCircle size={16} aria-hidden="true" />
           <span>{error}</span>
         </div>
       )}
 
-      <form
-        onSubmit={handleSubmit}
-        className="transaction-form"
-        style={{
-          backgroundColor: 'var(--it-card)',
-          border: '1px solid var(--it-border)',
-          borderRadius: 'var(--it-r-lg)',
-          padding: '24px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '20px',
-        }}
-      >
-        {/* Store Selection */}
-        <Select
-          id="store-select"
-          label="Store"
-          required
-          value={selectedStoreId}
-          onChange={(e) => setSelectedStoreId(e.target.value)}
-          options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-        />
-
-        {/* Product Search */}
-        <div style={{ position: 'relative' }}>
-          <TextInput
-            id="product-search"
-            label="Product"
+      {stores.length === 0 ? (
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '48px 24px',
+            textAlign: 'center',
+          }}
+        >
+          <Package size={48} style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }} />
+          <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
+          <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
+            Create a store location first to record stock movements.
+          </p>
+        </div>
+      ) : (
+        <form
+          onSubmit={handleSubmit}
+          className="transaction-form"
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '24px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '20px',
+          }}
+        >
+          {/* Store Selection */}
+          <Select
+            id="store-select"
+            label="Store"
             required
-            value={productQuery}
-            onChange={(e) => setProductQuery(e.target.value)}
-            placeholder="Search by name, SKU, barcode..."
+            value={selectedStoreId}
+            onChange={(e) => setSelectedStoreId(e.target.value)}
+            options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
           />
-          {selectedProduct && (
-            <button
-              type="button"
-              onClick={clearProduct}
-              style={{
-                position: 'absolute',
-                right: '8px',
-                top: '34px',
-                background: 'none',
-                border: 'none',
-                cursor: 'pointer',
-                color: 'var(--it-text-secondary)',
-              }}
-            >
-              <X size={16} />
-            </button>
-          )}
 
-          {/* Search Results Dropdown */}
-          {searchResults.length > 0 && !selectedProduct && (
-            <div
-              style={{
-                position: 'absolute',
-                top: '100%',
-                left: 0,
-                right: 0,
-                backgroundColor: 'var(--it-card)',
-                border: '1px solid var(--it-border)',
-                borderRadius: 'var(--it-r-md)',
-                marginTop: '4px',
-                maxHeight: '240px',
-                overflowY: 'auto',
-                zIndex: 10,
-                boxShadow: 'var(--it-shadow-md)',
-              }}
-            >
-              {searchResults.map((product) => (
-                <div
-                  key={product.id}
-                  onClick={() => handleProductSelect(product)}
-                  style={{
-                    padding: '10px 14px',
-                    cursor: 'pointer',
-                    borderBottom: '1px solid var(--it-border)',
-                  }}
-                  onMouseEnter={(e) =>
-                    (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
-                  }
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                >
+          {/* Product Search */}
+          <div style={{ position: 'relative' }}>
+            <TextInput
+              id="product-search"
+              label="Product"
+              required
+              value={productQuery}
+              onChange={(e) => setProductQuery(e.target.value)}
+              placeholder="Search by name, SKU, barcode..."
+            />
+            {selectedProduct && (
+              <button
+                type="button"
+                onClick={clearProduct}
+                style={{
+                  position: 'absolute',
+                  right: '8px',
+                  top: '34px',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  color: 'var(--it-text-secondary)',
+                }}
+              >
+                <X size={16} />
+              </button>
+            )}
+
+            {/* Search Results Dropdown */}
+            {searchResults.length > 0 && !selectedProduct && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  right: 0,
+                  backgroundColor: 'var(--it-card)',
+                  border: '1px solid var(--it-border)',
+                  borderRadius: 'var(--it-r-md)',
+                  marginTop: '4px',
+                  maxHeight: '240px',
+                  overflowY: 'auto',
+                  zIndex: 10,
+                  boxShadow: 'var(--it-shadow-md)',
+                }}
+              >
+                {searchResults.map((product) => (
                   <div
-                    style={{ fontWeight: 600, fontSize: '13px', color: 'var(--it-text-primary)' }}
-                  >
-                    {product.name}
-                  </div>
-                  <div
+                    key={product.id}
+                    onClick={() => handleProductSelect(product)}
                     style={{
-                      fontSize: '12px',
-                      color: 'var(--it-text-secondary)',
-                      fontFamily: 'var(--it-font-mono)',
+                      padding: '10px 14px',
+                      cursor: 'pointer',
+                      borderBottom: '1px solid var(--it-border)',
                     }}
+                    onMouseEnter={(e) =>
+                      (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
+                    }
+                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
                   >
-                    SKU: {product.sku} {product.barcode && `• Barcode: ${product.barcode}`}
+                    <div
+                      style={{ fontWeight: 600, fontSize: '13px', color: 'var(--it-text-primary)' }}
+                    >
+                      {product.name}
+                    </div>
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        color: 'var(--it-text-secondary)',
+                        fontFamily: 'var(--it-font-mono)',
+                      }}
+                    >
+                      SKU: {product.sku} {product.barcode && `• Barcode: ${product.barcode}`}
+                    </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
 
-          {/* Selected Product Display */}
-          {selectedProduct && (
-            <div
-              style={{
-                marginTop: '8px',
-                padding: '8px 12px',
-                backgroundColor: 'var(--it-green-surface)',
-                border: '1px solid var(--it-green-border)',
-                borderRadius: 'var(--it-r-md)',
-                fontSize: '13px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                color: 'var(--it-green-text)',
-              }}
+            {/* Selected Product Display */}
+            {selectedProduct && (
+              <div
+                style={{
+                  marginTop: '8px',
+                  padding: '8px 12px',
+                  backgroundColor: 'var(--it-green-surface)',
+                  border: '1px solid var(--it-green-border)',
+                  borderRadius: 'var(--it-r-md)',
+                  fontSize: '13px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  color: 'var(--it-green-text)',
+                }}
+              >
+                <Package size={16} />
+                <span>
+                  {selectedProduct.name} ({selectedProduct.sku})
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* Quantity */}
+          <NumericInput
+            id="quantity"
+            label="Quantity"
+            required
+            value={quantity}
+            min={1}
+            onChange={(v) => setQuantity(Math.max(1, v))}
+          />
+
+          {/* Reference Number */}
+          <TextInput
+            id="reference-number"
+            label="Receipt / Reference Number"
+            value={referenceNumber}
+            onChange={(e) => setReferenceNumber(e.target.value)}
+            placeholder="e.g., R-1002, INV-2024-001"
+          />
+
+          {/* Supplier (Optional) */}
+          <TextInput
+            id="supplier"
+            label="Supplier (Optional)"
+            value={supplier}
+            onChange={(e) => setSupplier(e.target.value)}
+            placeholder="e.g., Acme Electronics"
+            hint="Free-text reference only. Full supplier entity coming in Issue 21."
+          />
+
+          {/* Submit Button */}
+          <div style={{ marginTop: '8px' }}>
+            <Button
+              type="submit"
+              variant="primary"
+              loading={isSubmitting}
+              style={{ width: '100%' }}
             >
-              <Package size={16} />
-              <span>
-                {selectedProduct.name} ({selectedProduct.sku})
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Quantity */}
-        <NumericInput
-          id="quantity"
-          label="Quantity"
-          required
-          value={quantity}
-          min={1}
-          onChange={(v) => setQuantity(Math.max(1, v))}
-        />
-
-        {/* Reference Number */}
-        <TextInput
-          id="reference-number"
-          label="Receipt / Reference Number"
-          value={referenceNumber}
-          onChange={(e) => setReferenceNumber(e.target.value)}
-          placeholder="e.g., R-1002, INV-2024-001"
-        />
-
-        {/* Supplier (Optional) */}
-        <TextInput
-          id="supplier"
-          label="Supplier (Optional)"
-          value={supplier}
-          onChange={(e) => setSupplier(e.target.value)}
-          placeholder="e.g., Acme Electronics"
-          hint="Free-text reference only. Full supplier entity coming in Issue 21."
-        />
-
-        {/* Submit Button */}
-        <div style={{ marginTop: '8px' }}>
-          <Button type="submit" variant="primary" loading={isSubmitting} style={{ width: '100%' }}>
-            <ArrowDownCircle size={18} />
-            Receive Stock
-          </Button>
-        </div>
-      </form>
+              <ArrowDownCircle size={18} />
+              Receive Stock
+            </Button>
+          </div>
+        </form>
+      )}
     </div>
   );
 };

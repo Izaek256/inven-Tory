@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom';
-import { _setMemSession } from '../services/tauriAuthService';
+import { _setMemSession } from './helpers';
 
 // Polyfill window.matchMedia for jsdom (not implemented in jsdom)
 Object.defineProperty(window, 'matchMedia', {

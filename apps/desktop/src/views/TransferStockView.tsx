@@ -543,14 +543,34 @@ export const TransferStockView: React.FC = () => {
           variant={activeTab === 'create' ? 'primary' : 'secondary'}
           onClick={(): void => setActiveTab('create')}
           data-testid="tab-create"
+          disabled={stores.length < 2}
         >
           <PlusCircle size={16} />
           <span>New Transfer</span>
         </Button>
       </div>
 
+      {/* Empty state for insufficient stores */}
+      {stores.length < 2 && (
+        <div
+          style={{
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '48px 24px',
+            textAlign: 'center',
+          }}
+        >
+          <Send size={48} style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }} />
+          <h3 style={{ marginBottom: '8px' }}>Transfers require at least 2 store locations</h3>
+          <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
+            Create additional store locations to enable inter-store stock transfers.
+          </p>
+        </div>
+      )}
+
       {/* CREATE TAB */}
-      {activeTab === 'create' && (
+      {activeTab === 'create' && stores.length >= 2 && (
         <div
           style={{
             backgroundColor: 'var(--it-card)',

@@ -19,7 +19,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +66,16 @@ class RevokeResponse(BaseModel):
     is_active: bool
     revoked_at: datetime
     revocation_reason: str
+
+
+class DeviceListItem(BaseModel):
+    id: str
+    store_id: str
+    device_name: str
+    hardware_id: str | None
+    is_active: bool
+    registered_at: datetime
+    revoked_at: datetime | None
 
 
 # ---------------------------------------------------------------------------
@@ -208,3 +218,39 @@ async def revoke_device(
         revoked_at=now,
         revocation_reason=body.reason,
     )
+
+
+@router.get(
+    "",
+    response_model=list[DeviceListItem],
+    status_code=status.HTTP_200_OK,
+    summary="List all devices",
+)
+async def list_devices(
+    store_id: str | None = Query(default=None, description="Filter by store"),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.DEVICE_REGISTER)),  # noqa: B008
+) -> list[DeviceListItem]:
+    """
+    Return a list of all devices with optional store filter.
+    Requires DEVICE_REGISTER permission.
+    """
+    stmt = select(Device).order_by(Device.registered_at.desc())
+    if store_id is not None:
+        stmt = stmt.where(Device.store_id == store_id)
+
+    result = await db.execute(stmt)
+    devices = result.scalars().all()
+
+    return [
+        DeviceListItem(
+            id=device.id,
+            store_id=device.store_id,
+            device_name=device.device_name,
+            hardware_id=device.hardware_id,
+            is_active=bool(device.is_active),
+            registered_at=device.registered_at,
+            revoked_at=device.revoked_at,
+        )
+        for device in devices
+    ]

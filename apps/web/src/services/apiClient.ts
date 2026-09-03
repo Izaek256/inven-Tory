@@ -6,9 +6,21 @@
  * screen is shown — simple SPA auth without a router dependency.
  */
 
-const BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ?? (import.meta.env.DEV ? 'http://localhost:8000/api/v1' : '')
-).replace(/\/$/, '');
+function _getBaseUrl(): string {
+  const envBaseUrl = import.meta.env.VITE_API_BASE_URL;
+
+  if (envBaseUrl) {
+    return envBaseUrl;
+  }
+
+  if (import.meta.env.DEV) {
+    return 'http://localhost:8000/api/v1';
+  }
+
+  throw new Error('VITE_API_BASE_URL is not configured. Set it in your .env file.');
+}
+
+const BASE_URL = _getBaseUrl().replace(/\/$/, '');
 
 const TOKEN_KEY = 'it_access_token';
 

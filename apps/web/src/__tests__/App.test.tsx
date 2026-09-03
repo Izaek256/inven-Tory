@@ -25,6 +25,7 @@ vi.mock('../services/dashboardService', () => ({
   getProductInventory: vi.fn(),
   getProductHistory: vi.fn(),
   getStoreInventory: vi.fn(),
+  listStores: vi.fn(),
 }));
 
 import * as apiClient from '../services/apiClient';
@@ -119,18 +120,18 @@ describe('App — authenticated', () => {
       { id: 'store-1', code: 'S1', name: 'Store 1', address: null, is_active: true },
       { id: 'store-2', code: 'S2', name: 'Store 2', address: null, is_active: true },
     ];
-    vi.mocked(apiClient.api.get).mockResolvedValue(mockStores);
+    vi.mocked(svc.listStores).mockResolvedValue(mockStores);
 
     renderApp();
 
     // Wait for the store fetch to complete
     await vi.waitFor(() => {
-      expect(apiClient.api.get).toHaveBeenCalledWith('/stores');
+      expect(svc.listStores).toHaveBeenCalled();
     });
   });
 
   it('Property 5: shows error banner when store fetch fails', async () => {
-    vi.mocked(apiClient.api.get).mockRejectedValue(new Error('Network error'));
+    vi.mocked(svc.listStores).mockRejectedValue(new Error('Network error'));
 
     renderApp();
 

@@ -22,17 +22,16 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  _setMemSession,
-  _getMemSession,
   getAccessToken,
   getCurrentRole,
   getSession,
   isAuthenticated,
   isTokenExpiredOffline,
   login,
-  logout,
   tryRefreshToken,
+  logout,
 } from '../services/tauriAuthService';
+import { _setMemSession, _getMemSession } from '../test/helpers';
 import type { AuthSession } from '../types/auth';
 
 // ---------------------------------------------------------------------------

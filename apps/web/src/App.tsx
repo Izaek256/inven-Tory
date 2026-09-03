@@ -18,19 +18,10 @@ import { clearToken, getToken } from './services/apiClient';
 import { LoginView } from './views/LoginView';
 import { SearchView } from './views/SearchView';
 import { StoreView } from './views/StoreView';
-import { getStoreInventory } from './services/dashboardService';
-import { api } from './services/apiClient';
+import { getStoreInventory, listStores } from './services/dashboardService';
 import './index.css';
 
 type NavView = 'dashboard' | 'search' | 'stores';
-
-interface StoreListItem {
-  id: string;
-  code: string;
-  name: string;
-  address: string | null;
-  is_active: boolean;
-}
 
 interface NavItem {
   id: NavView;
@@ -161,7 +152,7 @@ function App(): React.ReactElement {
       setStoreListLoading(true);
       setStoreListError(null);
       try {
-        const stores = await api.get<StoreListItem[]>('/stores');
+        const stores = await listStores();
         setStoreIds(stores.map((s) => s.id));
       } catch (err) {
         setStoreListError(err instanceof Error ? err.message : 'Failed to load store list');

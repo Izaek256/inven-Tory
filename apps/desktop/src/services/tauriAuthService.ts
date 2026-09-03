@@ -29,11 +29,25 @@ import type { AuthSession, TokenResponse, UserRole } from '../types/auth';
 // Config
 // ---------------------------------------------------------------------------
 
+function _getApiBaseUrl(): string {
+  const envBaseUrl =
+    typeof import.meta !== 'undefined'
+      ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+      : undefined;
+
+  if (envBaseUrl) {
+    return envBaseUrl;
+  }
+
+  if (import.meta.env.DEV) {
+    return 'http://localhost:8000/api/v1';
+  }
+
+  throw new Error('VITE_API_BASE_URL is not configured. Set it in your .env file.');
+}
+
 /** Base URL of the central API. Injected from env or falls back to default in dev only. */
-const API_BASE_URL: string =
-  (typeof import.meta !== 'undefined' &&
-    (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL) ||
-  (import.meta.env.DEV ? 'http://localhost:8000/api/v1' : '');
+const API_BASE_URL: string = _getApiBaseUrl();
 
 const STORE_FILE = 'auth.dat';
 const SESSION_KEY = 'auth_session';
@@ -43,6 +57,16 @@ const SESSION_KEY = 'auth_session';
 // ---------------------------------------------------------------------------
 
 let _memSession: AuthSession | null = null;
+
+// @visibleForTesting
+export function _setMemSession(session: AuthSession | null): void {
+  _memSession = session;
+}
+
+// @visibleForTesting
+export function _getMemSession(): AuthSession | null {
+  return _memSession;
+}
 
 // ---------------------------------------------------------------------------
 // Tauri secure storage helpers
@@ -407,18 +431,4 @@ export async function clearOfflineExpiry(): Promise<void> {
   if (session?.token_expired_offline) {
     await _secureWrite({ ...session, token_expired_offline: false });
   }
-}
-
-// ---------------------------------------------------------------------------
-// Mock helpers for Vitest
-// ---------------------------------------------------------------------------
-
-// @visibleForTesting
-export function _setMemSession(session: AuthSession | null): void {
-  _memSession = session;
-}
-
-// @visibleForTesting
-export function _getMemSession(): AuthSession | null {
-  return _memSession;
 }

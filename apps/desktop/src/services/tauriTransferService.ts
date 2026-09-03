@@ -1,12 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Transfer, CreateTransferInput } from '../types/transfer';
 import { isTauriEnvironment } from './tauriStoreService';
-import { getMockBalance, setMockBalance } from './tauriTransactionService';
-
-/**
- * In-memory mock transfers storage for web/testing environment.
- */
-export const MOCK_TRANSFERS = new Map<string, Transfer>();
 
 /**
  * Fetch all multi-store transfers (Section 11).
@@ -53,8 +47,8 @@ export async function createTransfer(input: CreateTransferInput): Promise<Transf
  */
 export async function dispatchTransfer(
   transferId: string,
-  userId: string = 'USER-DEMO',
-  deviceId: string = 'DEV-DEMO',
+  userId: string,
+  deviceId: string,
 ): Promise<Transfer> {
   if (isTauriEnvironment()) {
     try {
@@ -81,8 +75,8 @@ export async function dispatchTransfer(
  */
 export async function receiveTransfer(
   transferId: string,
-  userId: string = 'USER-DEMO',
-  deviceId: string = 'DEV-DEMO',
+  userId: string,
+  deviceId: string,
 ): Promise<Transfer> {
   if (isTauriEnvironment()) {
     try {
@@ -109,8 +103,8 @@ export async function receiveTransfer(
  */
 export async function cancelTransfer(
   transferId: string,
-  userId: string = 'USER-DEMO',
-  deviceId: string = 'DEV-DEMO',
+  userId: string,
+  deviceId: string,
 ): Promise<Transfer> {
   if (isTauriEnvironment()) {
     try {

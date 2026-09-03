@@ -28,7 +28,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db
+from app.api.deps import get_current_user, get_db, require_permission
+from app.core.permissions import Permission
 from app.models.inventory_transaction import InventoryTransaction
 from app.models.product import Product
 from app.models.stock_balance import StockBalance
@@ -83,6 +84,21 @@ class StoreListItem(BaseModel):
     code: str
     name: str
     address: str | None
+    is_active: bool
+
+
+class CreateStoreRequest(BaseModel):
+    code: str
+    name: str
+    address: str | None = None
+
+
+class UpdateStoreRequest(BaseModel):
+    name: str
+    address: str | None = None
+
+
+class ToggleStoreActiveRequest(BaseModel):
     is_active: bool
 
 
@@ -142,6 +158,116 @@ async def list_stores(
         )
         for store in stores
     ]
+
+
+@router.post(
+    "",
+    response_model=StoreListItem,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new store",
+)
+async def create_store(
+    request: CreateStoreRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.STORE_ADMIN)),  # noqa: B008
+) -> StoreListItem:
+    """
+    Create a new store with the given code, name, and optional address.
+    Validates that the code is unique (409 on duplicate).
+    """
+    # Check for duplicate code
+    existing = await db.execute(select(Store).where(Store.code == request.code))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Store with code '{request.code}' already exists",
+        )
+
+    import uuid
+
+    store = Store(
+        id=str(uuid.uuid4()),
+        code=request.code,
+        name=request.name,
+        address=request.address,
+        is_active=True,
+    )
+    db.add(store)
+    await db.commit()
+    await db.refresh(store)
+
+    return StoreListItem(
+        id=store.id,
+        code=store.code,
+        name=store.name,
+        address=store.address,
+        is_active=bool(store.is_active),
+    )
+
+
+@router.put(
+    "/{store_id}",
+    response_model=StoreListItem,
+    status_code=status.HTTP_200_OK,
+    summary="Update store name and address",
+)
+async def update_store(
+    store_id: str,
+    request: UpdateStoreRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.STORE_ADMIN)),  # noqa: B008
+) -> StoreListItem:
+    """
+    Update a store's name and address. Code and ID are immutable.
+    """
+    store = await db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store not found")
+
+    store.name = request.name
+    store.address = request.address
+    await db.commit()
+    await db.refresh(store)
+
+    return StoreListItem(
+        id=store.id,
+        code=store.code,
+        name=store.name,
+        address=store.address,
+        is_active=bool(store.is_active),
+    )
+
+
+@router.patch(
+    "/{store_id}/toggle-active",
+    response_model=StoreListItem,
+    status_code=status.HTTP_200_OK,
+    summary="Toggle store active status",
+)
+async def toggle_store_active(
+    store_id: str,
+    request: ToggleStoreActiveRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.STORE_ADMIN)),  # noqa: B008
+) -> StoreListItem:
+    """
+    Activate or deactivate a store.
+    """
+    store = await db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store not found")
+
+    store.is_active = request.is_active
+    await db.commit()
+    await db.refresh(store)
+
+    return StoreListItem(
+        id=store.id,
+        code=store.code,
+        name=store.name,
+        address=store.address,
+        is_active=bool(store.is_active),
+    )
 
 
 # ---------------------------------------------------------------------------

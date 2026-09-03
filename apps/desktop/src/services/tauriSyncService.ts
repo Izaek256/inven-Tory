@@ -9,7 +9,7 @@
  *     RETRYABLE_ERROR with exponential backoff (SYNC-011).
  *
  *     Pull loop: fetches /api/v1/sync/pull after a successful push
- *     to apply the latest server-side product/store catalogue locally.
+ *     and upserts the server-side product/store catalogue into local SQLite.
  *
  *     Stores the last-successful-sync timestamp via set_last_sync_timestamp
  *     so the Header can display it (SYNC-009).
@@ -18,8 +18,7 @@
  *     Returns the ISO string of the last successful sync, or null.
  *
  *   getSyncStatus()
- *     Returns ClientSyncState combining pending count, online status,
- *     last sync time, and last outcome.
+ *     Returns a snapshot of the current sync state.
  *
  *   Background scheduling (startBackgroundSync / stopBackgroundSync):
  *     Runs triggerSync on a configurable interval (default: 30 s).
@@ -78,9 +77,10 @@ let _syncInProgress = false;
 /** Handle returned by setInterval for background sync. */
 let _backgroundIntervalId: ReturnType<typeof setInterval> | null = null;
 
-/** In-memory last-sync state for mock/test environment. */
-let _mockLastSyncAt: string | null = null;
+// @visibleForTesting
+/** In-memory sync state for mock/test environment. */
 let _mockPendingCount = 0;
+let _mockLastSyncAt: string | null = null;
 let _mockLastOutcome: SyncOutcome | null = null;
 let _mockLastError: string | null = null;
 
@@ -182,13 +182,13 @@ export async function getSyncStatus(): Promise<ClientSyncState> {
   const lastSyncAt = await _getLastSyncTimestamp();
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
-  let pendingCount = 0;
-  try {
-    pendingCount = isTauriEnvironment()
-      ? await invoke<number>('get_pending_outbox_count')
-      : _mockPendingCount;
-  } catch {
-    pendingCount = _mockPendingCount;
+  let pendingCount = _mockPendingCount;
+  if (isTauriEnvironment()) {
+    try {
+      pendingCount = await invoke<number>('get_pending_outbox_count');
+    } catch {
+      pendingCount = 0;
+    }
   }
 
   return {
@@ -469,6 +469,26 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
           `[SyncService] Pull complete: ${pullResponse.products.length} products, ` +
             `${pullResponse.stores.length} stores`,
         );
+
+        // Upsert products and stores from server into local SQLite
+        if (isTauriEnvironment()) {
+          for (const product of pullResponse.products) {
+            try {
+              await invoke('upsert_product_from_server', { product });
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.warn('[SyncService] Failed to upsert product:', product.id, err);
+            }
+          }
+          for (const store of pullResponse.stores) {
+            try {
+              await invoke('upsert_store_from_server', { store });
+            } catch (err) {
+              // eslint-disable-next-line no-console
+              console.warn('[SyncService] Failed to upsert store:', store.id, err);
+            }
+          }
+        }
       } catch (pullError) {
         // Pull failure is non-fatal — we still record a successful push sync time
         const errMsg = pullError instanceof Error ? pullError.message : String(pullError);
