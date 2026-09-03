@@ -101,3 +101,33 @@ export interface StoreInventoryResponse {
   total_products: number;
   total_quantity: number;
 }
+
+// ---------------------------------------------------------------------------
+// User management (admin-only)
+// ---------------------------------------------------------------------------
+
+export type UserRole =
+  'GLOBAL_ADMIN' | 'INVENTORY_MANAGER' | 'STORE_MANAGER' | 'STORE_CLERK' | 'AUDITOR' | 'SYNC';
+
+export interface UserRead {
+  id: number;
+  username: string;
+  email: string;
+  full_name: string | null;
+  role: UserRole | string;
+  assigned_store_id: string | null;
+  is_active: boolean;
+  is_superuser: boolean;
+  is_verified: boolean;
+  created_at: string; // ISO-8601
+  updated_at: string; // ISO-8601
+}
+
+export interface UserCreate {
+  username: string;
+  email: string;
+  password: string;
+  full_name?: string | null;
+  role?: UserRole | string;
+  assigned_store_id?: string | null;
+}

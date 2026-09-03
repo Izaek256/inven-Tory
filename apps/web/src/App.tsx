@@ -13,15 +13,16 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, ThemeToggle } from '@inven-tory/ui';
-import { LayoutDashboard, Package, Warehouse } from 'lucide-react';
+import { LayoutDashboard, Package, Users, Warehouse } from 'lucide-react';
 import { clearToken, getToken } from './services/apiClient';
 import { LoginView } from './views/LoginView';
 import { SearchView } from './views/SearchView';
 import { StoreView } from './views/StoreView';
+import { UsersView } from './views/UsersView';
 import { getStoreInventory } from './services/dashboardService';
 import './index.css';
 
-type NavView = 'dashboard' | 'search' | 'stores';
+type NavView = 'dashboard' | 'search' | 'stores' | 'users';
 
 interface NavItem {
   id: NavView;
@@ -33,6 +34,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
   { id: 'search', label: 'Product Search', icon: <Package size={18} /> },
   { id: 'stores', label: 'Store Inventory', icon: <Warehouse size={18} /> },
+  { id: 'users', label: 'Users', icon: <Users size={18} /> },
 ];
 
 // ---------------------------------------------------------------------------
@@ -137,24 +139,65 @@ function DashboardOverview({ storeIds, onNavigate }: DashboardOverviewProps): Re
 // Root App
 // ---------------------------------------------------------------------------
 
+interface MeData {
+  id: number;
+  username: string;
+  email: string;
+  full_name: string | null;
+  role: string;
+  assigned_store_id: string | null;
+}
+
 function App(): React.ReactElement {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getToken()));
   const [currentView, setCurrentView] = useState<NavView>('dashboard');
   const [storeIds] = useState<string[]>([]);
   const [storeListLoading] = useState(false);
+  const [me, setMe] = useState<MeData | null>(null);
 
-  const handleLoginSuccess = useCallback((_role: string): void => {
-    setIsAuthenticated(true);
+  const fetchMe = useCallback(async (): Promise<void> => {
+    try {
+      const token = getToken();
+      if (!token) return;
+      const base = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1').replace(
+        /\/$/,
+        '',
+      );
+      const resp = await fetch(`${base}/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (resp.ok) {
+        const data = (await resp.json()) as MeData;
+        setMe(data);
+      }
+    } catch {
+      /* ignore; me stays null -> views degrade gracefully */
+    }
   }, []);
+
+  const handleLoginSuccess = useCallback(
+    (_role: string): void => {
+      setIsAuthenticated(true);
+      void fetchMe();
+    },
+    [fetchMe],
+  );
 
   const handleLogout = useCallback((): void => {
     clearToken();
+    setMe(null);
     setIsAuthenticated(false);
   }, []);
 
   const handleRefresh = useCallback((): void => {
-    // no-op: StoreView manages its own refetch
+    /* no-op: StoreView manages its own refetch */
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated && !me) {
+      void fetchMe();
+    }
+  }, [isAuthenticated, me, fetchMe]);
 
   if (!isAuthenticated) {
     return <LoginView onLoginSuccess={handleLoginSuccess} />;
@@ -168,6 +211,8 @@ function App(): React.ReactElement {
         return (
           <StoreView storeIds={storeIds} loading={storeListLoading} onRefresh={handleRefresh} />
         );
+      case 'users':
+        return <UsersView currentUserRole={me?.role} />;
       default:
         return <DashboardOverview storeIds={storeIds} onNavigate={setCurrentView} />;
     }

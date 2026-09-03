@@ -28,6 +28,7 @@ Auth backend: JWT Bearer transport (compatible with Tauri secure storage).
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi_users import FastAPIUsers
@@ -88,8 +89,16 @@ router.include_router(
 class LoginRequest(BaseModel):
     username: str = Field(..., min_length=1, max_length=100)
     password: str = Field(..., min_length=1)
-    # The device_id must already be registered (and active) before login succeeds.
-    device_id: str = Field(..., min_length=1, max_length=36)
+    # Single-user mode (Issue fix/auth-bootstrap-single-user):
+    #   device_id is now OPTIONAL. When provided, the row is auto-created on
+    #   first use (anchored to the user's assigned_store_id) so desktop can
+    #   be placed and used on ANY device without pre-registration.
+    device_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+    # Sentinel used when the caller omits device_id entirely.
+    @classmethod
+    def default_device(cls) -> str:
+        return "SINGLE-USER-DEVICE"
 
 
 class TokenResponse(BaseModel):
@@ -188,27 +197,40 @@ async def login(
     db: AsyncSession = Depends(get_db),  # noqa: B008
 ) -> TokenResponse:
     """
-    Validate username + password, verify the calling device is registered and
-    active, then issue an access + refresh token pair.
+    Validate username + password, then issue JWT tokens.
 
-    This custom endpoint extends FastAPI Users' standard login with device
-    verification (FR-STORE-003). The standard FastAPI Users login at /auth/jwt/login
-    does not include device verification.
+    Single-user mode (no device pre-registration):
+      - ``device_id`` in the request is OPTIONAL.
+      - If provided and the device row is missing, we auto-create it anchored
+        to the user's ``assigned_store_id`` (fallback: store with the lowest
+        lexicographic id). This means desktop can be installed on ANY machine
+        and the first successful login "registers" that device implicitly.
+      - If the device row exists but was explicitly revoked (is_active=False
+        WITH a revocation_reason), we still reject it — so an admin CAN lock
+        out a known-compromised device; but merely not-yet-registered devices
+        never block login.
 
     JWT transport rationale: Bearer tokens fit all three client surfaces
     (Tauri desktop, React web, mobile PWA) without cookie domain constraints.
 
     Failure cases (all return 401 to avoid user enumeration):
-    - Unknown username
-    - Wrong password
-    - Inactive user account
-    - Device not registered or revoked
+      - Unknown username
+      - Wrong password
+      - Inactive user account
+      - Device explicitly revoked (is_active=False AND revocation_reason set)
     """
     _unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Incorrect username, password, or device",
+        detail="Incorrect username or password.",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    _device_revoked = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="This device has been revoked. Contact your administrator.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    now = datetime.now(UTC)
 
     # 1. Look up user by username (not email, for our custom login)
     result = await db.execute(select(User).where(User.username == body.username))
@@ -219,24 +241,81 @@ async def login(
         raise _unauthorized
 
     # 2. Verify password using bcrypt directly
-    from passlib.context import CryptContext
-
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
     if not pwd_context.verify(body.password, user.hashed_password):
         logger.warning("LOGIN_FAILURE reason=wrong_password username=%s", body.username)
         raise _unauthorized
 
-    # 3. Verify device is registered and active
-    dev_result = await db.execute(select(Device).where(Device.id == body.device_id))
+    # 3. Resolve device_id — use default if omitted
+    from app.models.store import Store
+
+    raw_device_id = (body.device_id or "").strip() or LoginRequest.default_device()
+
+    dev_result = await db.execute(select(Device).where(Device.id == raw_device_id))
     device: Device | None = dev_result.scalars().first()
 
-    if device is None or not device.is_active:
-        logger.warning(
-            "LOGIN_FAILURE reason=device_revoked_or_missing username=%s device_id=%s",
-            body.username,
-            body.device_id,
+    if device is None:
+        # ── Auto-register (single-user mode) ────────────────────────────────
+        # Anchor to user.assigned_store_id; if that's NULL for a global role,
+        # grab any store row. If zero stores exist yet, fall back to the
+        # sentinel id (the FK would fail otherwise — create the row with a
+        # "catch-all" store only when we can resolve one from the DB; we
+        # refuse login with a clear message in the extremely rare case where
+        # zero stores exist AND the user has no assigned_store_id).
+        anchor_store_id: str | None = user.assigned_store_id
+        if anchor_store_id is None:
+            any_store = await db.scalar(select(Store.id).limit(1))
+            anchor_store_id = any_store
+
+        if anchor_store_id is None:
+            logger.error(
+                "LOGIN_BLOCKED reason=no_store_available username=%s device_id=%s",
+                body.username,
+                raw_device_id,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="No store configured. Run the genesis script or create a store first.",
+            )
+
+        device = Device(
+            id=raw_device_id,
+            store_id=anchor_store_id,
+            device_name=f"Auto-registered ({raw_device_id[:24]})",
+            is_active=True,
+            registered_at=now,
+            last_seen_at=now,
+            registered_by_user_id=user.id,
         )
-        raise _unauthorized
+        db.add(device)
+        await db.flush()
+        logger.info(
+            "DEVICE_AUTO_REGISTERED device_id=%s store_id=%s user_id=%s",
+            raw_device_id,
+            anchor_store_id,
+            user.id,
+        )
+    else:
+        # Exists → reject ONLY if explicitly revoked (is_active False WITH reason).
+        # "is_active=False + no reason" is treated as a transient glitch —
+        # flip it back on. This keeps the UX frictionless.
+        if (not device.is_active) and device.revocation_reason:
+            logger.warning(
+                "LOGIN_FAILURE reason=device_revoked username=%s device_id=%s reason=%s",
+                body.username,
+                raw_device_id,
+                device.revocation_reason,
+            )
+            raise _device_revoked
+
+        if not device.is_active:
+            device.is_active = True
+            device.revocation_reason = None
+            device.revoked_at = None
+            logger.info("DEVICE_REACTIVATED device_id=%s user_id=%s", raw_device_id, user.id)
+
+        # Update last-seen timestamp on every successful login
+        device.last_seen_at = now
 
     # 4. Issue tokens using our custom JWT strategy (includes device_id and role)
     access_token = create_access_token(

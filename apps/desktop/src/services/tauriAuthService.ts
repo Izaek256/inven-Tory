@@ -137,9 +137,14 @@ function _isTokenExpired(expiresAt: string): boolean {
 export async function login(
   username: string,
   password: string,
-  deviceId: string,
+  deviceId?: string,
   apiBaseUrl?: string,
 ): Promise<AuthSession> {
+  // Normalize deviceId: use the passed value, otherwise fall back to a
+  // stable default. App.tsx in the desktop shell always passes one, but
+  // OfflineAuthBanner and other call sites may omit it in single-user mode.
+  const resolvedDeviceId = (deviceId && deviceId.trim()) || 'SINGLE-USER-DEVICE';
+
   // ── 1. Tauri native app — local SQLite bcrypt check ───────────────────────
   if (isTauriEnvironment()) {
     try {
@@ -169,7 +174,7 @@ export async function login(
 
       await _secureWrite(session);
       // Background: try to get a real server JWT for sync
-      void _tryUpgradeToServerToken(username, password, deviceId, apiBaseUrl, session);
+      void _tryUpgradeToServerToken(username, password, resolvedDeviceId, apiBaseUrl, session);
       return session;
     } catch (localErr) {
       const msg = localErr instanceof Error ? localErr.message : String(localErr);
@@ -189,7 +194,7 @@ export async function login(
   }
 
   // ── 3. Real API login (production or web app) ─────────────────────────────
-  return _apiLogin(username, password, deviceId, apiBaseUrl);
+  return _apiLogin(username, password, resolvedDeviceId, apiBaseUrl);
 }
 
 /**
@@ -200,9 +205,21 @@ export async function login(
  */
 async function _devBrowserLogin(username: string, password: string): Promise<AuthSession> {
   const DEV_USERS: Record<string, { password: string; role: UserRole; full_name: string }> = {
-    admin: { password: 'DevAdmin2026!', role: 'GLOBAL_ADMIN' as UserRole, full_name: 'System Administrator' },
-    manager_alpha: { password: 'DevManager2026!', role: 'STORE_MANAGER' as UserRole, full_name: 'Alpha Store Manager' },
-    clerk_alpha: { password: 'DevClerk2026!', role: 'STORE_CLERK' as UserRole, full_name: 'Alpha Clerk' },
+    admin: {
+      password: 'DevAdmin2026!',
+      role: 'GLOBAL_ADMIN' as UserRole,
+      full_name: 'System Administrator',
+    },
+    manager_alpha: {
+      password: 'DevManager2026!',
+      role: 'STORE_MANAGER' as UserRole,
+      full_name: 'Alpha Store Manager',
+    },
+    clerk_alpha: {
+      password: 'DevClerk2026!',
+      role: 'STORE_CLERK' as UserRole,
+      full_name: 'Alpha Clerk',
+    },
   };
 
   const match = DEV_USERS[username.trim()];

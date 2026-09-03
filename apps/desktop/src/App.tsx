@@ -40,28 +40,75 @@ import { Store } from './types/store';
 import type { AuthSession } from './types/auth';
 import './index.css';
 
-// The device ID is stored in Tauri's secure store alongside the auth session.
-// For the initial bootstrap we read it from the local SQLite-backed device
-// registration (the same device_id embedded in every transaction).
-// If not yet registered, the LoginView shows a "not registered" banner.
+// The device ID is stored in Tauri's secure store. For single-user mode we
+// NO LONGER require a pre-registration step. If nothing is stored we generate
+// a stable identifier (hostname + random suffix) the first time the app
+// launches and persist it. Any string is accepted by the API login endpoint,
+// which auto-registers unknown device_ids on first successful login.
 const DEVICE_ID_STORE_KEY = 'device_id';
+const DEVICE_STORE_FILE = 'auth.dat';
 
-async function getStoredDeviceId(): Promise<string> {
+async function _readStoredDeviceId(): Promise<string | null> {
   try {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       const { load } = await import('@tauri-apps/plugin-store');
-      const store = await load('auth.dat', { autoSave: false });
+      const store = await load(DEVICE_STORE_FILE, { autoSave: false });
       const id = await store.get<string>(DEVICE_ID_STORE_KEY);
       if (id) return id;
     }
   } catch {
-    // Fall through to dev fallback
+    // Fall through
   }
-  // DEV-ONLY fallback: use VITE_DEV_DEVICE_ID when no device is registered.
-  // This is set in apps/desktop/.env and matches the seed in
-  // infra/seed/dev_only/seed_central_postgres.py.
-  // In production this env var is not set so the string is empty.
-  return import.meta.env.VITE_DEV_DEVICE_ID ?? '';
+  return null;
+}
+
+async function _writeStoredDeviceId(id: string): Promise<void> {
+  try {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      const { load } = await import('@tauri-apps/plugin-store');
+      const store = await load(DEVICE_STORE_FILE, { autoSave: true });
+      await store.set(DEVICE_ID_STORE_KEY, id);
+      await store.save();
+      return;
+    }
+  } catch {
+    // Fall through
+  }
+  // Vitest / browser dev fallback: sessionStorage
+  try {
+    sessionStorage.setItem(DEVICE_ID_STORE_KEY, id);
+  } catch {
+    // ignore
+  }
+}
+
+function _generateDeviceId(): string {
+  // Stable-ish, user-host identifiable string. We avoid anything that could
+  // accidentally contain non-URL-safe chars. Max 64 chars to match the
+  // LoginRequest.device_id max length.
+  const host = (typeof window !== 'undefined' && window.location?.hostname) || 'local';
+  const rand = Math.random().toString(36).slice(2, 10);
+  const sanitizedHost = host.replace(/[^A-Za-z0-9-]/g, '-').slice(0, 32);
+  return `DESKTOP-${sanitizedHost}-${rand}`.toUpperCase().slice(0, 64);
+}
+
+async function getOrCreateDeviceId(): Promise<string> {
+  // 1. Stored value (Tauri secure store or sessionStorage fallback)
+  const stored = await _readStoredDeviceId();
+  if (stored) return stored;
+
+  // 2. Dev-env fallback (still valid; API auto-registers it)
+  const envDev = import.meta.env.VITE_DEV_DEVICE_ID as string | undefined;
+  if (envDev) {
+    await _writeStoredDeviceId(envDev);
+    return envDev;
+  }
+
+  // 3. Generate + persist a new one (works on ANY device — the API
+  //    auto-registers unknown IDs on first successful login).
+  const generated = _generateDeviceId();
+  await _writeStoredDeviceId(generated);
+  return generated;
 }
 
 export function App(): React.ReactElement {
@@ -83,8 +130,10 @@ export function App(): React.ReactElement {
   // ---------------------------------------------------------------------------
   useEffect(() => {
     const bootstrap = async (): Promise<void> => {
-      const storedDeviceId = await getStoredDeviceId();
-      setDeviceId(storedDeviceId);
+      // In single-user mode the device ID is ALWAYS available (either
+      // persisted or freshly generated). No pre-registration required.
+      const deviceIdVal = await getOrCreateDeviceId();
+      setDeviceId(deviceIdVal);
 
       const authed = await isAuthenticated();
       if (!authed) {
