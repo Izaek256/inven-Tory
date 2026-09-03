@@ -14,7 +14,27 @@ import { SaleStockView } from '../views/SaleStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
+import * as tauriAuthService from '../services/tauriAuthService';
 import { InventoryTransaction } from '../types/transaction';
+
+vi.mock('../services/tauriAuthService', async () => {
+  const actual = await vi.importActual('../services/tauriAuthService');
+  return {
+    ...actual,
+    getSession: vi.fn(),
+  };
+});
+
+vi.mock('@tauri-apps/plugin-store', () => ({
+  load: vi.fn(() =>
+    Promise.resolve({
+      get: vi.fn((key: string) => {
+        if (key === 'device_id') return 'TEST-DEVICE-456';
+        return null;
+      }),
+    }),
+  ),
+}));
 
 const MOCK_STORES = [
   {
@@ -45,6 +65,18 @@ const MOCK_PRODUCT = {
   updated_at: '2026-08-01T00:00:00Z',
 };
 
+const MOCK_SESSION = {
+  access_token: 'test-token',
+  refresh_token: '',
+  user_id: 'TEST-USER-123',
+  username: 'testuser',
+  full_name: 'Test User',
+  role: 'STORE_MANAGER' as const,
+  assigned_store_id: 'STORE-A',
+  expires_at: new Date(Date.now() + 3600000).toISOString(),
+  token_expired_offline: false,
+};
+
 function makeSaleTx(overrides: Partial<InventoryTransaction> = {}): InventoryTransaction {
   return {
     transaction_id: 'TX-SALE-001',
@@ -73,6 +105,13 @@ function makeSaleTx(overrides: Partial<InventoryTransaction> = {}): InventoryTra
 describe('SaleStockView — Issue 07 Acceptance Criteria', (): void => {
   beforeEach((): void => {
     vi.restoreAllMocks();
+    // Mock Tauri internals to enable device_id loading in tests
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      value: {},
+      writable: true,
+      configurable: true,
+    });
+    vi.spyOn(tauriAuthService, 'getSession').mockResolvedValue(MOCK_SESSION);
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
     // Default: balance is 6 (AT-001 starting condition)
@@ -159,6 +198,9 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', (): void => {
     expect(callArg.product_id).toBe('PROD-001');
     expect(callArg.quantity).toBe(1);
     expect(callArg.movement_type).toBe('SALE');
+    // Property 1: session-derived actor IDs are used
+    expect(callArg.user_id).toBe('TEST-USER-123');
+    expect(callArg.device_id).toBe('TEST-DEVICE-456');
   });
 
   it('AT-001: available quantity is fetched from the service and displayed (shows 6)', async (): Promise<void> => {

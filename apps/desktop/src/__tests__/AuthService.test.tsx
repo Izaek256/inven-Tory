@@ -258,4 +258,49 @@ describe('tauriAuthService', () => {
     await logout();
     expect(await isAuthenticated()).toBe(false);
   });
+
+  // ── API_BASE_URL guard (Issue 16) ────────────────────────────────────────
+
+  it('login falls back to localhost only in dev mode when VITE_API_BASE_URL not set', async () => {
+    const mockTokenResp = {
+      access_token: 'test-token',
+      refresh_token: 'rt.token',
+      token_type: 'bearer',
+      role: 'STORE_MANAGER',
+      user_id: 'USER-1',
+      username: 'testuser',
+      full_name: 'Test User',
+      assigned_store_id: 'STORE-ALPHA',
+    };
+
+    globalThis.fetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(mockTokenResp),
+    } as unknown as Response);
+
+    // Mock DEV mode and no VITE_API_BASE_URL
+    vi.stubEnv('DEV', true);
+    vi.stubEnv('VITE_API_BASE_URL', undefined);
+
+    await login('testuser', 'password', DEVICE_ID);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      'http://localhost:8000/api/v1/auth/login',
+      expect.objectContaining({
+        method: 'POST',
+      }),
+    );
+
+    vi.unstubAllGlobals();
+  });
+
+  it('login throws when API_BASE_URL is empty in production', async () => {
+    // Mock production mode and no VITE_API_BASE_URL
+    vi.stubEnv('DEV', false);
+    vi.stubEnv('VITE_API_BASE_URL', undefined);
+
+    await expect(login('testuser', 'password', DEVICE_ID)).rejects.toThrow();
+
+    vi.unstubAllGlobals();
+  });
 });

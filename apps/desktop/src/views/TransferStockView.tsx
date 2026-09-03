@@ -36,6 +36,32 @@ import {
 export const TransferStockView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('list');
 
+  // Auth: resolve user/device from the active session instead of hardcoded values.
+  const [sessionUserId, setSessionUserId] = useState<string>('');
+  const [sessionDeviceId, setSessionDeviceId] = useState<string>('');
+
+  useEffect(() => {
+    const loadSession = async (): Promise<void> => {
+      try {
+        const { getSession } = await import('../services/tauriAuthService');
+        const s = await getSession();
+        if (s) {
+          setSessionUserId(s.user_id);
+        }
+        // device_id is stored separately in the secure store
+        if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+          const { load } = await import('@tauri-apps/plugin-store');
+          const store = await load('auth.dat', { autoSave: false });
+          const devId = await store.get<string>('device_id');
+          setSessionDeviceId(devId ?? '');
+        }
+      } catch {
+        // Non-Tauri / test environment — leave empty; Tauri commands use their own context
+      }
+    };
+    void loadSession();
+  }, []);
+
   // Master Data
   const [stores, setStores] = useState<Store[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
@@ -172,6 +198,10 @@ export const TransferStockView: React.FC = () => {
       );
       return;
     }
+    if (!sessionUserId) {
+      setError('User session not found. Please log in again.');
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -180,12 +210,12 @@ export const TransferStockView: React.FC = () => {
         destination_store_id: destinationStoreId,
         product_id: selectedProduct.id,
         quantity,
-        created_by_user_id: 'USER-DEMO',
+        created_by_user_id: sessionUserId,
         notes: notes || undefined,
       });
 
       if (shouldDispatch) {
-        await dispatchTransfer(created.id, 'USER-DEMO', 'DEV-DEMO');
+        await dispatchTransfer(created.id, sessionUserId, sessionDeviceId);
         setSuccessMessage(
           `Transfer ${created.id} created and dispatched! Source stock decreased by ${quantity}.`,
         );
@@ -211,8 +241,13 @@ export const TransferStockView: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
     setSubmitting(true);
+    if (!sessionUserId) {
+      setError('User session not found. Please log in again.');
+      setSubmitting(false);
+      return;
+    }
     try {
-      await dispatchTransfer(transferId, 'USER-DEMO', 'DEV-DEMO');
+      await dispatchTransfer(transferId, sessionUserId, sessionDeviceId);
       setSuccessMessage(`Transfer ${transferId} successfully dispatched!`);
       await fetchData();
     } catch (err) {
@@ -226,8 +261,13 @@ export const TransferStockView: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
     setSubmitting(true);
+    if (!sessionUserId) {
+      setError('User session not found. Please log in again.');
+      setSubmitting(false);
+      return;
+    }
     try {
-      await receiveTransfer(transferId, 'USER-DEMO', 'DEV-DEMO');
+      await receiveTransfer(transferId, sessionUserId, sessionDeviceId);
       setSuccessMessage(`Transfer ${transferId} receipt confirmed! Stock added to destination.`);
       await fetchData();
     } catch (err) {
@@ -241,8 +281,13 @@ export const TransferStockView: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
     setSubmitting(true);
+    if (!sessionUserId) {
+      setError('User session not found. Please log in again.');
+      setSubmitting(false);
+      return;
+    }
     try {
-      await cancelTransfer(transferId, 'USER-DEMO', 'DEV-DEMO');
+      await cancelTransfer(transferId, sessionUserId, sessionDeviceId);
       setSuccessMessage(`Transfer ${transferId} cancelled.`);
       await fetchData();
     } catch (err) {

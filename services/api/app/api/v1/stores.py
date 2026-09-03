@@ -78,6 +78,14 @@ def compute_freshness(last_sync_at: datetime | None) -> str:
 # ---------------------------------------------------------------------------
 
 
+class StoreListItem(BaseModel):
+    id: str
+    code: str
+    name: str
+    address: str | None
+    is_active: bool
+
+
 class StoreProductRow(BaseModel):
     product_id: str
     product_sku: str
@@ -99,6 +107,41 @@ class StoreInventoryResponse(BaseModel):
     products: list[StoreProductRow]
     total_products: int
     total_quantity: int
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/stores
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "",
+    response_model=list[StoreListItem],
+    status_code=status.HTTP_200_OK,
+    summary="List all stores (Issue 16)",
+)
+async def list_stores(
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(get_current_user),  # noqa: B008
+) -> list[StoreListItem]:
+    """
+    Return a list of all stores with basic information.
+    Requires authentication.
+    """
+    stmt = select(Store).order_by(Store.code)
+    result = await db.execute(stmt)
+    stores = result.scalars().all()
+
+    return [
+        StoreListItem(
+            id=store.id,
+            code=store.code,
+            name=store.name,
+            address=store.address,
+            is_active=bool(store.is_active),
+        )
+        for store in stores
+    ]
 
 
 # ---------------------------------------------------------------------------

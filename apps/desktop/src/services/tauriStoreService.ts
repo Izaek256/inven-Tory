@@ -57,7 +57,9 @@ export async function getStores(): Promise<Store[]> {
     }
   }
 
-  return [...MOCK_STORES];
+  throw new Error(
+    '[TauriStoreService] getStores() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -74,27 +76,9 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
     }
   }
 
-  // Mock implementation for web/test
-  const codeClean = input.code.trim().toUpperCase();
-  if (!codeClean) throw new Error('Store code cannot be empty.');
-  if (!input.name.trim()) throw new Error('Store name cannot be empty.');
-
-  if (MOCK_STORES.some((s) => s.code.toUpperCase() === codeClean)) {
-    throw new Error(`Store code '${codeClean}' already exists.`);
-  }
-
-  const newStore: Store = {
-    id: `STORE-${codeClean}`,
-    code: codeClean,
-    name: input.name.trim(),
-    address: input.address?.trim() || null,
-    is_active: true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  MOCK_STORES = [newStore, ...MOCK_STORES];
-  return newStore;
+  throw new Error(
+    '[TauriStoreService] createStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -111,21 +95,9 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
     }
   }
 
-  // Mock implementation for web/test
-  const index = MOCK_STORES.findIndex((s) => s.id === input.id);
-  if (index === -1) throw new Error(`Store with ID '${input.id}' not found.`);
-
-  if (!input.name.trim()) throw new Error('Store name cannot be empty.');
-
-  const updatedStore: Store = {
-    ...MOCK_STORES[index],
-    name: input.name.trim(),
-    address: input.address?.trim() || null,
-    updated_at: new Date().toISOString(),
-  };
-
-  MOCK_STORES[index] = updatedStore;
-  return updatedStore;
+  throw new Error(
+    '[TauriStoreService] updateStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -142,18 +114,9 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
     }
   }
 
-  // Mock implementation for web/test
-  const index = MOCK_STORES.findIndex((s) => s.id === id);
-  if (index === -1) throw new Error(`Store with ID '${id}' not found.`);
-
-  const updatedStore: Store = {
-    ...MOCK_STORES[index],
-    is_active,
-    updated_at: new Date().toISOString(),
-  };
-
-  MOCK_STORES[index] = updatedStore;
-  return updatedStore;
+  throw new Error(
+    '[TauriStoreService] toggleStoreActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -175,17 +138,7 @@ export async function registerDevice(storeId: string, deviceName: string): Promi
     }
   }
 
-  if (!deviceName.trim()) throw new Error('Device name cannot be empty.');
-
-  const device: Device = {
-    id: `DEV-${Date.now()}`,
-    store_id: storeId,
-    device_name: deviceName.trim(),
-    is_active: true,
-    registered_at: new Date().toISOString(),
-    last_seen_at: null,
-  };
-
-  MOCK_DEVICES.push(device);
-  return device;
+  throw new Error(
+    '[TauriStoreService] registerDevice() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }

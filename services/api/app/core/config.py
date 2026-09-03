@@ -5,7 +5,7 @@ All configuration comes from environment variables (or a .env file).
 No secrets are hard-coded here — see .env.example for the full list.
 """
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -52,6 +52,14 @@ class Settings(BaseSettings):
         if v not in allowed:
             raise ValueError(f"environment must be one of {allowed}")
         return v
+
+    @model_validator(mode="after")
+    def validate_secret_key(self) -> "Settings":
+        if self.environment == "production" and self.secret_key == "CHANGE_ME_IN_PRODUCTION":
+            raise ValueError(
+                "SECRET_KEY must be changed from the default value in production environment"
+            )
+        return self
 
 
 settings = Settings()

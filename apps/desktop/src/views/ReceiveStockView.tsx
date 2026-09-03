@@ -21,8 +21,31 @@ export const ReceiveStockView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
 
-  const userId = 'USER-DEMO';
-  const deviceId = 'DEV-DEMO';
+  // Auth: resolve user/device from the active session instead of hardcoded values.
+  const [sessionUserId, setSessionUserId] = useState<string>('');
+  const [sessionDeviceId, setSessionDeviceId] = useState<string>('');
+
+  useEffect(() => {
+    const loadSession = async (): Promise<void> => {
+      try {
+        const { getSession } = await import('../services/tauriAuthService');
+        const s = await getSession();
+        if (s) {
+          setSessionUserId(s.user_id);
+        }
+        // device_id is stored separately in the secure store
+        if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+          const { load } = await import('@tauri-apps/plugin-store');
+          const store = await load('auth.dat', { autoSave: false });
+          const devId = await store.get<string>('device_id');
+          setSessionDeviceId(devId ?? '');
+        }
+      } catch {
+        // Non-Tauri / test environment — leave empty; Tauri commands use their own context
+      }
+    };
+    void loadSession();
+  }, []);
 
   useEffect(() => {
     const loadStores = async (): Promise<void> => {
@@ -73,6 +96,10 @@ export const ReceiveStockView: React.FC = () => {
       setError('Quantity must be greater than zero');
       return;
     }
+    if (!sessionUserId) {
+      setError('User session not found. Please log in again.');
+      return;
+    }
 
     setIsSubmitting(true);
 
@@ -84,8 +111,8 @@ export const ReceiveStockView: React.FC = () => {
         quantity,
         reference_number: referenceNumber || undefined,
         supplier: supplier || undefined,
-        user_id: userId,
-        device_id: deviceId,
+        user_id: sessionUserId,
+        device_id: sessionDeviceId,
       };
 
       await receiveStock(input);

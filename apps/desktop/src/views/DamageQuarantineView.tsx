@@ -28,8 +28,31 @@ export const DamageQuarantineView: React.FC = () => {
   const [fromBucketQty, setFromBucketQty] = useState<number | null>(null);
   const [toBucketQty, setToBucketQty] = useState<number | null>(null);
 
-  const userId = 'USER-DEMO';
-  const deviceId = 'DEV-DEMO';
+  // Auth: resolve user/device from the active session instead of hardcoded values.
+  const [sessionUserId, setSessionUserId] = useState<string>('');
+  const [sessionDeviceId, setSessionDeviceId] = useState<string>('');
+
+  useEffect(() => {
+    const loadSession = async (): Promise<void> => {
+      try {
+        const { getSession } = await import('../services/tauriAuthService');
+        const s = await getSession();
+        if (s) {
+          setSessionUserId(s.user_id);
+        }
+        // device_id is stored separately in the secure store
+        if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+          const { load } = await import('@tauri-apps/plugin-store');
+          const store = await load('auth.dat', { autoSave: false });
+          const devId = await store.get<string>('device_id');
+          setSessionDeviceId(devId ?? '');
+        }
+      } catch {
+        // Non-Tauri / test environment — leave empty; Tauri commands use their own context
+      }
+    };
+    void loadSession();
+  }, []);
 
   useEffect(() => {
     const loadStores = async (): Promise<void> => {
@@ -138,6 +161,10 @@ export const DamageQuarantineView: React.FC = () => {
       setError(msg);
       return;
     }
+    if (!sessionUserId || !sessionDeviceId) {
+      setError('Session not loaded. Please log in again.');
+      return;
+    }
 
     setIsSubmitting(true);
 
@@ -149,8 +176,8 @@ export const DamageQuarantineView: React.FC = () => {
         to_bucket: toBucket,
         quantity,
         reason: reason.trim(),
-        user_id: userId,
-        device_id: deviceId,
+        user_id: sessionUserId,
+        device_id: sessionDeviceId,
       };
 
       await moveStockBucket(input);

@@ -79,7 +79,9 @@ export async function getProducts(): Promise<Product[]> {
     }
   }
 
-  return [...MOCK_PRODUCTS];
+  throw new Error(
+    '[TauriProductService] getProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -96,18 +98,9 @@ export async function searchProducts(query: string): Promise<Product[]> {
     }
   }
 
-  const term = query.trim().toLowerCase();
-  if (!term) return [...MOCK_PRODUCTS];
-
-  return MOCK_PRODUCTS.filter((p) => {
-    return (
-      p.name.toLowerCase().includes(term) ||
-      p.sku.toLowerCase().includes(term) ||
-      (p.model && p.model.toLowerCase().includes(term)) ||
-      (p.barcode && p.barcode.toLowerCase().includes(term)) ||
-      (p.alternate_names && p.alternate_names.toLowerCase().includes(term))
-    );
-  });
+  throw new Error(
+    '[TauriProductService] searchProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -124,37 +117,9 @@ export async function createProduct(input: CreateProductInput): Promise<Product>
     }
   }
 
-  const skuClean = input.sku.trim().toUpperCase();
-  const nameClean = input.name.trim();
-  const categoryClean = input.category.trim();
-  const unitClean = (input.unit || 'pcs').trim();
-
-  if (!skuClean) throw new Error('Product SKU cannot be empty.');
-  if (!nameClean) throw new Error('Product name cannot be empty.');
-  if (!categoryClean) throw new Error('Product category cannot be empty.');
-
-  if (MOCK_PRODUCTS.some((p) => p.sku.toUpperCase() === skuClean)) {
-    throw new Error(`Product SKU '${skuClean}' already exists.`);
-  }
-
-  const newProduct: Product = {
-    id: `PROD-${Date.now()}`,
-    sku: skuClean,
-    name: nameClean,
-    brand: input.brand?.trim() || null,
-    model: input.model?.trim() || null,
-    category: categoryClean,
-    unit: unitClean,
-    barcode: input.barcode?.trim() || null,
-    alternate_names: input.alternate_names?.trim() || null,
-    serial_tracking_enabled: Boolean(input.serial_tracking_enabled),
-    is_active: input.is_active !== undefined ? input.is_active : true,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-
-  MOCK_PRODUCTS = [newProduct, ...MOCK_PRODUCTS];
-  return newProduct;
+  throw new Error(
+    '[TauriProductService] createProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -171,31 +136,9 @@ export async function updateProduct(input: UpdateProductInput): Promise<Product>
     }
   }
 
-  const index = MOCK_PRODUCTS.findIndex((p) => p.id === input.id);
-  if (index === -1) throw new Error(`Product with ID '${input.id}' not found.`);
-
-  const nameClean = input.name.trim();
-  const categoryClean = input.category.trim();
-  const unitClean = input.unit.trim();
-
-  if (!nameClean) throw new Error('Product name cannot be empty.');
-  if (!categoryClean) throw new Error('Product category cannot be empty.');
-
-  const updatedProduct: Product = {
-    ...MOCK_PRODUCTS[index],
-    name: nameClean,
-    brand: input.brand?.trim() || null,
-    model: input.model?.trim() || null,
-    category: categoryClean,
-    unit: unitClean,
-    barcode: input.barcode?.trim() || null,
-    alternate_names: input.alternate_names?.trim() || null,
-    serial_tracking_enabled: input.serial_tracking_enabled,
-    updated_at: new Date().toISOString(),
-  };
-
-  MOCK_PRODUCTS[index] = updatedProduct;
-  return updatedProduct;
+  throw new Error(
+    '[TauriProductService] updateProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
 
 /**
@@ -212,15 +155,7 @@ export async function toggleProductActive(id: string, is_active: boolean): Promi
     }
   }
 
-  const index = MOCK_PRODUCTS.findIndex((p) => p.id === id);
-  if (index === -1) throw new Error(`Product with ID '${id}' not found.`);
-
-  const updatedProduct: Product = {
-    ...MOCK_PRODUCTS[index],
-    is_active,
-    updated_at: new Date().toISOString(),
-  };
-
-  MOCK_PRODUCTS[index] = updatedProduct;
-  return updatedProduct;
+  throw new Error(
+    '[TauriProductService] toggleProductActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
 }
