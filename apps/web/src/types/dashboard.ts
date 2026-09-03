@@ -101,3 +101,15 @@ export interface StoreInventoryResponse {
   total_products: number;
   total_quantity: number;
 }
+
+// ---------------------------------------------------------------------------
+// Store list
+// ---------------------------------------------------------------------------
+
+export interface StoreListItem {
+  id: string;
+  code: string;
+  name: string;
+  address: string | null;
+  is_active: boolean;
+}

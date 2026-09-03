@@ -14,8 +14,28 @@ import * as tauriStoreService from '../services/tauriStoreService';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
 import * as tauriTransferService from '../services/tauriTransferService';
+import * as tauriAuthService from '../services/tauriAuthService';
 import { Transfer } from '../types/transfer';
 import { StockBalance } from '../types/transaction';
+
+vi.mock('../services/tauriAuthService', async () => {
+  const actual = await vi.importActual('../services/tauriAuthService');
+  return {
+    ...actual,
+    getSession: vi.fn(),
+  };
+});
+
+vi.mock('@tauri-apps/plugin-store', () => ({
+  load: vi.fn(() =>
+    Promise.resolve({
+      get: vi.fn((key: string) => {
+        if (key === 'device_id') return 'TEST-DEVICE-456';
+        return null;
+      }),
+    }),
+  ),
+}));
 
 const MOCK_STORES = [
   {
@@ -62,15 +82,34 @@ const MOCK_TRANSFER: Transfer = {
   product_id: 'PROD-001',
   quantity: 5,
   status: 'DRAFT',
-  created_by_user_id: 'USER-DEMO',
+  created_by_user_id: 'TEST-USER-123',
   notes: 'Rebalance stock',
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 };
 
+const MOCK_SESSION = {
+  access_token: 'test-token',
+  refresh_token: '',
+  user_id: 'TEST-USER-123',
+  username: 'testuser',
+  full_name: 'Test User',
+  role: 'STORE_MANAGER' as const,
+  assigned_store_id: 'STORE-A',
+  expires_at: new Date(Date.now() + 3600000).toISOString(),
+  token_expired_offline: false,
+};
+
 describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
   beforeEach((): void => {
     vi.restoreAllMocks();
+    // Mock Tauri internals to enable device_id loading in tests
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      value: {},
+      writable: true,
+      configurable: true,
+    });
+    vi.spyOn(tauriAuthService, 'getSession').mockResolvedValue(MOCK_SESSION);
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
@@ -137,7 +176,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
         destination_store_id: 'STORE-B',
         product_id: 'PROD-001',
         quantity: 5,
-        created_by_user_id: 'USER-DEMO',
+        created_by_user_id: 'TEST-USER-123',
         notes: undefined,
       });
     });
@@ -157,7 +196,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
     fireEvent.click(screen.getByTestId('btn-dispatch-TRF-TEST-001'));
 
     await waitFor((): void => {
-      expect(dispatchSpy).toHaveBeenCalledWith('TRF-TEST-001', 'USER-DEMO', 'DEV-DEMO');
+      expect(dispatchSpy).toHaveBeenCalledWith('TRF-TEST-001', 'TEST-USER-123', 'TEST-DEVICE-456');
     });
   });
 
@@ -177,7 +216,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
     fireEvent.click(screen.getByTestId('btn-receive-TRF-TEST-001'));
 
     await waitFor((): void => {
-      expect(receiveSpy).toHaveBeenCalledWith('TRF-TEST-001', 'USER-DEMO', 'DEV-DEMO');
+      expect(receiveSpy).toHaveBeenCalledWith('TRF-TEST-001', 'TEST-USER-123', 'TEST-DEVICE-456');
     });
   });
 
@@ -215,7 +254,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
     fireEvent.click(screen.getByTestId('btn-cancel-TRF-TEST-001'));
 
     await waitFor((): void => {
-      expect(cancelSpy).toHaveBeenCalledWith('TRF-TEST-001', 'USER-DEMO', 'DEV-DEMO');
+      expect(cancelSpy).toHaveBeenCalledWith('TRF-TEST-001', 'TEST-USER-123', 'TEST-DEVICE-456');
     });
   });
 });

@@ -14,7 +14,27 @@ import { ReturnStockView } from '../views/ReturnStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
+import * as tauriAuthService from '../services/tauriAuthService';
 import { InventoryTransaction, StockBucket } from '../types/transaction';
+
+vi.mock('../services/tauriAuthService', async () => {
+  const actual = await vi.importActual('../services/tauriAuthService');
+  return {
+    ...actual,
+    getSession: vi.fn(),
+  };
+});
+
+vi.mock('@tauri-apps/plugin-store', () => ({
+  load: vi.fn(() =>
+    Promise.resolve({
+      get: vi.fn((key: string) => {
+        if (key === 'device_id') return 'TEST-DEVICE-456';
+        return null;
+      }),
+    }),
+  ),
+}));
 
 const MOCK_STORES = [
   {
@@ -27,6 +47,18 @@ const MOCK_STORES = [
     updated_at: '2026-08-01T00:00:00Z',
   },
 ];
+
+const MOCK_SESSION = {
+  access_token: 'test-token',
+  refresh_token: '',
+  user_id: 'TEST-USER-123',
+  username: 'testuser',
+  full_name: 'Test User',
+  role: 'STORE_MANAGER' as const,
+  assigned_store_id: 'STORE-A',
+  expires_at: new Date(Date.now() + 3600000).toISOString(),
+  token_expired_offline: false,
+};
 
 const MOCK_PRODUCT = {
   id: 'PROD-001',
@@ -73,6 +105,13 @@ function makeReturnTx(overrides: Partial<InventoryTransaction> = {}): InventoryT
 describe('ReturnStockView — Issue 08 Acceptance Criteria', (): void => {
   beforeEach((): void => {
     vi.restoreAllMocks();
+    // Mock Tauri internals to enable device_id loading in tests
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      value: {},
+      writable: true,
+      configurable: true,
+    });
+    vi.spyOn(tauriAuthService, 'getSession').mockResolvedValue(MOCK_SESSION);
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriTransactionService, 'getStockBalanceForBucket').mockImplementation(
@@ -156,8 +195,8 @@ describe('ReturnStockView — Issue 08 Acceptance Criteria', (): void => {
         quantity: 2,
         reference_number: undefined,
         reason: undefined,
-        user_id: 'USER-DEMO',
-        device_id: 'DEV-DEMO',
+        user_id: 'TEST-USER-123',
+        device_id: 'TEST-DEVICE-456',
       });
     });
 

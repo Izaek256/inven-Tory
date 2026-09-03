@@ -29,11 +29,25 @@ import type { AuthSession, TokenResponse, UserRole } from '../types/auth';
 // Config
 // ---------------------------------------------------------------------------
 
-/** Base URL of the central API. Injected from env or falls back to default. */
-const API_BASE_URL: string =
-  (typeof import.meta !== 'undefined' &&
-    (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL) ||
-  'http://localhost:8000/api/v1';
+function _getApiBaseUrl(): string {
+  const envBaseUrl =
+    typeof import.meta !== 'undefined'
+      ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+      : undefined;
+
+  if (envBaseUrl) {
+    return envBaseUrl;
+  }
+
+  if (import.meta.env.DEV) {
+    return 'http://localhost:8000/api/v1';
+  }
+
+  throw new Error('VITE_API_BASE_URL is not configured. Set it in your .env file.');
+}
+
+/** Base URL of the central API. Injected from env or falls back to default in dev only. */
+const API_BASE_URL: string = _getApiBaseUrl();
 
 const STORE_FILE = 'auth.dat';
 const SESSION_KEY = 'auth_session';
@@ -43,6 +57,16 @@ const SESSION_KEY = 'auth_session';
 // ---------------------------------------------------------------------------
 
 let _memSession: AuthSession | null = null;
+
+// @visibleForTesting
+export function _setMemSession(session: AuthSession | null): void {
+  _memSession = session;
+}
+
+// @visibleForTesting
+export function _getMemSession(): AuthSession | null {
+  return _memSession;
+}
 
 // ---------------------------------------------------------------------------
 // Tauri secure storage helpers
@@ -180,51 +204,8 @@ export async function login(
     }
   }
 
-  // ── 2. Vite dev browser with DEV_DEVICE_ID set — skip the network ─────────
-  // The desktop Vite dev server runs in a browser context where __TAURI_INTERNALS__
-  // is absent. When VITE_DEV_DEVICE_ID is set we know we're in desktop-dev mode
-  // and should not fire cross-origin preflight requests at the API.
-  if (import.meta.env.VITE_DEV_DEVICE_ID) {
-    return _devBrowserLogin(username, password);
-  }
-
-  // ── 3. Real API login (production or web app) ─────────────────────────────
+  // ── 2. Real API login (production or web app) ─────────────────────────────
   return _apiLogin(username, password, deviceId, apiBaseUrl);
-}
-
-/**
- * DEV-ONLY: browser-mode login for the desktop Vite dev server.
- * Only active when VITE_DEV_DEVICE_ID is set (apps/desktop/.env, gitignored).
- * Matches against the same credentials as the local SQLite seed so offline
- * dev works without cargo/Tauri compilation and without the API running.
- */
-async function _devBrowserLogin(username: string, password: string): Promise<AuthSession> {
-  const DEV_USERS: Record<string, { password: string; role: UserRole; full_name: string }> = {
-    admin: { password: 'DevAdmin2026!', role: 'GLOBAL_ADMIN' as UserRole, full_name: 'System Administrator' },
-    manager_alpha: { password: 'DevManager2026!', role: 'STORE_MANAGER' as UserRole, full_name: 'Alpha Store Manager' },
-    clerk_alpha: { password: 'DevClerk2026!', role: 'STORE_CLERK' as UserRole, full_name: 'Alpha Clerk' },
-  };
-
-  const match = DEV_USERS[username.trim()];
-  if (!match || match.password !== password) {
-    throw new Error('Invalid username or password.');
-  }
-
-  const expiresAt = new Date(Date.now() + 8 * 3600_000).toISOString();
-  const session: AuthSession = {
-    access_token: `dev-offline:${username}:${Date.now()}`,
-    refresh_token: '',
-    user_id: 0,
-    username: username.trim(),
-    full_name: match.full_name,
-    role: match.role,
-    assigned_store_id: null,
-    expires_at: expiresAt,
-    token_expired_offline: false,
-  };
-
-  await _secureWrite(session);
-  return session;
 }
 
 /**
@@ -450,16 +431,4 @@ export async function clearOfflineExpiry(): Promise<void> {
   if (session?.token_expired_offline) {
     await _secureWrite({ ...session, token_expired_offline: false });
   }
-}
-
-// ---------------------------------------------------------------------------
-// Mock helpers for Vitest
-// ---------------------------------------------------------------------------
-
-export function _setMemSession(session: AuthSession | null): void {
-  _memSession = session;
-}
-
-export function _getMemSession(): AuthSession | null {
-  return _memSession;
 }

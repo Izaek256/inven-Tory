@@ -368,3 +368,36 @@ async def test_logout_success(client: TestClient, db_session: AsyncSession) -> N
 def test_logout_unauthenticated(client: TestClient) -> None:
     resp = client.post(LOGOUT_URL)
     assert resp.status_code == 401  # Our custom endpoint returns 401
+
+
+# ---------------------------------------------------------------------------
+# Property 4: GET /api/v1/stores authentication gate
+# ---------------------------------------------------------------------------
+
+
+async def test_stores_endpoint_requires_authentication(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    """GET /api/v1/stores returns 401 when no authentication token is provided (Property 4)."""
+    resp = client.get("/api/v1/stores")
+    assert resp.status_code == 401
+
+
+async def test_stores_endpoint_authenticated_succeeds(
+    client: TestClient, db_session: AsyncSession
+) -> None:
+    """GET /api/v1/stores returns 200 with valid authentication token (Property 4)."""
+    _s, _u, device = await _seed(
+        db_session,
+        store_code="G01",
+        username="stores_user",
+        password="pw",
+        user_role="STORE_MANAGER",
+    )
+    headers = _auth_headers(client, "stores_user", "pw", device.id)
+    resp = client.get("/api/v1/stores", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert isinstance(body, list)
+    # Should return at least the seeded store
+    assert len(body) >= 1

@@ -2183,6 +2183,80 @@ pub mod commands {
         Ok(result)
     }
 
+    /// Upsert a product from server data (INSERT ... ON CONFLICT DO UPDATE).
+    #[tauri::command]
+    pub fn upsert_product_from_server(product: Product) -> Result<Product, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+             ON CONFLICT(id) DO UPDATE SET \
+             sku = excluded.sku, \
+             name = excluded.name, \
+             brand = excluded.brand, \
+             model = excluded.model, \
+             category = excluded.category, \
+             unit = excluded.unit, \
+             barcode = excluded.barcode, \
+             alternate_names = excluded.alternate_names, \
+             serial_tracking_enabled = excluded.serial_tracking_enabled, \
+             is_active = excluded.is_active, \
+             updated_at = excluded.updated_at",
+            params![
+                product.id,
+                product.sku,
+                product.name,
+                product.brand,
+                product.model,
+                product.category,
+                product.unit,
+                product.barcode,
+                product.alternate_names,
+                if product.serial_tracking_enabled { 1 } else { 0 },
+                if product.is_active { 1 } else { 0 },
+                product.created_at,
+                product.updated_at,
+            ],
+        )
+        .map_err(|e| format!("Failed to upsert product: {}", e))?;
+
+        Ok(product)
+    }
+
+    /// Upsert a store from server data (INSERT ... ON CONFLICT DO UPDATE).
+    #[tauri::command]
+    pub fn upsert_store_from_server(store: Store) -> Result<Store, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO stores (id, code, name, address, is_active, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(id) DO UPDATE SET \
+             code = excluded.code, \
+             name = excluded.name, \
+             address = excluded.address, \
+             is_active = excluded.is_active, \
+             updated_at = excluded.updated_at",
+            params![
+                store.id,
+                store.code,
+                store.name,
+                store.address,
+                if store.is_active { 1 } else { 0 },
+                store.created_at,
+                store.updated_at,
+            ],
+        )
+        .map_err(|e| format!("Failed to upsert store: {}", e))?;
+
+        Ok(store)
+    }
+
     /// Persist the last-successful-sync timestamp (SYNC-009).
     #[tauri::command]
     pub fn set_last_sync_timestamp(timestamp: String) -> Result<(), String> {
@@ -2245,6 +2319,8 @@ pub fn run() {
             commands::update_transaction_sync_status,
             commands::get_last_sync_timestamp,
             commands::set_last_sync_timestamp,
+            commands::upsert_product_from_server,
+            commands::upsert_store_from_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -13,6 +13,7 @@ import type {
   ProductInventoryResponse,
   ProductSearchResponse,
   StoreInventoryResponse,
+  StoreListItem,
 } from '../types/dashboard';
 
 export async function searchProducts(query: string, limit = 50): Promise<ProductSearchResponse> {
@@ -48,4 +49,8 @@ export async function login(
     password,
     device_id: deviceId,
   });
+}
+
+export async function listStores(): Promise<StoreListItem[]> {
+  return api.get<StoreListItem[]>('/stores');
 }

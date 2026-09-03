@@ -185,30 +185,50 @@ async def push_events(
     The caller (device) must retry any event that receives a transient 5xx
     response; a 200 with accepted=False means the server has durably rejected
     that item and no retry is needed.
+
+    Security: validates that user_id in each transaction matches the authenticated user.
     """
-    payloads = [
-        TransactionPayload(
-            transaction_id=item.transaction_id,
-            store_id=item.store_id,
-            product_id=item.product_id,
-            movement_type=item.movement_type,
-            quantity_delta=item.quantity_delta,
-            occurred_at=item.occurred_at,
-            user_id=item.user_id,
-            device_id=item.device_id,
-            stock_bucket=item.stock_bucket,
-            reference_number=item.reference_number,
-            reason_code=item.reason_code,
-            transfer_id=item.transfer_id,
-            purchase_order_id=item.purchase_order_id,
-            batch_id=item.batch_id,
-            client_sequence=item.client_sequence,
-            original_transaction_id=item.original_transaction_id,
+
+    payloads: list[TransactionPayload] = []
+    rejected_receipts: list[SyncReceipt] = []
+
+    for item in body.events:
+        # Validate user_id matches authenticated user
+        if item.user_id != str(current_user.id):
+            rejected_receipts.append(
+                SyncReceipt(
+                    transaction_id=item.transaction_id,
+                    accepted=False,
+                    rejection_reason=f"user_id mismatch: payload has {item.user_id}, JWT has {current_user.id}",
+                    received_at=datetime.now(UTC),
+                    processed_at=datetime.now(UTC),
+                )
+            )
+            continue
+
+        payloads.append(
+            TransactionPayload(
+                transaction_id=item.transaction_id,
+                store_id=item.store_id,
+                product_id=item.product_id,
+                movement_type=item.movement_type,
+                quantity_delta=item.quantity_delta,
+                occurred_at=item.occurred_at,
+                user_id=item.user_id,
+                device_id=item.device_id,
+                stock_bucket=item.stock_bucket,
+                reference_number=item.reference_number,
+                reason_code=item.reason_code,
+                transfer_id=item.transfer_id,
+                purchase_order_id=item.purchase_order_id,
+                batch_id=item.batch_id,
+                client_sequence=item.client_sequence,
+                original_transaction_id=item.original_transaction_id,
+            )
         )
-        for item in body.events
-    ]
 
     receipts: list[SyncReceipt] = await ingest_batch(payloads, db)
+    receipts.extend(rejected_receipts)
     await db.commit()
 
     now = datetime.now(UTC)

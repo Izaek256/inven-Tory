@@ -152,9 +152,10 @@ async def ingest_transaction(
        If found, return it immediately — no further work done.
     2. Validate the payload (non-zero delta, required FK strings present).
        Return a rejected SyncReceipt (and persist it) on failure.
-    3. Insert the InventoryTransaction row.
-    4. Upsert the stock_balances row for (store_id, product_id, stock_bucket).
-    5. Insert an accepted SyncReceipt and flush.
+    3. For negative operations, check current balance is sufficient.
+    4. Insert the InventoryTransaction row.
+    5. Upsert the stock_balances row for (store_id, product_id, stock_bucket).
+    6. Insert an accepted SyncReceipt and flush.
 
     The caller is responsible for committing (or rolling back) the session.
     """
@@ -172,7 +173,27 @@ async def ingest_transaction(
         await db.flush()
         return receipt
 
-    # 3. Insert ledger row
+    # 3. Negative balance check for operations that would decrease stock
+    if payload.quantity_delta < 0:
+        stmt = select(StockBalance).where(
+            StockBalance.store_id == payload.store_id,
+            StockBalance.product_id == payload.product_id,
+            StockBalance.stock_bucket == payload.stock_bucket,
+        )
+        result = await db.execute(stmt)
+        balance: StockBalance | None = result.scalars().first()
+        current_quantity = balance.quantity if balance else 0
+
+        if current_quantity + payload.quantity_delta < 0:
+            receipt = _make_rejected_receipt(
+                payload.transaction_id,
+                f"Insufficient stock: current {current_quantity}, would result in {current_quantity + payload.quantity_delta}",
+            )
+            db.add(receipt)
+            await db.flush()
+            return receipt
+
+    # 4. Insert ledger row
     now = _now_utc()
     tx_row = InventoryTransaction(
         transaction_id=payload.transaction_id,
@@ -197,7 +218,7 @@ async def ingest_transaction(
     )
     db.add(tx_row)
 
-    # 4. Upsert stock balance
+    # 5. Upsert stock balance
     await _upsert_stock_balance(
         db=db,
         store_id=payload.store_id,
@@ -206,7 +227,7 @@ async def ingest_transaction(
         delta=payload.quantity_delta,
     )
 
-    # 5. Persist receipt
+    # 6. Persist receipt
     receipt = _make_accepted_receipt(payload.transaction_id)
     db.add(receipt)
     await db.flush()
@@ -328,6 +349,25 @@ def _validate_payload(payload: TransactionPayload) -> str | None:
         return "movement_type is required"
     if payload.quantity_delta == 0:
         return "quantity_delta must be non-zero"
+
+    # Validate movement_type is a known type
+    VALID_MOVEMENT_TYPES = {
+        "RECEIPT",
+        "SALE",
+        "RETURN",
+        "DAMAGE",
+        "ADJUSTMENT",
+        "TRANSFER_OUT",
+        "TRANSFER_IN",
+    }
+    if payload.movement_type not in VALID_MOVEMENT_TYPES:
+        return f"movement_type must be one of {VALID_MOVEMENT_TYPES}"
+
+    # Note: Negative balance checking is done at the transaction level (server-side)
+    # and enforced by the Rust layer for desktop. For now, we allow the ingestion
+    # service to handle this via the balance projection. This will be enhanced in
+    # future phases to prevent negative balances at the server level.
+
     return None
 
 

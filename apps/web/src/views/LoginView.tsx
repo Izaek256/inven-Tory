@@ -15,7 +15,7 @@ import { LogIn } from 'lucide-react';
 import { login } from '../services/dashboardService';
 import { setToken } from '../services/apiClient';
 
-const WEB_DEVICE_ID = 'WEB-DASHBOARD-DEVICE';
+const WEB_DEVICE_ID = import.meta.env.VITE_WEB_DEVICE_ID ?? 'WEB-DASHBOARD-DEVICE';
 
 interface LoginViewProps {
   onLoginSuccess: (role: string) => void;
@@ -39,9 +39,15 @@ export function LoginView({ onLoginSuccess }: LoginViewProps): React.ReactElemen
       setToken(data.access_token);
       onLoginSuccess(data.role);
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Login failed. Check credentials and device ID.',
-      );
+      const errorMessage =
+        err instanceof Error ? err.message : 'Login failed. Check credentials and device ID.';
+      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+        setError(
+          'Web dashboard device not registered. Contact your administrator to set up the dashboard device.',
+        );
+      } else {
+        setError(errorMessage);
+      }
     } finally {
       setLoading(false);
     }
