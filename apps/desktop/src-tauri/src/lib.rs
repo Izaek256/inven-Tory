@@ -200,6 +200,11 @@ fn get_db_path() -> PathBuf {
         "inven_tory_local.db",
         "../inven_tory_local.db",
         "../../inven_tory_local.db",
+        "../../../inven_tory_local.db",
+        "packages/storage/inven_tory_local.db",
+        "../packages/storage/inven_tory_local.db",
+        "../../packages/storage/inven_tory_local.db",
+        "../../../packages/storage/inven_tory_local.db",
     ];
 
     for cand in candidates {

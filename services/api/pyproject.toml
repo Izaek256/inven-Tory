@@ -22,11 +22,13 @@ dependencies = [
     "alembic>=1.13.0",       # Migrations
     # Auth
     "fastapi-users[sqlalchemy]>=13.0.0",
-    # passlib 1.7.4 reads bcrypt.__about__.__version__ on import.
-    # bcrypt <4.1 ships __about__; bcrypt 4.1+ removed it, which triggers a
-    # noisy (non-fatal but ugly) AttributeError warning at import time.
-    # Keep both pins tight to that range — we drop this when passlib 2.x ships.
-    "passlib[bcrypt]>=1.7.4",
+    # NOTE: passlib is a transitive dep of fastapi-users for password hashing.
+    # Our own code imports ``bcrypt`` directly (see app/core/security.py and
+    # infra/seed/genesis_single_user.py) rather than going through passlib's
+    # CryptContext, because passlib probes ``bcrypt.__about__.__version__`` at
+    # import time which emits a trapped-but-ugly AttributeError on some
+    # combinations of the two libraries.
+    "passlib>=1.7.4",
     "bcrypt>=3.1.0,<4.1",
     "python-jose[cryptography]>=3.3.0",
     # HTTP client (for internal calls)
