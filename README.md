@@ -2,7 +2,7 @@
 
 > Offline-First, Multi-Store Inventory Management System — v1.1.0
 
-[![CI](https://github.com/<org>/inven-Tory/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/<org>/inven-Tory/actions/workflows/ci.yml)
+[![CI](<https://github.com/<org>/inven-Tory/actions/workflows/ci.yml/badge.svg?branch=develop>)](<https://github.com/<org>/inven-Tory/actions/workflows/ci.yml>)
 
 ---
 
@@ -11,15 +11,16 @@
 INVENTORY Tory is a transaction-driven inventory platform for businesses running multiple physical stores. Every stock movement is a durable, immutable event. Stores operate fully offline; synchronization to the central cloud database happens automatically when connectivity returns.
 
 **Technology stack:**
-| Layer | Technology |
-|---|---|
-| Desktop shell | Tauri (Rust) |
-| Desktop UI | React + TypeScript |
-| Local database | SQLite |
-| Cloud API | FastAPI (Python 3.12) |
-| ORM | SQLAlchemy |
-| Cloud database | PostgreSQL |
-| Remote dashboard | React + TypeScript |
+
+| Layer            | Technology                    |
+| ---------------- | ----------------------------- |
+| Desktop shell    | Tauri (Rust)                  |
+| Desktop UI       | React + TypeScript            |
+| Local database   | SQLite                        |
+| Cloud API        | FastAPI (Python 3.12)         |
+| ORM              | SQLAlchemy                    |
+| Cloud database   | PostgreSQL                    |
+| Remote dashboard | React + TypeScript            |
 | Mobile companion | React (responsive, read-only) |
 
 ---
@@ -48,13 +49,13 @@ inven-Tory/
 
 ## Prerequisites
 
-| Tool | Minimum version | Install |
-|---|---|---|
-| Python | 3.12 | [python.org](https://python.org) |
-| Node.js | 20 LTS | [nodejs.org](https://nodejs.org) |
-| npm | 10 | bundled with Node 20 |
-| Rust + Cargo | stable | [rustup.rs](https://rustup.rs) |
-| Docker + Compose | 24 / 2 | [docker.com](https://docker.com) |
+| Tool             | Minimum version | Install                         |
+| ---------------- | --------------- | ------------------------------- |
+| Python           | 3.12            | [python.org](https://python.org) |
+| Node.js          | 20 LTS          | [nodejs.org](https://nodejs.org) |
+| npm              | 10              | bundled with Node 20            |
+| Rust + Cargo     | stable          | [rustup.rs](https://rustup.rs)   |
+| Docker + Compose | 24 / 2          | [docker.com](https://docker.com) |
 
 ---
 
@@ -166,6 +167,7 @@ The authentication system uses FastAPI Users. Here's how to test the authenticat
 #### 1. Test API Authentication Endpoints
 
 Start the API server:
+
 ```bash
 cd services/api
 uvicorn app.main:app --reload --port 8000
@@ -174,6 +176,7 @@ uvicorn app.main:app --reload --port 8000
 Test the FastAPI Users endpoints using curl or a tool like Postman:
 
 **Register a new user:**
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
@@ -187,6 +190,7 @@ curl -X POST http://localhost:8000/api/v1/auth/register \
 ```
 
 **Login with username (desktop):**
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
@@ -198,6 +202,7 @@ curl -X POST http://localhost:8000/api/v1/auth/login \
 ```
 
 **Login with email (web/mobile):**
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/jwt/login \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -205,12 +210,14 @@ curl -X POST http://localhost:8000/api/v1/auth/jwt/login \
 ```
 
 **Get current user profile:**
+
 ```bash
 curl -X GET http://localhost:8000/api/v1/auth/me \
   -H "Authorization: Bearer <your_access_token>"
 ```
 
 **Refresh access token:**
+
 ```bash
 curl -X POST http://localhost:8000/api/v1/auth/refresh \
   -H "Content-Type: application/json" \
@@ -220,6 +227,7 @@ curl -X POST http://localhost:8000/api/v1/auth/refresh \
 #### 2. Test Desktop App Authentication
 
 1. Start the desktop app in development mode:
+
 ```bash
 cd apps/desktop
 npm run dev
@@ -233,6 +241,7 @@ npm run dev
 #### 3. Test Web Dashboard Authentication
 
 1. Start the web dashboard:
+
 ```bash
 cd apps/web
 npm run dev
@@ -246,6 +255,7 @@ npm run dev
 #### 4. Test Mobile Companion Authentication
 
 1. Start the mobile app:
+
 ```bash
 cd apps/mobile
 npm run dev
@@ -278,6 +288,7 @@ curl -X POST http://localhost:8000/api/v1/users \
 #### 7. Run Authentication Tests
 
 The desktop app has authentication tests:
+
 ```bash
 cd apps/desktop
 npm test -- AuthService.test
@@ -286,6 +297,7 @@ npm test -- AuthService.test
 #### 8. Mock Data Audit
 
 Verify no mock data exists in the codebase:
+
 ```bash
 # Search for mock, dummy, placeholder, fake
 grep -r "mock\|dummy\|placeholder\|fake" --include="*.ts" --include="*.tsx" --include="*.py" --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=infra/seed/dev_only
