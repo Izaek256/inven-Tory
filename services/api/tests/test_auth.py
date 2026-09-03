@@ -388,7 +388,11 @@ async def test_stores_endpoint_authenticated_succeeds(
 ) -> None:
     """GET /api/v1/stores returns 200 with valid authentication token (Property 4)."""
     _s, _u, device = await _seed(
-        db_session, store_code="G01", username="stores_user", password="pw", user_role="STORE_MANAGER"
+        db_session,
+        store_code="G01",
+        username="stores_user",
+        password="pw",
+        user_role="STORE_MANAGER",
     )
     headers = _auth_headers(client, "stores_user", "pw", device.id)
     resp = client.get("/api/v1/stores", headers=headers)
