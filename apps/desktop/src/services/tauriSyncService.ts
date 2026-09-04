@@ -323,8 +323,14 @@ async function _httpPull(
  */
 export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> {
   if (_syncInProgress) {
+    console.info('[SyncService] Sync already in progress, skipping');
     return getSyncStatus();
   }
+
+  console.info('[SyncService] Starting sync with config:', {
+    apiBaseUrl: config.apiBaseUrl,
+    force: config.force,
+  });
 
   // Resolve access token — prefer explicit config.accessToken, then auth service.
   let resolvedToken = config.accessToken;
@@ -332,7 +338,12 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     try {
       const { getAccessToken } = await import('./tauriAuthService');
       resolvedToken = (await getAccessToken()) ?? undefined;
-    } catch {
+      console.info(
+        '[SyncService] Resolved access token:',
+        resolvedToken ? 'Token available' : 'No token',
+      );
+    } catch (err) {
+      console.warn('[SyncService] Failed to get access token:', err);
       resolvedToken = undefined;
     }
   }
@@ -342,6 +353,9 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
   // pending transactions.  The outbox continues to queue; sync resumes after
   // re-authentication.
   if (!resolvedToken) {
+    console.warn(
+      '[SyncService] No access token available - skipping sync (offline or token upgrade needed)',
+    );
     _mockLastOutcome = 'offline';
     return getSyncStatus();
   }

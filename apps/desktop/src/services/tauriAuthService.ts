@@ -58,7 +58,12 @@ const CREDENTIALS_KEY = 'last_credentials';
 // ---------------------------------------------------------------------------
 
 let _memSession: AuthSession | null = null;
-let _lastCredentials: { username: string; password: string; deviceId?: string; apiBaseUrl?: string } | null = null;
+let _lastCredentials: {
+  username: string;
+  password: string;
+  deviceId?: string;
+  apiBaseUrl?: string;
+} | null = null;
 
 // @visibleForTesting
 export function _setMemSession(session: AuthSession | null): void {
@@ -220,7 +225,13 @@ export async function login(
   // stable default. App.tsx in the desktop shell always passes one, but
   // OfflineAuthBanner and other call sites may omit it in single-user mode.
   const resolvedDeviceId = (deviceId && deviceId.trim()) || 'SINGLE-USER-DEVICE';
-  await _secureWriteCredentials({ username, password, deviceId: resolvedDeviceId, apiBaseUrl });
+  const resolvedApiBaseUrl = apiBaseUrl || API_BASE_URL;
+  await _secureWriteCredentials({
+    username,
+    password,
+    deviceId: resolvedDeviceId,
+    apiBaseUrl: resolvedApiBaseUrl,
+  });
 
   // ── 1. Tauri native app — local SQLite bcrypt check ───────────────────────
   if (isTauriEnvironment()) {
@@ -449,11 +460,15 @@ async function _tryUpgradeToServerToken(
   currentSession: AuthSession,
 ): Promise<void> {
   try {
-    const upgraded = await _apiLogin(username, password, deviceId, apiBaseUrl);
+    const resolvedApiBaseUrl = apiBaseUrl || API_BASE_URL;
+    console.info('[AuthService] Background token upgrade to:', resolvedApiBaseUrl);
+    const upgraded = await _apiLogin(username, password, deviceId, resolvedApiBaseUrl);
     // Merge: keep local profile data, replace token
     await _secureWrite({ ...currentSession, ...upgraded });
-  } catch {
+    console.info('[AuthService] Background token upgrade successful');
+  } catch (err) {
     // Network unavailable or server error — offline session stays as-is
+    console.warn('[AuthService] Background token upgrade failed:', err);
   }
 }
 
@@ -561,6 +576,8 @@ export async function getAccessToken(): Promise<string | null> {
   const session = await _secureRead();
   if (!session) return null;
 
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
   // Offline sentinel tokens cannot be validated by central API JWT middleware.
   // Try to upgrade using cached credentials if online.
   if (
@@ -568,28 +585,41 @@ export async function getAccessToken(): Promise<string | null> {
     session.access_token.startsWith('dev-offline:') ||
     session.access_token.startsWith('dev-local:')
   ) {
-    const creds = await _secureReadCredentials();
-    if (creds) {
-      try {
-        const upgraded = await _apiLogin(
-          creds.username,
-          creds.password,
-          creds.deviceId || 'SINGLE-USER-DEVICE',
-          creds.apiBaseUrl,
-        );
-        return upgraded.access_token;
-      } catch {
-        // Network or auth unavailable — stay offline
+    if (isOnline) {
+      const creds = await _secureReadCredentials();
+      if (creds) {
+        try {
+          // Use the stored API base URL from credentials, or fall back to env/default
+          const apiBaseUrl = creds.apiBaseUrl || API_BASE_URL;
+          console.info('[AuthService] Attempting token upgrade to:', apiBaseUrl);
+          const upgraded = await _apiLogin(
+            creds.username,
+            creds.password,
+            creds.deviceId || 'SINGLE-USER-DEVICE',
+            apiBaseUrl,
+          );
+          console.info('[AuthService] Token upgrade successful');
+          return upgraded.access_token;
+        } catch (err) {
+          // Log upgrade failure for debugging
+          console.warn('[AuthService] Token upgrade failed:', err);
+        }
+      } else {
+        console.warn('[AuthService] No cached credentials available for token upgrade');
       }
+    } else {
+      console.info('[AuthService] Offline - cannot upgrade token');
     }
     return null;
   }
 
   // If online and token is expired, attempt a silent refresh
   if (_isTokenExpired(session.expires_at) && !session.token_expired_offline) {
-    const refreshed = await tryRefreshToken();
-    if (refreshed && !_isTokenExpired(refreshed.expires_at)) {
-      return refreshed.access_token;
+    if (isOnline) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed && !_isTokenExpired(refreshed.expires_at)) {
+        return refreshed.access_token;
+      }
     }
     // Could not refresh — return null to block sync (but not local operations)
     return null;
