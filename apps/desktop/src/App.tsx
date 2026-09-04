@@ -188,12 +188,19 @@ export function App(): React.ReactElement {
           : undefined;
       const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
+      console.info('[App] Starting background sync with API base URL:', apiBaseUrl);
       startBackgroundSync({ apiBaseUrl }, 30_000);
       void triggerSync({ apiBaseUrl })
-        .then(() => fetchStores())
-        .catch(() => undefined);
+        .then(() => {
+          console.info('[App] Initial sync completed, fetching stores');
+          return fetchStores();
+        })
+        .catch((err) => {
+          console.warn('[App] Initial sync failed:', err);
+        });
 
       return (): void => {
+        console.info('[App] Stopping background sync');
         stopBackgroundSync();
       };
     }
@@ -202,6 +209,7 @@ export function App(): React.ReactElement {
   // Online reconnection listener: immediately attempt token upgrade and sync outbox
   useEffect(() => {
     const handleOnline = (): void => {
+      console.info('[App] Network reconnection detected, triggering sync');
       if (authState === 'authenticated' || authState === 'expired_offline') {
         const envBaseUrl =
           typeof import.meta !== 'undefined'
@@ -209,9 +217,15 @@ export function App(): React.ReactElement {
             : undefined;
         const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
+        console.info('[App] Force sync on reconnection with API base URL:', apiBaseUrl);
         void triggerSync({ apiBaseUrl, force: true })
-          .then(() => fetchStores())
-          .catch(() => undefined);
+          .then(() => {
+            console.info('[App] Reconnection sync completed, fetching stores');
+            return fetchStores();
+          })
+          .catch((err) => {
+            console.warn('[App] Reconnection sync failed:', err);
+          });
       }
     };
 
