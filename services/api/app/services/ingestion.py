@@ -33,6 +33,7 @@ Design notes
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -45,6 +46,7 @@ from app.models.product import Product
 from app.models.stock_balance import StockBalance
 from app.models.store import Store
 from app.models.sync_receipt import SyncReceipt
+from app.models.device import Device
 
 # ---------------------------------------------------------------------------
 # Input payload schema
@@ -58,6 +60,10 @@ class TransactionPayload:
 
     All fields map 1-to-1 to InventoryTransaction columns.  Optional fields
     default to None and are passed through unchanged.
+
+    ``user_id`` accepts both integers and numeric strings for compatibility;
+    it is always normalised to a plain ``int`` immediately after construction
+    so downstream code can rely on a uniform type.
     """
 
     transaction_id: str
@@ -66,7 +72,7 @@ class TransactionPayload:
     movement_type: str
     quantity_delta: int
     occurred_at: datetime
-    user_id: str
+    user_id: int | str
     device_id: str
     stock_bucket: str = "AVAILABLE"
     reference_number: str | None = None
@@ -76,6 +82,29 @@ class TransactionPayload:
     batch_id: str | None = None
     client_sequence: int | None = None
     original_transaction_id: str | None = None
+
+    def __post_init__(self) -> None:
+        # Normalise user_id to int.  The API Pydantic schema already coerces,
+        # but this post-init also handles direct construction from tests and
+        # legacy callers that still pass a numeric string.
+        raw = self.user_id
+        if isinstance(raw, bool):
+            raise TypeError("user_id must be a positive integer (not bool)")
+        if isinstance(raw, int):
+            if raw <= 0:
+                raise ValueError("user_id must be a positive integer")
+            # Already correct type
+            return
+        if isinstance(raw, str):
+            s = raw.strip()
+            if not s.isdigit():
+                raise ValueError(f"user_id {raw!r} is not a valid positive integer")
+            iv = int(s)
+            if iv <= 0:
+                raise ValueError("user_id must be a positive integer")
+            object.__setattr__(self, "user_id", iv)
+            return
+        raise TypeError(f"user_id has unsupported type: {type(raw).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +171,103 @@ def _make_rejected_receipt(transaction_id: str, reason: str) -> SyncReceipt:
 # ---------------------------------------------------------------------------
 
 
+def _is_server_internal_error_reason(reason: str | None) -> bool:
+    """
+    True if the rejection_reason was produced by the catch-all "Unexpected
+    error: …" path in ingest_batch (or a similar server-internal exception).
+
+    These receipts are *not* a semantic rejection of the payload itself.
+    They can be retried safely because the underlying cause (a bug in a
+    previous code revision, a transient DB issue, etc.) may now be fixed.
+    In contrast, a domain rejection like "Insufficient stock" or
+    "quantity_delta must be non-zero" is deterministic and stays rejected
+    UNLESS a re-evaluation check (see `_stale_domain_rejection_should_retry`)
+    decides the domain precondition no longer holds.
+    """
+    if not reason:
+        return False
+    if reason.startswith("Unexpected error:"):
+        return True
+    # Known transient-looking substrings surfaced from exception messages.
+    lowered = reason.lower()
+    markers = (
+        "query-invoked autoflush",
+        "datatypemismatch",
+        "programmingerror",
+        "internalerror",
+        "operationalerror",
+        "interfaceerror",
+        "databaseerror",
+        "sqlalchemy",
+    )
+    return any(m in lowered for m in markers)
+
+
+_INSUFFICIENT_STOCK_RE = re.compile(
+    r"^Insufficient stock: current (-?\d+), would result in (-?\d+)$"
+)
+
+
+async def _stale_domain_rejection_should_retry(
+    existing_receipt: SyncReceipt,
+    payload: TransactionPayload,
+    db: AsyncSession,
+) -> bool:
+    """
+    For an accepted=False SyncReceipt that has a *domain* reason (not a
+    server-internal error), return True if the domain precondition that
+    caused the rejection has since changed so much that re-running
+    ingestion on this same payload has a realistic chance to succeed.
+
+    Rationale: when a batch contains the baseline ADJUSTMENT for a product
+    AND movements derived from that baseline but the ADJUSTMENT ingestion
+    failed on a prior attempt due to an unrelated server bug (e.g. the
+    DatatypeMismatchError), subsequent rejections of the SALE with
+    "Insufficient stock: current 0" are correct at the time but become
+    stale once the ADJUSTMENT finally succeeds on a retry.  Without this
+    check, users would need *two* push cycles for such a batch to fully
+    converge (one cycle for ADJUSTMENT to be re-evaluated, one cycle for
+    the SALE to finally see the updated balance).
+
+    Cases currently handled:
+    - ``"Insufficient stock: current <n>, would result in <m>"``
+      Re-evaluate if the live balance + payload delta >= 0, i.e. the
+      operation would now pass the server-side negative-balance check.
+    """
+    reason = existing_receipt.rejection_reason
+    if not reason:
+        return False
+
+    # --- Case 1: Insufficient stock (balance-dependent) ---------------------
+    m = _INSUFFICIENT_STOCK_RE.match(reason)
+    if m:
+        try:
+            previous_balance_recorded = int(m.group(1))
+            if previous_balance_recorded < 0:
+                # If previous state was already inconsistent (<0) don't
+                # treat that as a "now-fixed" signal; let the rejection
+                # surface to avoid masking other bugs.
+                return False
+        except ValueError:
+            return False
+        with db.no_autoflush:
+            stmt = select(StockBalance).where(
+                StockBalance.store_id == payload.store_id,
+                StockBalance.product_id == payload.product_id,
+                StockBalance.stock_bucket == payload.stock_bucket,
+            )
+            res = await db.execute(stmt)
+        balance: StockBalance | None = res.scalars().first()
+        current = balance.quantity if balance is not None else 0
+        # If the previous run recorded "current 0" but there's now actually
+        # stock (current >= -payload.quantity_delta) then re-evaluation is
+        # warranted.  Otherwise the stored rejection is still as valid today
+        # as it was then.
+        return current + payload.quantity_delta >= 0 and current != previous_balance_recorded
+
+    return False
+
+
 async def ingest_transaction(
     payload: TransactionPayload,
     db: AsyncSession,
@@ -150,22 +276,100 @@ async def ingest_transaction(
     Idempotently ingest a single transaction into the central ledger.
 
     Algorithm (SYNC-003 / SYNC-004):
-    1. Check sync_receipts for an existing row with payload.transaction_id.
-       If found, return it immediately — no further work done.
-    2. Validate the payload (non-zero delta, required FK strings present).
-       Return a rejected SyncReceipt (and persist it) on failure.
-    3. For negative operations, check current balance is sufficient.
-    4. Insert the InventoryTransaction row.
-    5. Upsert the stock_balances row for (store_id, product_id, stock_bucket).
-    6. Insert an accepted SyncReceipt and flush.
+    1. Check whether the ledger *already contains* the transaction_id.
+       If yes, this is the authoritative "accepted" signal and we return
+       the stored accepted outcome (append-only guarantee).
+    2. Otherwise check for an existing SyncReceipt row.  If it is:
+       - accepted=True  → same as (1), return it.
+       - accepted=False with a *deterministic* domain rejection → idempotent.
+       - accepted=False with a server-internal "Unexpected error: …" style
+         reason → the receipt is stale; delete it and re-run ingestion so
+         the fixed code path gets a shot at the payload.
+    3. Validate payload (non-zero delta, required fields present).
+    4. For negative operations, check current balance is sufficient.
+    5. Insert the InventoryTransaction row.
+    6. Upsert the stock_balances row for (store_id, product_id, stock_bucket).
+    7. Insert an accepted SyncReceipt and flush.
 
     The caller is responsible for committing (or rolling back) the session.
     """
 
-    # 1. Idempotency check ─ already processed?
-    existing = await db.get(SyncReceipt, payload.transaction_id)
-    if existing is not None:
-        return existing
+    # 1a. Ledger-first idempotency: if an InventoryTransaction row with this
+    # transaction_id already exists, the event has been durably accepted.
+    # Return a fresh receipt (looked up / rebuilt) without mutating state.
+    with db.no_autoflush:
+        ledger_row = await db.get(InventoryTransaction, payload.transaction_id)
+    if ledger_row is not None:
+        # There is a ledger row — this is definitively accepted.
+        existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+        if existing_receipt is not None and existing_receipt.accepted:
+            return existing_receipt
+        # Stale receipt row that doesn't match the ledger (shouldn't happen,
+        # but handle it: upsert a correct accepted receipt).
+        now = _now_utc()
+        if existing_receipt is not None:
+            existing_receipt.accepted = True
+            existing_receipt.rejection_reason = None
+            existing_receipt.processed_at = now
+            receipt = existing_receipt
+        else:
+            receipt = SyncReceipt(
+                transaction_id=payload.transaction_id,
+                accepted=True,
+                rejection_reason=None,
+                received_at=now,
+                processed_at=now,
+            )
+            db.add(receipt)
+        await db.flush()
+        return receipt
+
+    # 1b. Receipt-only idempotency check.
+    existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+    if existing_receipt is not None:
+        if existing_receipt.accepted:
+            # Accepted receipt but no corresponding ledger row (edge case):
+            # treat as authoritative — won't double-insert because the
+            # receipt PK will conflict on db.add anyway.
+            return existing_receipt
+        # Rejected receipt.  Decide whether it's stable enough to honour
+        # idempotently, or whether the precondition that caused it has
+        # shifted so much that re-evaluation is warranted.
+        reason = existing_receipt.rejection_reason
+        should_retry = False
+        if _is_server_internal_error_reason(reason):
+            # Bug-on-server, transient DB error, ORM type mistake, etc.
+            # Always safe to retry with the exact same payload.
+            should_retry = True
+        elif await _stale_domain_rejection_should_retry(
+            existing_receipt, payload, db
+        ):
+            # Domain rejection whose underlying precondition (e.g. a 0
+            # balance) no longer holds — typically because an earlier
+            # event in the same batch (the ADJUSTMENT) has just been
+            # re-evaluated successfully on this retry.
+            should_retry = True
+
+        if not should_retry:
+            # Honour the stored rejection idempotently.
+            return existing_receipt
+
+        # Stale receipt — delete it and fall through to the full ingest
+        # pipeline so the fixed / now-satisfiable payload runs for real.
+        stale_pk = existing_receipt.transaction_id
+        await db.delete(existing_receipt)
+        await db.flush()
+        # Detach the deleted object from the session so a fresh
+        # SyncReceipt(stale_pk, ...) can be added without identity-map
+        # conflicts on the same primary key.
+        db.expunge(existing_receipt)
+        # Safety: sanity check identity map no longer has a row for PK.
+        for tracked in list(db.identity_map.values()):
+            if (
+                isinstance(tracked, SyncReceipt)
+                and tracked.transaction_id == stale_pk
+            ):
+                db.expunge(tracked)
 
     # 2. Basic validation
     rejection: str | None = _validate_payload(payload)
@@ -176,7 +380,10 @@ async def ingest_transaction(
         return receipt
 
     # 2b. Auto-provision missing store or product in central database if needed
-    store_exists = await db.scalar(select(Store.id).where(Store.id == payload.store_id).limit(1))
+    with db.no_autoflush:
+        store_exists = await db.scalar(
+            select(Store.id).where(Store.id == payload.store_id).limit(1)
+        )
     if not store_exists:
         auto_store = Store(
             id=payload.store_id,
@@ -187,7 +394,10 @@ async def ingest_transaction(
         db.add(auto_store)
         await db.flush()
 
-    prod_exists = await db.scalar(select(Product.id).where(Product.id == payload.product_id).limit(1))
+    with db.no_autoflush:
+        prod_exists = await db.scalar(
+            select(Product.id).where(Product.id == payload.product_id).limit(1)
+        )
     if not prod_exists:
         auto_prod = Product(
             id=payload.product_id,
@@ -200,14 +410,29 @@ async def ingest_transaction(
         db.add(auto_prod)
         await db.flush()
 
+    with db.no_autoflush:
+        device_exists = await db.scalar(
+            select(Device.id).where(Device.id == payload.device_id).limit(1)
+        )
+    if not device_exists:
+        auto_device = Device(
+            id=payload.device_id,
+            store_id=payload.store_id,
+            device_name=f"Auto Device ({payload.device_id[:12]})",
+            is_active=True,
+        )
+        db.add(auto_device)
+        await db.flush()
+
     # 3. Negative balance check for operations that would decrease stock
     if payload.quantity_delta < 0:
-        stmt = select(StockBalance).where(
-            StockBalance.store_id == payload.store_id,
-            StockBalance.product_id == payload.product_id,
-            StockBalance.stock_bucket == payload.stock_bucket,
-        )
-        result = await db.execute(stmt)
+        with db.no_autoflush:
+            stmt = select(StockBalance).where(
+                StockBalance.store_id == payload.store_id,
+                StockBalance.product_id == payload.product_id,
+                StockBalance.stock_bucket == payload.stock_bucket,
+            )
+            result = await db.execute(stmt)
         balance: StockBalance | None = result.scalars().first()
         current_quantity = balance.quantity if balance else 0
 
@@ -244,6 +469,7 @@ async def ingest_transaction(
         original_transaction_id=payload.original_transaction_id,
     )
     db.add(tx_row)
+    await db.flush()
 
     # 5. Upsert stock balance
     await _upsert_stock_balance(
@@ -280,24 +506,60 @@ async def ingest_batch(
     Because we operate inside a single session, a flush is issued between items
     so that subsequent idempotency checks see rows inserted earlier in the same
     batch (important when the same transaction_id appears twice in one batch).
+
+    Payloads are *re-ordered* before processing so that stock-baseline
+    operations (ADJUSTMENT) and stock-increases (RECEIPT / TRANSFER_IN /
+    RETURN) are applied before stock-decreases (SALE / TRANSFER_OUT / DAMAGE).
+    This prevents spurious "Insufficient stock" rejections when a batch
+    contains both the initial count and the movements derived from it.
     """
-    receipts: list[SyncReceipt] = []
-    for payload in payloads:
+    # ---- Sort the batch for logical, deterministic order ---------------------
+    # Lower number = processed first.
+    MOVEMENT_PRIORITY: dict[str, int] = {
+        "ADJUSTMENT": 0,      # Baseline / count reconciliation first
+        "RECEIPT": 1,         # Then increases
+        "TRANSFER_IN": 1,
+        "RETURN": 1,
+        "SALE": 2,            # Then decreases
+        "TRANSFER_OUT": 2,
+        "DAMAGE": 2,
+    }
+
+    def _sort_key(p: TransactionPayload) -> tuple:
+        prio = MOVEMENT_PRIORITY.get(p.movement_type, 3)
+        return (prio, p.occurred_at, p.transaction_id)
+
+    # Keep the original order mapped so receipts are returned in the same
+    # order the caller submitted them (per SYNC-012 contract: one receipt per
+    # submitted event, in request order).
+    indexed: list[tuple[int, TransactionPayload]] = list(enumerate(payloads))
+    ordered = sorted(indexed, key=lambda pair: _sort_key(pair[1]))
+
+    receipts_by_index: dict[int, SyncReceipt] = {}
+    for original_idx, payload in ordered:
         try:
             receipt = await ingest_transaction(payload, db)
-            receipts.append(receipt)
+            receipts_by_index[original_idx] = receipt
         except Exception as exc:  # noqa: BLE001 — isolate per-item failures
             # Unexpected errors (DB constraint, etc.) get a rejected receipt.
             # Roll back to the last savepoint so the session stays usable.
             await db.rollback()
-            receipt = _make_rejected_receipt(
-                payload.transaction_id,
-                f"Unexpected error: {exc!s}",
-            )
-            db.add(receipt)
+            now = _now_utc()
+            rejection_text = f"Unexpected error: {exc!s}"
+            existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+            if existing_receipt is not None:
+                existing_receipt.accepted = False
+                existing_receipt.rejection_reason = rejection_text
+                existing_receipt.processed_at = now
+                receipt = existing_receipt
+            else:
+                receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
+                db.add(receipt)
             await db.flush()
-            receipts.append(receipt)
-    return receipts
+            receipts_by_index[original_idx] = receipt
+
+    # Emit receipts in the caller's original submission order.
+    return [receipts_by_index[i] for i in range(len(payloads))]
 
 
 # ---------------------------------------------------------------------------
@@ -368,8 +630,8 @@ def _validate_payload(payload: TransactionPayload) -> str | None:
         return "store_id is required"
     if not payload.product_id or not payload.product_id.strip():
         return "product_id is required"
-    if not payload.user_id or not payload.user_id.strip():
-        return "user_id is required"
+    if not isinstance(payload.user_id, int) or payload.user_id <= 0:
+        return "user_id must be a positive integer"
     if not payload.device_id or not payload.device_id.strip():
         return "device_id is required"
     if not payload.movement_type or not payload.movement_type.strip():
@@ -377,7 +639,6 @@ def _validate_payload(payload: TransactionPayload) -> str | None:
     if payload.quantity_delta == 0:
         return "quantity_delta must be non-zero"
 
-    # Validate movement_type is a known type
     VALID_MOVEMENT_TYPES = {
         "RECEIPT",
         "SALE",
@@ -389,11 +650,6 @@ def _validate_payload(payload: TransactionPayload) -> str | None:
     }
     if payload.movement_type not in VALID_MOVEMENT_TYPES:
         return f"movement_type must be one of {VALID_MOVEMENT_TYPES}"
-
-    # Note: Negative balance checking is done at the transaction level (server-side)
-    # and enforced by the Rust layer for desktop. For now, we allow the ingestion
-    # service to handle this via the balance projection. This will be enhanced in
-    # future phases to prevent negative balances at the server level.
 
     return None
 
@@ -414,12 +670,13 @@ async def _upsert_stock_balance(
     Both paths run within the caller's transaction, so there is no race window
     in a properly serialised transaction.
     """
-    stmt = select(StockBalance).where(
-        StockBalance.store_id == store_id,
-        StockBalance.product_id == product_id,
-        StockBalance.stock_bucket == stock_bucket,
-    )
-    result = await db.execute(stmt)
+    with db.no_autoflush:
+        stmt = select(StockBalance).where(
+            StockBalance.store_id == store_id,
+            StockBalance.product_id == product_id,
+            StockBalance.stock_bucket == stock_bucket,
+        )
+        result = await db.execute(stmt)
     balance: StockBalance | None = result.scalars().first()
 
     now = _now_utc()

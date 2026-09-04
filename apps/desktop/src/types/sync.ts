@@ -17,7 +17,7 @@ export interface TransactionPushItem {
   movement_type: string;
   quantity_delta: number;
   occurred_at: string;
-  user_id: string;
+  user_id: string | number;
   device_id: string;
   stock_bucket: string;
   reference_number?: string | null;

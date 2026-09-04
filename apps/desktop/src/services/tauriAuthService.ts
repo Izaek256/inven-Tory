@@ -80,6 +80,9 @@ export function _getMemSession(): AuthSession | null {
 // ---------------------------------------------------------------------------
 
 async function _secureWrite(session: AuthSession): Promise<void> {
+  // Always update in-memory cache first for immediate consistency
+  _memSession = session;
+
   if (isTauriEnvironment()) {
     try {
       // Dynamic import so the module tree-shakes cleanly in web/test builds.
@@ -87,23 +90,33 @@ async function _secureWrite(session: AuthSession): Promise<void> {
       const store = await load(STORE_FILE, { autoSave: true });
       await store.set(SESSION_KEY, session);
       await store.save();
+      // eslint-disable-next-line no-console
+      console.log('[AuthService] Secure write completed to Tauri store');
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.warn('[AuthService] Secure write failed, falling back to memory:', err);
-      _memSession = session;
+      console.warn('[AuthService] Secure write failed, using in-memory fallback:', err);
+      // _memSession is already set above
     }
-  } else {
-    _memSession = session;
   }
 }
 
 async function _secureRead(): Promise<AuthSession | null> {
+  // Check in-memory cache first for immediate consistency
+  if (_memSession) {
+    return _memSession;
+  }
+
   if (isTauriEnvironment()) {
     try {
       const { load } = await import('@tauri-apps/plugin-store');
       const store = await load(STORE_FILE, { autoSave: false });
       const val = await store.get<AuthSession>(SESSION_KEY);
-      return val ?? null;
+      if (val) {
+        // Cache the loaded value for future reads
+        _memSession = val;
+        return val;
+      }
+      return null;
     } catch {
       return _memSession;
     }
@@ -235,6 +248,7 @@ export async function login(
 
   // ── 1. Tauri native app — local SQLite bcrypt check ───────────────────────
   if (isTauriEnvironment()) {
+    console.time('[AuthService] local_login');
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       const local = await invoke<{
@@ -262,9 +276,15 @@ export async function login(
 
       await _secureWrite(session);
       // Background: try to get a real server JWT for sync
+      // eslint-disable-next-line no-console
+      console.log('[AuthService] Local login successful, starting background token upgrade');
+
+      // Fire upgrade in background without awaiting - login() resolves immediately
       void _tryUpgradeToServerToken(username, password, resolvedDeviceId, apiBaseUrl, session);
+      console.timeEnd('[AuthService] local_login');
       return session;
     } catch (localErr) {
+      console.timeEnd('[AuthService] local_login');
       const msg = localErr instanceof Error ? localErr.message : String(localErr);
       if (!msg.includes('Offline login not available')) {
         throw localErr;
@@ -402,12 +422,28 @@ async function _apiLogin(
   password: string,
   deviceId: string,
   apiBaseUrl?: string,
+  timeoutMs: number = 60000,
 ): Promise<AuthSession> {
   const baseUrl = apiBaseUrl || API_BASE_URL;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000); // Increased from 1.5s to 15s
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let resp: Response;
   try {
+    // eslint-disable-next-line no-console
+    console.log(
+      '[AuthService] API LOGIN START - URL:',
+      `${baseUrl}/auth/login`,
+      'Username:',
+      username,
+      'Device:',
+      deviceId,
+    );
+    // eslint-disable-next-line no-console
+    console.log(
+      '[AuthService] Network status:',
+      typeof navigator !== 'undefined' ? navigator.onLine : 'unknown',
+    );
+
     resp = await fetch(`${baseUrl}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -418,9 +454,14 @@ async function _apiLogin(
     clearTimeout(timer);
   }
 
+  // eslint-disable-next-line no-console
+  console.log('[AuthService] API LOGIN SUCCESS - Got response');
+
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));
     const detail = (body as { detail?: string }).detail ?? resp.statusText;
+    // eslint-disable-next-line no-console
+    console.error('[AuthService] API LOGIN FAILED - Status:', resp.status, 'Detail:', detail);
     throw new Error(detail);
   }
 
@@ -458,23 +499,89 @@ async function _tryUpgradeToServerToken(
   deviceId: string,
   apiBaseUrl: string | undefined,
   currentSession: AuthSession,
-): Promise<void> {
+): Promise<AuthSession | null> {
+  console.time('[AuthService] token_upgrade');
   try {
     const resolvedApiBaseUrl = apiBaseUrl || API_BASE_URL;
     console.info('[AuthService] Background token upgrade to:', resolvedApiBaseUrl);
     // eslint-disable-next-line no-console
     console.log('[AuthService] TOKEN UPGRADE START - Username:', username, 'Device:', deviceId);
-    const upgraded = await _apiLogin(username, password, deviceId, resolvedApiBaseUrl);
+
+    // Check if we're online first
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+    // eslint-disable-next-line no-console
+    console.log('[AuthService] Network status before upgrade:', isOnline);
+
+    if (!isOnline) {
+      console.timeEnd('[AuthService] token_upgrade');
+      return null;
+    }
+
+    // Test basic connectivity first - short-circuit on failure
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[AuthService] Testing connectivity to:', resolvedApiBaseUrl);
+      const healthCheck = await fetch(`${resolvedApiBaseUrl.replace('/api/v1', '')}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(8000),
+      });
+      // eslint-disable-next-line no-console
+      console.log('[AuthService] Health check status:', healthCheck.status);
+      if (!healthCheck.ok) {
+        console.warn(
+          '[AuthService] Health check returned non-OK status, skipping upgrade this cycle',
+        );
+        console.timeEnd('[AuthService] token_upgrade');
+        return null;
+      }
+    } catch (healthErr) {
+      console.warn('[AuthService] Health check failed, skipping upgrade this cycle:', healthErr);
+      console.timeEnd('[AuthService] token_upgrade');
+      return null;
+    }
+
+    const upgraded = await _apiLogin(username, password, deviceId, resolvedApiBaseUrl, 15000);
     // Merge: keep local profile data, replace token
-    await _secureWrite({ ...currentSession, ...upgraded });
+    const mergedSession = { ...currentSession, ...upgraded };
+    // eslint-disable-next-line no-console
+    console.log(
+      '[AuthService] Writing upgraded session to storage, token:',
+      upgraded.access_token.substring(0, 20) + '...',
+    );
+    await _secureWrite(mergedSession);
+
+    // Verify the write worked by reading it back
+    const verifySession = await _secureRead();
+    // eslint-disable-next-line no-console
+    console.log(
+      '[AuthService] Verify write - token starts with:',
+      verifySession?.access_token.substring(0, 20) + '...',
+    );
+
     console.info('[AuthService] Background token upgrade successful');
     // eslint-disable-next-line no-console
-    console.log('[AuthService] TOKEN UPGRADE SUCCESS');
+    console.log('[AuthService] TOKEN UPGRADE SUCCESS - Triggering sync');
+
+    // Trigger a sync after successful token upgrade
+    try {
+      const { triggerSync } = await import('./tauriSyncService');
+      void triggerSync({ apiBaseUrl: resolvedApiBaseUrl, force: true });
+      // eslint-disable-next-line no-console
+      console.log('[AuthService] SYNC TRIGGERED AFTER TOKEN UPGRADE');
+    } catch (syncErr) {
+      // eslint-disable-next-line no-console
+      console.error('[AuthService] Failed to trigger sync after upgrade:', syncErr);
+    }
+
+    console.timeEnd('[AuthService] token_upgrade');
+    return mergedSession;
   } catch (err) {
     // Network unavailable or server error — offline session stays as-is
     console.warn('[AuthService] Background token upgrade failed:', err);
     // eslint-disable-next-line no-console
     console.error('[AuthService] TOKEN UPGRADE FAILED:', err);
+    console.timeEnd('[AuthService] token_upgrade');
+    return null;
   }
 }
 
@@ -584,53 +691,24 @@ export async function getAccessToken(): Promise<string | null> {
 
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
+  // Debug logging to see what token we have
+  // eslint-disable-next-line no-console
+  console.log(
+    '[AuthService] getAccessToken - current token:',
+    session.access_token.substring(0, 20) + '...',
+  );
+
   // Offline sentinel tokens cannot be validated by central API JWT middleware.
-  // Try to upgrade using cached credentials if online.
+  // The background upgrade in login() handles this - don't interfere here.
+  // Return null to let sync wait for the background upgrade to complete.
   if (
     session.access_token.startsWith('offline:') ||
     session.access_token.startsWith('dev-offline:') ||
     session.access_token.startsWith('dev-local:')
   ) {
-    if (isOnline) {
-      const creds = await _secureReadCredentials();
-      if (creds) {
-        try {
-          // Use the stored API base URL from credentials, or fall back to env/default
-          const apiBaseUrl = creds.apiBaseUrl || API_BASE_URL;
-          console.info('[AuthService] Attempting token upgrade to:', apiBaseUrl);
-          // eslint-disable-next-line no-console
-          console.log(
-            '[AuthService] TOKEN UPGRADE ATTEMPT - Username:',
-            creds.username,
-            'API:',
-            apiBaseUrl,
-          );
-          const upgraded = await _apiLogin(
-            creds.username,
-            creds.password,
-            creds.deviceId || 'SINGLE-USER-DEVICE',
-            apiBaseUrl,
-          );
-          console.info('[AuthService] Token upgrade successful');
-          // eslint-disable-next-line no-console
-          console.log('[AuthService] TOKEN UPGRADE SUCCESSFUL');
-          return upgraded.access_token;
-        } catch (err) {
-          // Log upgrade failure for debugging
-          console.warn('[AuthService] Token upgrade failed:', err);
-          // eslint-disable-next-line no-console
-          console.error('[AuthService] TOKEN UPGRADE ERROR:', err);
-        }
-      } else {
-        console.warn('[AuthService] No cached credentials available for token upgrade');
-        // eslint-disable-next-line no-console
-        console.log('[AuthService] NO CACHED CREDENTIALS');
-      }
-    } else {
-      console.info('[AuthService] Offline - cannot upgrade token');
-      // eslint-disable-next-line no-console
-      console.log('[AuthService] OFFLINE - CANNOT UPGRADE');
-    }
+    console.info('[AuthService] Offline token detected - background upgrade should handle this');
+    // eslint-disable-next-line no-console
+    console.log('[AuthService] OFFLINE TOKEN - waiting for background upgrade');
     return null;
   }
 

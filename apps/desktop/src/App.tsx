@@ -191,8 +191,12 @@ export function App(): React.ReactElement {
       console.info('[App] Starting background sync with API base URL:', apiBaseUrl);
       // eslint-disable-next-line no-console
       console.log('[App] AUTH STATE:', authState, 'API URL:', apiBaseUrl);
+
+      // Start background sync immediately
       startBackgroundSync({ apiBaseUrl }, 30_000);
-      void triggerSync({ apiBaseUrl })
+
+      // Trigger initial sync immediately (token upgrade should be synchronous now)
+      void triggerSync({ apiBaseUrl, force: true })
         .then(() => {
           console.info('[App] Initial sync completed, fetching stores');
           // eslint-disable-next-line no-console

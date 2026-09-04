@@ -32,9 +32,10 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,6 +52,25 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 
+def _coerce_int(v: Any) -> int:
+    """Accept int or numeric string and return int; raise ValueError otherwise."""
+    if isinstance(v, bool):
+        raise TypeError("user_id must be a positive integer, not a boolean")
+    if isinstance(v, int):
+        if v <= 0:
+            raise ValueError("user_id must be a positive integer")
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s.isdigit():
+            raise ValueError("user_id must be a valid positive integer")
+        iv = int(s)
+        if iv <= 0:
+            raise ValueError("user_id must be a positive integer")
+        return iv
+    raise TypeError(f"user_id must be an integer or numeric string, got {type(v).__name__}")
+
+
 # ---------------------------------------------------------------------------
 # Push schemas
 # ---------------------------------------------------------------------------
@@ -65,7 +85,7 @@ class TransactionPushItem(BaseModel):
     movement_type: str = Field(..., min_length=1, max_length=50)
     quantity_delta: int
     occurred_at: datetime
-    user_id: str = Field(..., min_length=1, max_length=36)
+    user_id: Annotated[int, BeforeValidator(_coerce_int)]
     device_id: str = Field(..., min_length=1, max_length=36)
     stock_bucket: str = Field(default="AVAILABLE", max_length=50)
     reference_number: str | None = None
@@ -207,8 +227,10 @@ async def push_events(
     payloads: list[TransactionPayload] = []
 
     for item in body.events:
-        # Use authenticated user's ID if local payload has offline/mismatched user_id
-        effective_user_id = str(current_user.id)
+        # Always use the authenticated user's integer ID — ignore any
+        # user_id carried in the payload (defence-in-depth).  current_user.id
+        # is already a PostgreSQL integer column.
+        effective_user_id: int = int(current_user.id)
 
         payloads.append(
             TransactionPayload(

@@ -68,7 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
     };
 
     fetchPendingCount();
-    const interval = setInterval(fetchPendingCount, 1000);
+    const interval = setInterval(fetchPendingCount, 10000);
 
     // Fetch last sync timestamp on mount and every 5 s (SYNC-009)
     const fetchLastSync = async (): Promise<void> => {
