@@ -41,7 +41,9 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.inventory_transaction import InventoryTransaction
+from app.models.product import Product
 from app.models.stock_balance import StockBalance
+from app.models.store import Store
 from app.models.sync_receipt import SyncReceipt
 
 # ---------------------------------------------------------------------------
@@ -172,6 +174,31 @@ async def ingest_transaction(
         db.add(receipt)
         await db.flush()
         return receipt
+
+    # 2b. Auto-provision missing store or product in central database if needed
+    store_exists = await db.scalar(select(Store.id).where(Store.id == payload.store_id).limit(1))
+    if not store_exists:
+        auto_store = Store(
+            id=payload.store_id,
+            code=payload.store_id[:10].upper(),
+            name=f"Auto Store ({payload.store_id[:10]})",
+            is_active=True,
+        )
+        db.add(auto_store)
+        await db.flush()
+
+    prod_exists = await db.scalar(select(Product.id).where(Product.id == payload.product_id).limit(1))
+    if not prod_exists:
+        auto_prod = Product(
+            id=payload.product_id,
+            sku=f"AUTO-{payload.product_id[:8]}",
+            name=f"Offline Item ({payload.product_id[:8]})",
+            category="General",
+            unit="pcs",
+            is_active=True,
+        )
+        db.add(auto_prod)
+        await db.flush()
 
     # 3. Negative balance check for operations that would decrease stock
     if payload.quantity_delta < 0:

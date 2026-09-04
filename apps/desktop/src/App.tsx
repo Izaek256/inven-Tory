@@ -199,6 +199,28 @@ export function App(): React.ReactElement {
     }
   }, [authState, fetchStores]);
 
+  // Online reconnection listener: immediately attempt token upgrade and sync outbox
+  useEffect(() => {
+    const handleOnline = (): void => {
+      if (authState === 'authenticated' || authState === 'expired_offline') {
+        const envBaseUrl =
+          typeof import.meta !== 'undefined'
+            ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+            : undefined;
+        const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+        void triggerSync({ apiBaseUrl, force: true })
+          .then(() => fetchStores())
+          .catch(() => undefined);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return (): void => {
+      window.removeEventListener('online', handleOnline);
+    };
+  }, [authState, fetchStores]);
+
   // Performance instrumentation
   useEffect(() => {
     if (!loading && (authState === 'authenticated' || authState === 'expired_offline')) {

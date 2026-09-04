@@ -29,6 +29,20 @@ interface SellStockInput {
   device_id: string;
 }
 
+function _triggerAutoSync(): void {
+  const envBaseUrl =
+    typeof import.meta !== 'undefined'
+      ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+      : undefined;
+  const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+  import('./tauriSyncService')
+    .then(({ triggerSync }) => {
+      void triggerSync({ apiBaseUrl }).catch(() => undefined);
+    })
+    .catch(() => undefined);
+}
+
 // @visibleForTesting
 export function getMockBalance(
   storeId: string,
@@ -99,7 +113,9 @@ export async function receiveStock(input: CreateTransactionInput): Promise<Inven
         user_id: input.user_id,
         device_id: input.device_id,
       };
-      return await invoke<InventoryTransaction>('receive_stock', { input: receiveInput });
+      const res = await invoke<InventoryTransaction>('receive_stock', { input: receiveInput });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransactionService] Error invoking receive_stock:', err);
@@ -128,7 +144,9 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
         user_id: input.user_id,
         device_id: input.device_id,
       };
-      return await invoke<InventoryTransaction>('sell_stock', { input: sellInput });
+      const res = await invoke<InventoryTransaction>('sell_stock', { input: sellInput });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransactionService] Error invoking sell_stock:', err);
@@ -150,7 +168,9 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
 export async function returnStock(input: ReturnStockInput): Promise<InventoryTransaction> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<InventoryTransaction>('return_stock', { input });
+      const res = await invoke<InventoryTransaction>('return_stock', { input });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransactionService] Error invoking return_stock:', err);
@@ -173,7 +193,9 @@ export async function moveStockBucket(
 ): Promise<InventoryTransaction[]> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<InventoryTransaction[]>('move_stock_bucket', { input });
+      const res = await invoke<InventoryTransaction[]>('move_stock_bucket', { input });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransactionService] Error invoking move_stock_bucket:', err);
@@ -262,7 +284,9 @@ export async function getStockBalanceForBucket(
 export async function adjustStock(input: AdjustStockInput): Promise<InventoryTransaction> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<InventoryTransaction>('adjust_stock', { input });
+      const res = await invoke<InventoryTransaction>('adjust_stock', { input });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransactionService] Error invoking adjust_stock:', err);

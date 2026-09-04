@@ -1692,6 +1692,9 @@ pub mod commands {
             "movement_type": "TRANSFER",
             "stock_bucket": "AVAILABLE",
             "quantity_delta": quantity_delta,
+            "occurred_at": now,
+            "user_id": user_id,
+            "device_id": device_id,
             "transfer_id": transfer_id,
             "reference_number": format!("TRF-DISP-{}", transfer_id)
         }))
@@ -1799,6 +1802,9 @@ pub mod commands {
             "movement_type": "TRANSFER",
             "stock_bucket": "AVAILABLE",
             "quantity_delta": quantity_delta,
+            "occurred_at": now,
+            "user_id": user_id,
+            "device_id": device_id,
             "transfer_id": transfer_id,
             "reference_number": format!("TRF-RECV-{}", transfer_id)
         }))
@@ -1898,6 +1904,9 @@ pub mod commands {
                 "movement_type": "TRANSFER",
                 "stock_bucket": "AVAILABLE",
                 "quantity_delta": transfer.quantity,
+                "occurred_at": now,
+                "user_id": user_id,
+                "device_id": device_id,
                 "transfer_id": transfer_id,
                 "reference_number": format!("TRF-CNCL-{}", transfer_id)
             }))
@@ -2117,13 +2126,37 @@ pub mod commands {
     /// The sync worker reads these, posts them to /api/v1/sync/push, then calls
     /// update_outbox_event_status to advance each event's state.
     #[tauri::command]
-    pub fn get_pending_outbox_events(limit: Option<i32>) -> Result<Vec<serde_json::Value>, String> {
+    pub fn get_pending_outbox_events(
+        limit: Option<i32>,
+        force: Option<bool>,
+    ) -> Result<Vec<serde_json::Value>, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
         let batch_limit = limit.unwrap_or(100).max(1).min(500);
+        let force_sync = force.unwrap_or(false);
         let now = now_iso();
+
+        // 1. Revert any orphaned events left stuck in 'SENDING' or 'PERMANENT_REJECTION' back to 'PENDING'
+        if force_sync {
+            conn.execute(
+                "UPDATE outbox_events SET status = 'PENDING' WHERE status IN ('SENDING', 'PERMANENT_REJECTION')",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset outbox events: {}", e))?;
+            conn.execute(
+                "UPDATE outbox_events SET next_attempt_at = NULL WHERE status = 'RETRYABLE_ERROR'",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset retry backoff: {}", e))?;
+        } else {
+            conn.execute(
+                "UPDATE outbox_events SET status = 'PENDING' WHERE status = 'SENDING'",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset sending outbox events: {}", e))?;
+        }
 
         let mut stmt = conn
             .prepare(

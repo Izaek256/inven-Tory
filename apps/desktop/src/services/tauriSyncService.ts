@@ -65,6 +65,8 @@ export interface SyncConfig {
   batchSize?: number;
   /** Abort signal for cancelling in-flight fetch calls */
   signal?: AbortSignal;
+  /** Force sync attempt: reset retry backoffs and clear trapped SENDING events */
+  force?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,9 +109,9 @@ export function setMockSyncState(partial: Partial<ClientSyncState>): void {
 // Tauri IPC wrappers
 // ---------------------------------------------------------------------------
 
-async function _getPendingOutboxEvents(limit: number): Promise<OutboxEventRow[]> {
+async function _getPendingOutboxEvents(limit: number, force?: boolean): Promise<OutboxEventRow[]> {
   if (isTauriEnvironment()) {
-    return invoke<OutboxEventRow[]>('get_pending_outbox_events', { limit });
+    return invoke<OutboxEventRow[]>('get_pending_outbox_events', { limit, force: force ?? false });
   }
   return [];
 }
@@ -358,7 +360,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     let keepGoing = true;
 
     while (keepGoing) {
-      const rows = await _getPendingOutboxEvents(batchSize);
+      const rows = await _getPendingOutboxEvents(batchSize, config.force);
 
       if (rows.length === 0) {
         keepGoing = false;

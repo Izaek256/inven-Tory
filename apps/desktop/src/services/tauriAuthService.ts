@@ -51,6 +51,7 @@ const API_BASE_URL: string = _getApiBaseUrl();
 
 const STORE_FILE = 'auth.dat';
 const SESSION_KEY = 'auth_session';
+const CREDENTIALS_KEY = 'last_credentials';
 
 // ---------------------------------------------------------------------------
 // In-memory fallback for non-Tauri / test environments
@@ -107,16 +108,62 @@ async function _secureRead(): Promise<AuthSession | null> {
 
 async function _secureClear(): Promise<void> {
   _memSession = null;
+  _lastCredentials = null;
   if (isTauriEnvironment()) {
     try {
       const { load } = await import('@tauri-apps/plugin-store');
       const store = await load(STORE_FILE, { autoSave: true });
       await store.delete(SESSION_KEY);
+      await store.delete(CREDENTIALS_KEY);
       await store.save();
     } catch {
       // Best-effort; session already cleared from memory
     }
   }
+}
+
+async function _secureWriteCredentials(
+  creds: { username: string; password: string; deviceId?: string; apiBaseUrl?: string } | null,
+): Promise<void> {
+  _lastCredentials = creds;
+  if (isTauriEnvironment() && creds) {
+    try {
+      const { load } = await import('@tauri-apps/plugin-store');
+      const store = await load(STORE_FILE, { autoSave: true });
+      await store.set(CREDENTIALS_KEY, creds);
+      await store.save();
+    } catch {
+      // Best-effort
+    }
+  }
+}
+
+async function _secureReadCredentials(): Promise<{
+  username: string;
+  password: string;
+  deviceId?: string;
+  apiBaseUrl?: string;
+} | null> {
+  if (_lastCredentials) return _lastCredentials;
+  if (isTauriEnvironment()) {
+    try {
+      const { load } = await import('@tauri-apps/plugin-store');
+      const store = await load(STORE_FILE, { autoSave: false });
+      const val = await store.get<{
+        username: string;
+        password: string;
+        deviceId?: string;
+        apiBaseUrl?: string;
+      }>(CREDENTIALS_KEY);
+      if (val) {
+        _lastCredentials = val;
+        return val;
+      }
+    } catch {
+      // Ignore
+    }
+  }
+  return _lastCredentials;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +220,7 @@ export async function login(
   // stable default. App.tsx in the desktop shell always passes one, but
   // OfflineAuthBanner and other call sites may omit it in single-user mode.
   const resolvedDeviceId = (deviceId && deviceId.trim()) || 'SINGLE-USER-DEVICE';
-  _lastCredentials = { username, password, deviceId: resolvedDeviceId, apiBaseUrl };
+  await _secureWriteCredentials({ username, password, deviceId: resolvedDeviceId, apiBaseUrl });
 
   // ── 1. Tauri native app — local SQLite bcrypt check ───────────────────────
   if (isTauriEnvironment()) {
@@ -346,11 +393,19 @@ async function _apiLogin(
   apiBaseUrl?: string,
 ): Promise<AuthSession> {
   const baseUrl = apiBaseUrl || API_BASE_URL;
-  const resp = await fetch(`${baseUrl}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, device_id: deviceId }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  let resp: Response;
+  try {
+    resp = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, device_id: deviceId }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));
@@ -513,13 +568,14 @@ export async function getAccessToken(): Promise<string | null> {
     session.access_token.startsWith('dev-offline:') ||
     session.access_token.startsWith('dev-local:')
   ) {
-    if (_lastCredentials) {
+    const creds = await _secureReadCredentials();
+    if (creds) {
       try {
         const upgraded = await _apiLogin(
-          _lastCredentials.username,
-          _lastCredentials.password,
-          _lastCredentials.deviceId || 'SINGLE-USER-DEVICE',
-          _lastCredentials.apiBaseUrl,
+          creds.username,
+          creds.password,
+          creds.deviceId || 'SINGLE-USER-DEVICE',
+          creds.apiBaseUrl,
         );
         return upgraded.access_token;
       } catch {

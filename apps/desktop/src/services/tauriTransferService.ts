@@ -2,6 +2,20 @@ import { invoke } from '@tauri-apps/api/core';
 import { Transfer, CreateTransferInput } from '../types/transfer';
 import { isTauriEnvironment } from './tauriStoreService';
 
+function _triggerAutoSync(): void {
+  const envBaseUrl =
+    typeof import.meta !== 'undefined'
+      ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+      : undefined;
+  const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+  import('./tauriSyncService')
+    .then(({ triggerSync }) => {
+      void triggerSync({ apiBaseUrl }).catch(() => undefined);
+    })
+    .catch(() => undefined);
+}
+
 /**
  * Fetch all multi-store transfers (Section 11).
  */
@@ -52,11 +66,13 @@ export async function dispatchTransfer(
 ): Promise<Transfer> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Transfer>('dispatch_transfer', {
+      const res = await invoke<Transfer>('dispatch_transfer', {
         transfer_id: transferId,
         user_id: userId,
         device_id: deviceId,
       });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransferService] Error invoking dispatch_transfer:', err);
@@ -80,11 +96,13 @@ export async function receiveTransfer(
 ): Promise<Transfer> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Transfer>('receive_transfer', {
+      const res = await invoke<Transfer>('receive_transfer', {
         transfer_id: transferId,
         user_id: userId,
         device_id: deviceId,
       });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransferService] Error invoking receive_transfer:', err);
@@ -108,11 +126,13 @@ export async function cancelTransfer(
 ): Promise<Transfer> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Transfer>('cancel_transfer', {
+      const res = await invoke<Transfer>('cancel_transfer', {
         transfer_id: transferId,
         user_id: userId,
         device_id: deviceId,
       });
+      _triggerAutoSync();
+      return res;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriTransferService] Error invoking cancel_transfer:', err);
