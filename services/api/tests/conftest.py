@@ -103,6 +103,7 @@ async def _make_store(db: AsyncSession, **kwargs: Any) -> Store:
         id=str(uuid.uuid4()),
         code=kwargs.get("code", f"ST-{uuid.uuid4().hex[:6].upper()}"),
         name=kwargs.get("name", "Test Store"),
+        address=kwargs.get("address", None),
         is_active=kwargs.get("is_active", True),
         created_at=datetime.now(UTC),
         updated_at=datetime.now(UTC),

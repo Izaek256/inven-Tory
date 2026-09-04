@@ -98,6 +98,11 @@ class UpdateStoreRequest(BaseModel):
     address: str | None = None
 
 
+class PatchStoreRequest(BaseModel):
+    name: str | None = None
+    address: str | None = None
+
+
 class ToggleStoreActiveRequest(BaseModel):
     is_active: bool
 
@@ -226,6 +231,42 @@ async def update_store(
 
     store.name = request.name
     store.address = request.address
+    await db.commit()
+    await db.refresh(store)
+
+    return StoreListItem(
+        id=store.id,
+        code=store.code,
+        name=store.name,
+        address=store.address,
+        is_active=bool(store.is_active),
+    )
+
+
+@router.patch(
+    "/{store_id}",
+    response_model=StoreListItem,
+    status_code=status.HTTP_200_OK,
+    summary="Partially update store fields",
+)
+async def patch_store(
+    store_id: str,
+    request: PatchStoreRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.STORE_ADMIN)),  # noqa: B008
+) -> StoreListItem:
+    """
+    Partially update a store's name and address. Only fields present in request body are updated.
+    Code and ID are immutable.
+    """
+    store = await db.get(Store, store_id)
+    if store is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Store not found")
+
+    update_data = request.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(store, field, value)
+
     await db.commit()
     await db.refresh(store)
 

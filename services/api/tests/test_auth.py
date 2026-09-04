@@ -101,6 +101,8 @@ async def _seed(
         store_id=store.id,
         device_name="Test Device",
         is_active=device_active,
+        revocation_reason="Revoked by test" if not device_active else None,
+        revoked_at=datetime.now(UTC) if not device_active else None,
         registered_at=datetime.now(UTC),
         registered_by_user_id=user.id,
     )

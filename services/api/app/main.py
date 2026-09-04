@@ -5,11 +5,40 @@ Routers and middleware are registered here. Business logic
 lives in services; domain rules live in packages/domain.
 """
 
+import logging
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.api.v1 import auth, devices, products, stores, sync, transactions, transfers, users
 from app.core.config import settings
+from app.db import get_engine
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup sanity check for central database connectivity."""
+    import os
+
+    if "PYTEST_CURRENT_TEST" not in os.environ and not settings.database_url.startswith("sqlite"):
+        try:
+            engine = get_engine()
+            async with engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+        except Exception as exc:
+            logger.error("Database connection failed during startup: %s", exc)
+            raise RuntimeError(
+                f"Database connection failed: {exc}. "
+                "Please check your DATABASE_URL in .env and ensure special characters in passwords "
+                "(e.g. '@', '#', '%', ':') are percent-encoded (e.g. '@' -> '%40')."
+            ) from exc
+    yield
+
 
 app = FastAPI(
     title="INVENTORY Tory API",
@@ -23,14 +52,22 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Device-Id",
+        "Accept",
+        "Origin",
+        "X-Requested-With",
+    ],
 )
 
 

@@ -94,6 +94,17 @@ class UpdateProductRequest(BaseModel):
     serial_tracking_enabled: bool = False
 
 
+class PatchProductRequest(BaseModel):
+    name: str | None = None
+    brand: str | None = None
+    model: str | None = None
+    category: str | None = None
+    unit: str | None = None
+    barcode: str | None = None
+    alternate_names: str | None = None
+    serial_tracking_enabled: bool | None = None
+
+
 class ToggleProductActiveRequest(BaseModel):
     is_active: bool
 
@@ -272,6 +283,48 @@ async def update_product(
     product.barcode = request.barcode
     product.alternate_names = request.alternate_names
     product.serial_tracking_enabled = request.serial_tracking_enabled
+    await db.commit()
+    await db.refresh(product)
+
+    return ProductListItem(
+        id=product.id,
+        sku=product.sku,
+        name=product.name,
+        brand=product.brand,
+        model=product.model,
+        category=product.category,
+        unit=product.unit or "pcs",
+        barcode=product.barcode,
+        alternate_names=product.alternate_names,
+        serial_tracking_enabled=bool(product.serial_tracking_enabled),
+        is_active=bool(product.is_active),
+    )
+
+
+@router.patch(
+    "/{product_id}",
+    response_model=ProductListItem,
+    status_code=status.HTTP_200_OK,
+    summary="Partially update product fields",
+)
+async def patch_product(
+    product_id: str,
+    request: PatchProductRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(require_permission(Permission.PRODUCT_ADMIN)),  # noqa: B008
+) -> ProductListItem:
+    """
+    Partially update a product's fields. Only fields present in request body are updated.
+    SKU and ID are immutable.
+    """
+    product = await db.get(Product, product_id)
+    if product is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
+
+    update_data = request.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(product, field, value)
+
     await db.commit()
     await db.refresh(product)
 
