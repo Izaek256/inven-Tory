@@ -405,7 +405,7 @@ async function _apiLogin(
 ): Promise<AuthSession> {
   const baseUrl = apiBaseUrl || API_BASE_URL;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1500);
+  const timer = setTimeout(() => controller.abort(), 15000); // Increased from 1.5s to 15s
   let resp: Response;
   try {
     resp = await fetch(`${baseUrl}/auth/login`, {
@@ -462,13 +462,19 @@ async function _tryUpgradeToServerToken(
   try {
     const resolvedApiBaseUrl = apiBaseUrl || API_BASE_URL;
     console.info('[AuthService] Background token upgrade to:', resolvedApiBaseUrl);
+    // eslint-disable-next-line no-console
+    console.log('[AuthService] TOKEN UPGRADE START - Username:', username, 'Device:', deviceId);
     const upgraded = await _apiLogin(username, password, deviceId, resolvedApiBaseUrl);
     // Merge: keep local profile data, replace token
     await _secureWrite({ ...currentSession, ...upgraded });
     console.info('[AuthService] Background token upgrade successful');
+    // eslint-disable-next-line no-console
+    console.log('[AuthService] TOKEN UPGRADE SUCCESS');
   } catch (err) {
     // Network unavailable or server error — offline session stays as-is
     console.warn('[AuthService] Background token upgrade failed:', err);
+    // eslint-disable-next-line no-console
+    console.error('[AuthService] TOKEN UPGRADE FAILED:', err);
   }
 }
 
@@ -592,6 +598,13 @@ export async function getAccessToken(): Promise<string | null> {
           // Use the stored API base URL from credentials, or fall back to env/default
           const apiBaseUrl = creds.apiBaseUrl || API_BASE_URL;
           console.info('[AuthService] Attempting token upgrade to:', apiBaseUrl);
+          // eslint-disable-next-line no-console
+          console.log(
+            '[AuthService] TOKEN UPGRADE ATTEMPT - Username:',
+            creds.username,
+            'API:',
+            apiBaseUrl,
+          );
           const upgraded = await _apiLogin(
             creds.username,
             creds.password,
@@ -599,16 +612,24 @@ export async function getAccessToken(): Promise<string | null> {
             apiBaseUrl,
           );
           console.info('[AuthService] Token upgrade successful');
+          // eslint-disable-next-line no-console
+          console.log('[AuthService] TOKEN UPGRADE SUCCESSFUL');
           return upgraded.access_token;
         } catch (err) {
           // Log upgrade failure for debugging
           console.warn('[AuthService] Token upgrade failed:', err);
+          // eslint-disable-next-line no-console
+          console.error('[AuthService] TOKEN UPGRADE ERROR:', err);
         }
       } else {
         console.warn('[AuthService] No cached credentials available for token upgrade');
+        // eslint-disable-next-line no-console
+        console.log('[AuthService] NO CACHED CREDENTIALS');
       }
     } else {
       console.info('[AuthService] Offline - cannot upgrade token');
+      // eslint-disable-next-line no-console
+      console.log('[AuthService] OFFLINE - CANNOT UPGRADE');
     }
     return null;
   }
