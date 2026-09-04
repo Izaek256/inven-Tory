@@ -362,16 +362,8 @@ async function _httpPull(
  */
 export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> {
   if (_syncInProgress) {
-    console.info('[SyncService] Sync already in progress, skipping');
     return getSyncStatus();
   }
-
-  console.info('[SyncService] Starting sync with config:', {
-    apiBaseUrl: config.apiBaseUrl,
-    force: config.force,
-  });
-  // eslint-disable-next-line no-console
-  console.log('[SyncService] SYNC START - Config:', JSON.stringify(config));
 
   // Resolve access token — prefer explicit config.accessToken, then auth service.
   // Retry a few times if no token is available (background upgrade may still be in progress)
@@ -384,25 +376,15 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
       try {
         const { getAccessToken } = await import('./tauriAuthService');
         resolvedToken = (await getAccessToken()) ?? undefined;
-        console.info(
-          '[SyncService] Resolved access token:',
-          resolvedToken ? 'Token available' : 'No token',
-        );
-        // eslint-disable-next-line no-console
-        console.log('[SyncService] TOKEN RESOLVED:', resolvedToken ? 'YES' : 'NO');
 
         if (resolvedToken) {
           break; // Got token, no need to retry
         }
 
         if (attempt < maxRetries - 1) {
-          console.info(
-            `[SyncService] No token yet, retrying in ${retryDelayMs}ms (attempt ${attempt + 1}/${maxRetries})`,
-          );
           await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
         }
       } catch (err) {
-        console.warn('[SyncService] Failed to get access token:', err);
         // eslint-disable-next-line no-console
         console.error('[SyncService] TOKEN ERROR:', err);
         if (attempt < maxRetries - 1) {
@@ -417,21 +399,13 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
   // pending transactions.  The outbox continues to queue; sync resumes after
   // re-authentication.
   if (!resolvedToken) {
-    console.warn(
-      '[SyncService] No access token available - skipping sync (offline or token upgrade needed)',
-    );
-    // eslint-disable-next-line no-console
-    console.log('[SyncService] SYNC SKIPPED - NO TOKEN');
     _mockLastOutcome = 'offline';
     return getSyncStatus();
   }
 
   _syncInProgress = true;
-  // eslint-disable-next-line no-console
-  console.log('[SyncService] SYNC IN PROGRESS - Starting push loop');
 
   const batchSize = config.batchSize ?? 100;
-  let totalAccepted = 0;
   let totalRejected = 0;
   let hadRetryableError = false;
   let lastErrorMsg: string | null = null;
@@ -439,18 +413,12 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
   try {
     // ── Push loop ────────────────────────────────────────────────────────────
-    // eslint-disable-next-line no-console
-    console.log('[SyncService] PUSH LOOP START - Batch size:', batchSize);
     let keepGoing = true;
 
     while (keepGoing) {
       const rows = await _getPendingOutboxEvents(batchSize, config.force);
-      // eslint-disable-next-line no-console
-      console.log('[SyncService] FETCHED ROWS:', rows.length, 'pending events');
 
       if (rows.length === 0) {
-        // eslint-disable-next-line no-console
-        console.log('[SyncService] NO MORE ROWS - Push loop complete');
         keepGoing = false;
         break;
       }
@@ -485,17 +453,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
       // ingest_batch ordering and keeps the two sides consistent.
       const sortedItemsWithRows = _sortPushItems(itemsWithRows);
 
-      // Log the push payload for debugging
-      // eslint-disable-next-line no-console
-      console.log(
-        '[SyncService] Pushing items:',
-        JSON.stringify(
-          sortedItemsWithRows.map((x) => x.item),
-          null,
-          2,
-        ),
-      );
-
       try {
         const pushResp = await _httpPush(
           config.apiBaseUrl,
@@ -503,10 +460,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
           sortedItemsWithRows.map((x) => x.item),
           config.signal,
         );
-
-        // Log the push response for debugging
-        // eslint-disable-next-line no-console
-        console.log('[SyncService] Push response:', JSON.stringify(pushResp, null, 2));
 
         // Build a lookup map by transaction_id
         const receiptMap = new Map(pushResp.receipts.map((r) => [r.transaction_id, r]));
@@ -534,7 +487,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
                 receipt.received_at,
               ).catch(() => undefined),
             ]);
-            totalAccepted++;
           } else {
             // Server permanently rejected the event (validation failure)
             const rejectionReason = receipt.rejection_reason ?? 'Server rejected transaction';
@@ -582,49 +534,36 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     if (!hadRetryableError) {
       try {
         pullResponse = await _httpPull(config.apiBaseUrl, resolvedToken, config.signal);
-        // eslint-disable-next-line no-console
-        console.info(
-          `[SyncService] Pull complete: ${pullResponse.products.length} products, ` +
-            `${pullResponse.stores.length} stores`,
-        );
 
         // Upsert products and stores from server into local SQLite
         if (isTauriEnvironment()) {
           for (const product of pullResponse.products) {
             try {
               await invoke('upsert_product_from_server', { product });
-            } catch (err) {
-              // eslint-disable-next-line no-console
-              console.warn('[SyncService] Failed to upsert product:', product.id, err);
+            } catch {
+              // non-fatal upsert failure
             }
           }
           for (const store of pullResponse.stores) {
             try {
               await invoke('upsert_store_from_server', { store });
-            } catch (err) {
-              // eslint-disable-next-line no-console
-              console.warn('[SyncService] Failed to upsert store:', store.id, err);
+            } catch {
+              // non-fatal upsert failure
             }
           }
           if (pullResponse.stock_balances && pullResponse.stock_balances.length > 0) {
             for (const balance of pullResponse.stock_balances) {
               try {
                 await invoke('upsert_stock_balance_from_server', { balance });
-              } catch (err) {
-                // eslint-disable-next-line no-console
-                console.warn('[SyncService] Failed to upsert stock balance:', balance.id, err);
+              } catch {
+                // non-fatal upsert failure
               }
             }
           }
         }
-      } catch (pullError) {
+      } catch {
         // Pull failure is non-fatal — we still record a successful push sync time
-        const errMsg = pullError instanceof Error ? pullError.message : String(pullError);
-        // eslint-disable-next-line no-console
-        console.warn('[SyncService] Pull failed (non-fatal):', errMsg);
       }
-
-      // Store the last successful sync timestamp (SYNC-009)
       const syncTime = new Date().toISOString();
       await _setLastSyncTimestamp(syncTime);
       _mockLastSyncAt = syncTime;
@@ -638,12 +577,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
     _mockLastOutcome = outcome;
     _mockLastError = lastErrorMsg;
-
-    // eslint-disable-next-line no-console
-    console.info(
-      `[SyncService] Sync complete — accepted: ${totalAccepted}, rejected: ${totalRejected}, ` +
-        `retryable_error: ${hadRetryableError}`,
-    );
   } finally {
     _syncInProgress = false;
   }
@@ -668,16 +601,10 @@ export function startBackgroundSync(config: SyncConfig, intervalMs: number = 30_
   }
 
   // Fire immediately on first call, then repeat
-  void triggerSync(config).catch((err) => {
-    // eslint-disable-next-line no-console
-    console.warn('[SyncService] Background sync error (initial):', err);
-  });
+  void triggerSync(config).catch(() => undefined);
 
   _backgroundIntervalId = setInterval(() => {
-    void triggerSync(config).catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn('[SyncService] Background sync error:', err);
-    });
+    void triggerSync(config).catch(() => undefined);
   }, intervalMs);
 }
 

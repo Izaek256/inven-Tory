@@ -22,16 +22,16 @@ from datetime import UTC, datetime
 # Ensure the package is importable when run as a script
 sys.path.insert(0, "services/api")
 
-from app.db import Base, build_engine  # noqa: E402
-from app.models.inventory_transaction import InventoryTransaction  # noqa: E402
-from app.models.stock_balance import StockBalance  # noqa: E402
-from app.models.sync_receipt import SyncReceipt  # noqa: E402
-from app.services.ingestion import (  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+from app.db import Base, build_engine
+from app.models.inventory_transaction import InventoryTransaction
+from app.models.stock_balance import StockBalance
+from app.models.sync_receipt import SyncReceipt
+from app.services.ingestion import (
     TransactionPayload,
     ingest_batch,
 )
-from sqlalchemy.ext.asyncio import async_sessionmaker  # noqa: E402
-
 
 TX_ADJ = "TX-ADJ-18D21B62A1B09112"
 TX_REC = "TX-18D21A5DD6816CAD"

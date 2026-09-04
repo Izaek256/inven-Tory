@@ -188,29 +188,20 @@ export function App(): React.ReactElement {
           : undefined;
       const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
-      console.info('[App] Starting background sync with API base URL:', apiBaseUrl);
-      // eslint-disable-next-line no-console
-      console.log('[App] AUTH STATE:', authState, 'API URL:', apiBaseUrl);
-
       // Start background sync immediately
       startBackgroundSync({ apiBaseUrl }, 30_000);
 
       // Trigger initial sync immediately (token upgrade should be synchronous now)
       void triggerSync({ apiBaseUrl, force: true })
         .then(() => {
-          console.info('[App] Initial sync completed, fetching stores');
-          // eslint-disable-next-line no-console
-          console.log('[App] SYNC SUCCESS - stores fetched');
           return fetchStores();
         })
         .catch((err) => {
-          console.warn('[App] Initial sync failed:', err);
           // eslint-disable-next-line no-console
           console.error('[App] SYNC ERROR:', err);
         });
 
       return (): void => {
-        console.info('[App] Stopping background sync');
         stopBackgroundSync();
       };
     }
@@ -219,7 +210,6 @@ export function App(): React.ReactElement {
   // Online reconnection listener: immediately attempt token upgrade and sync outbox
   useEffect(() => {
     const handleOnline = (): void => {
-      console.info('[App] Network reconnection detected, triggering sync');
       if (authState === 'authenticated' || authState === 'expired_offline') {
         const envBaseUrl =
           typeof import.meta !== 'undefined'
@@ -227,15 +217,11 @@ export function App(): React.ReactElement {
             : undefined;
         const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
-        console.info('[App] Force sync on reconnection with API base URL:', apiBaseUrl);
         void triggerSync({ apiBaseUrl, force: true })
           .then(() => {
-            console.info('[App] Reconnection sync completed, fetching stores');
             return fetchStores();
           })
-          .catch((err) => {
-            console.warn('[App] Reconnection sync failed:', err);
-          });
+          .catch(() => undefined);
       }
     };
 
@@ -261,12 +247,6 @@ export function App(): React.ReactElement {
           performance.clearMarks('app-init-start');
           performance.clearMarks('app-interactive');
           performance.clearMeasures('cold-start-to-interactive');
-          // eslint-disable-next-line no-console
-          console.info(`[PERF] Cold start to interactive: ${duration.toFixed(2)}ms`);
-          if (duration > 3000) {
-            // eslint-disable-next-line no-console
-            console.warn(`[PERF-WARN] Cold start exceeded 3000ms budget (NFR-PERF-001)`);
-          }
         }
       } catch {
         // Non-fatal

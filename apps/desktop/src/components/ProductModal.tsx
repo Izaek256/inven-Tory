@@ -22,7 +22,10 @@ const DEFAULT_CATEGORIES = [
 const DEFAULT_UNITS = ['pcs', 'ctn', 'set', 'box', 'kg', 'm'];
 
 function generateSkuFromCategory(cat: string): string {
-  const clean = cat.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase();
+  const clean = cat
+    .replace(/[^A-Za-z0-9]/g, '')
+    .slice(0, 4)
+    .toUpperCase();
   const prefix = clean || 'PROD';
   const rand = Math.floor(1000 + Math.random() * 9000);
   return `${prefix}-${rand}`;

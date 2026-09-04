@@ -128,9 +128,7 @@ async def _global_json_exception_handler(request: Request, exc: Exception) -> JS
     if cors_origin:
         response.headers["Access-Control-Allow-Origin"] = cors_origin
         response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Allow-Methods"] = (
-            "GET, POST, PUT, PATCH, DELETE, OPTIONS"
-        )
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, PATCH, DELETE, OPTIONS"
         response.headers["Access-Control-Allow-Headers"] = (
             "Authorization, Content-Type, X-Device-Id, Accept, Origin, X-Requested-With"
         )

@@ -261,7 +261,6 @@ function App(): React.ReactElement {
 
       {/* ── Body ── */}
       <div className="app-body">
-
         {/* Sidebar */}
         <aside className="app-sidebar" data-testid="web-sidebar">
           {NAV_ITEMS.map((item) => {

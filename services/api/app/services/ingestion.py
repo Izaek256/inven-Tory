@@ -41,12 +41,12 @@ from datetime import UTC, datetime
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.device import Device
 from app.models.inventory_transaction import InventoryTransaction
 from app.models.product import Product
 from app.models.stock_balance import StockBalance
 from app.models.store import Store
 from app.models.sync_receipt import SyncReceipt
-from app.models.device import Device
 
 # ---------------------------------------------------------------------------
 # Input payload schema
@@ -341,9 +341,7 @@ async def ingest_transaction(
             # Bug-on-server, transient DB error, ORM type mistake, etc.
             # Always safe to retry with the exact same payload.
             should_retry = True
-        elif await _stale_domain_rejection_should_retry(
-            existing_receipt, payload, db
-        ):
+        elif await _stale_domain_rejection_should_retry(existing_receipt, payload, db):
             # Domain rejection whose underlying precondition (e.g. a 0
             # balance) no longer holds — typically because an earlier
             # event in the same batch (the ADJUSTMENT) has just been
@@ -365,10 +363,7 @@ async def ingest_transaction(
         db.expunge(existing_receipt)
         # Safety: sanity check identity map no longer has a row for PK.
         for tracked in list(db.identity_map.values()):
-            if (
-                isinstance(tracked, SyncReceipt)
-                and tracked.transaction_id == stale_pk
-            ):
+            if isinstance(tracked, SyncReceipt) and tracked.transaction_id == stale_pk:
                 db.expunge(tracked)
 
     # 2. Basic validation
@@ -516,11 +511,11 @@ async def ingest_batch(
     # ---- Sort the batch for logical, deterministic order ---------------------
     # Lower number = processed first.
     MOVEMENT_PRIORITY: dict[str, int] = {
-        "ADJUSTMENT": 0,      # Baseline / count reconciliation first
-        "RECEIPT": 1,         # Then increases
+        "ADJUSTMENT": 0,  # Baseline / count reconciliation first
+        "RECEIPT": 1,  # Then increases
         "TRANSFER_IN": 1,
         "RETURN": 1,
-        "SALE": 2,            # Then decreases
+        "SALE": 2,  # Then decreases
         "TRANSFER_OUT": 2,
         "DAMAGE": 2,
     }
