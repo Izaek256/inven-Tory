@@ -156,14 +156,23 @@ function _isTokenExpired(expiresAt: string): boolean {
  *    Works with zero network. Background-upgrades to a real JWT when online.
  * 2. Dev browser (VITE_DEV_DEVICE_ID set, not Tauri): use a local mock
  *    session so the dev server never needs the API running.
- * 3. Production browser / API-only: POST to /api/v1/auth/login.
+ * 3. Production browser / API-only: POST to /api/v1/auth/login. If we are in
+ *    Vite's *development* mode (not production) AND the server cannot be
+ *    reached (fetch rejected, not a 401), fall back to a permissive local
+ *    session matching the entered username so genesis-created credentials
+ *    work without the API server online.
  */
 export async function login(
   username: string,
   password: string,
-  deviceId: string,
+  deviceId?: string,
   apiBaseUrl?: string,
 ): Promise<AuthSession> {
+  // Normalize deviceId: use the passed value, otherwise fall back to a
+  // stable default. App.tsx in the desktop shell always passes one, but
+  // OfflineAuthBanner and other call sites may omit it in single-user mode.
+  const resolvedDeviceId = (deviceId && deviceId.trim()) || 'SINGLE-USER-DEVICE';
+
   // ── 1. Tauri native app — local SQLite bcrypt check ───────────────────────
   if (isTauriEnvironment()) {
     try {
@@ -193,7 +202,7 @@ export async function login(
 
       await _secureWrite(session);
       // Background: try to get a real server JWT for sync
-      void _tryUpgradeToServerToken(username, password, deviceId, apiBaseUrl, session);
+      void _tryUpgradeToServerToken(username, password, resolvedDeviceId, apiBaseUrl, session);
       return session;
     } catch (localErr) {
       const msg = localErr instanceof Error ? localErr.message : String(localErr);
@@ -204,8 +213,125 @@ export async function login(
     }
   }
 
-  // ── 2. Real API login (production or web app) ─────────────────────────────
-  return _apiLogin(username, password, deviceId, apiBaseUrl);
+  // ── 2. Vite dev browser with DEV_DEVICE_ID set — skip the network ─────────
+  // The desktop Vite dev server runs in a browser context where __TAURI_INTERNALS__
+  // is absent. When VITE_DEV_DEVICE_ID is set we know we're in desktop-dev mode
+  // and should not fire cross-origin preflight requests at the API.
+  if (import.meta.env.VITE_DEV_DEVICE_ID) {
+    return _devBrowserLogin(username, password);
+  }
+
+  // ── 3. Real API login (production or web app) ─────────────────────────────
+  try {
+    return await _apiLogin(username, password, resolvedDeviceId, apiBaseUrl);
+  } catch (apiErr) {
+    const msg = apiErr instanceof Error ? apiErr.message : String(apiErr);
+    const isNetworkError =
+      msg === 'Failed to fetch' ||
+      msg.toLowerCase().includes('networkerror') ||
+      /(cors|blocked|coud not|could not connect)/i.test(msg);
+    const env =
+      typeof import.meta !== 'undefined'
+        ? ((import.meta as { env?: Record<string, string> }).env ?? {})
+        : {};
+    const inViteDev = env.DEV === true && env.MODE !== 'test';
+
+    if (isNetworkError && inViteDev) {
+      // API server is not running. Since we are in local Vite dev (desktop
+      // preview, not the real web dashboard), accept any non-empty credentials
+      // and return a local session so the genesis workflow works without the
+      // API backend online.
+      return _localSessionFromCredentials(username, password);
+    }
+    throw apiErr;
+  }
+}
+
+/**
+ * DEV-ONLY: browser-mode login for the desktop Vite dev server.
+ * Only active when VITE_DEV_DEVICE_ID is set (apps/desktop/.env, gitignored).
+ * Matches against the same credentials as the local SQLite seed so offline
+ * dev works without cargo/Tauri compilation and without the API running.
+ */
+async function _devBrowserLogin(username: string, password: string): Promise<AuthSession> {
+  const DEV_USERS: Record<string, { password: string; role: UserRole; full_name: string }> = {
+    admin: {
+      password: 'DevAdmin2026!',
+      role: 'GLOBAL_ADMIN' as UserRole,
+      full_name: 'System Administrator',
+    },
+    manager_alpha: {
+      password: 'DevManager2026!',
+      role: 'STORE_MANAGER' as UserRole,
+      full_name: 'Alpha Store Manager',
+    },
+    clerk_alpha: {
+      password: 'DevClerk2026!',
+      role: 'STORE_CLERK' as UserRole,
+      full_name: 'Alpha Clerk',
+    },
+  };
+
+  const match = DEV_USERS[username.trim()];
+  if (!match || match.password !== password) {
+    throw new Error('Invalid username or password.');
+  }
+
+  const expiresAt = new Date(Date.now() + 8 * 3600_000).toISOString();
+  const session: AuthSession = {
+    access_token: `dev-offline:${username}:${Date.now()}`,
+    refresh_token: '',
+    user_id: 0,
+    username: username.trim(),
+    full_name: match.full_name,
+    role: match.role,
+    assigned_store_id: null,
+    expires_at: expiresAt,
+    token_expired_offline: false,
+  };
+
+  await _secureWrite(session);
+  return session;
+}
+
+/**
+ * Build a valid AuthSession from *any* username/password provided during
+ * local Vite development mode when the central API is not reachable.
+ *
+ * This is the "genesis friendly" fallback: since the genesis script has
+ * already set the user's real credentials in both databases, the desktop
+ * Vite preview (which has no Tauri internals and cannot open the SQLite
+ * file directly) still lets the developer sign in with the username and
+ * password they chose during genesis rather than forcing the hardcoded
+ * DEV_USERS list.
+ *
+ * ONLY used as a network-error fallback inside Vite DEV builds; production
+ * builds always go through _apiLogin or the Rust local_login command.
+ */
+async function _localSessionFromCredentials(
+  username: string,
+  password: string,
+): Promise<AuthSession> {
+  const cleanUser = username.trim();
+  if (!cleanUser || !password) {
+    throw new Error('Invalid username or password.');
+  }
+
+  const expiresAt = new Date(Date.now() + 8 * 3600_000).toISOString();
+  const session: AuthSession = {
+    access_token: `dev-local:${cleanUser}:${Date.now()}`,
+    refresh_token: '',
+    user_id: 1,
+    username: cleanUser,
+    full_name: cleanUser.charAt(0).toUpperCase() + cleanUser.slice(1),
+    role: 'GLOBAL_ADMIN' as UserRole,
+    assigned_store_id: null,
+    expires_at: expiresAt,
+    token_expired_offline: false,
+  };
+
+  await _secureWrite(session);
+  return session;
 }
 
 /**

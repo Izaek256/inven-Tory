@@ -16,27 +16,41 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Password hashing
-# ---------------------------------------------------------------------------
-_pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_BCRYPT_MIN_ROUNDS = 12
+
+
+def _bcrypt_password(plain: str) -> bytes:
+    """Encode a plaintext password to UTF-8 bytes for bcrypt."""
+    return plain.encode("utf-8")
 
 
 def hash_password(plain: str) -> str:
-    """Return a bcrypt hash of *plain*."""
-    return _pwd_context.hash(plain)
+    """Return a bcrypt hash of *plain*.
+
+    Uses the :mod:`bcrypt` package directly rather than the passlib
+    CryptContext wrapper to avoid a noisy (trapped)
+    ``AttributeError: module 'bcrypt' has no attribute '__about__'``
+    warning that passlib emits when probing the bcrypt backend's version.
+    The produced ``$2b$`` hashes are fully compatible with passlib's own
+    bcrypt backend, so existing stored hashes continue to verify.
+    """
+    salt = bcrypt.gensalt(rounds=_BCRYPT_MIN_ROUNDS)
+    return bcrypt.hashpw(_bcrypt_password(plain), salt).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
     """Return True when *plain* matches *hashed*."""
-    return _pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(_bcrypt_password(plain), hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 # ---------------------------------------------------------------------------

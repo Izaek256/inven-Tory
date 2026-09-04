@@ -89,6 +89,7 @@ source .venv/bin/activate          # Windows: .venv\Scripts\activate
 # Install the API package and the domain package in editable mode
 pip install -e "services/api[dev]"
 pip install -e "packages/domain[dev]"
+pip install -e "packages/storage[dev]"
 ```
 
 ### 4. Install Node dependencies
@@ -103,7 +104,41 @@ npm install   # installs all workspace packages from the root
 docker compose -f infra/docker/docker-compose.yml up -d postgres
 ```
 
-### 6. Run the API server
+### 6. Bootstrap your first admin account (Genesis — run ONCE)
+
+This seeds **your real credentials** into:
+
+1. **PostgreSQL** — central database used by the API + web dashboard
+2. **Local SQLite** — used by the Tauri desktop for offline bcrypt-based login
+
+It also creates a default store and the `WEB-DASHBOARD-DEVICE` sentinel row. No mock users, no seed fixtures.
+
+```bash
+# From repo root with .venv activated
+pip install click   # first time only
+
+# Interactive — prompts for YOUR username / email / password / store:
+python infra/seed/genesis_single_user.py --run-migrations
+
+# OR non-interactive, explicit values (great for CI / repeat setups):
+python infra/seed/genesis_single_user.py --run-migrations \
+  --username YOUR_USERNAME \
+  --email you@example.com \
+  --full-name "Your Full Name" \
+  --password "YourRealPassw0rd!" \
+  --role GLOBAL_ADMIN \
+  --store-id STORE-MAIN \
+  --store-code MAIN \
+  --store-name "My Store" \
+  --store-address "123 Main St"
+```
+
+**Safety notes:**
+- Idempotent: re-running UPDATEs the existing user row by username (never duplicates).
+  Change your password later by re-running with the same `--username`.
+- Refuses the `--run-migrations` flag if Alembic fails — fix schema errors first.
+
+### 7. Run the API server
 
 ```bash
 cd services/api
@@ -112,19 +147,119 @@ uvicorn app.main:app --reload --port 8000
 
 The API is available at `http://localhost:8000`. OpenAPI docs: `http://localhost:8000/docs`.
 
-### 7. Run the desktop app (development mode)
+**Authentication model (single-user mode):**
+- `device_id` is **optional** on `/api/v1/auth/login`.
+- Any `device_id` string you submit is auto-registered on first successful login
+  (anchored to `User.assigned_store_id`). Desktop can be installed and used on
+  **any machine** without a separate device-registration step.
+- Only explicitly-revoked devices (row has `is_active=false` WITH a
+  `revocation_reason`) are rejected — so you can still lock a compromised
+  device if needed.
+
+### 8. Run the desktop app (development mode)
 
 ```bash
 cd apps/desktop
+npm install   # first time only
 npm run dev
 ```
 
-### 8. Run the web dashboard (development mode)
+**Desktop login:** use `username + password` (the credentials from step 6).
+Offline login works because Genesis already wrote the `pin_hash` bcrypt row
+to the local SQLite DB during step 6.
+
+### 9. Run the web dashboard (development mode)
 
 ```bash
 cd apps/web
+npm install   # first time only
 npm run dev
 ```
+
+**Web login:** use `email + password` (the credentials from step 6).
+After login, visit **Users** in the sidebar to create/manage additional
+accounts (the Create/Edit/Delete buttons appear only when logged in as
+`GLOBAL_ADMIN`).
+
+---
+
+## Quick-start (after virtual environment is activated)
+
+These are the exact commands to run a fresh environment from scratch once
+your virtual environment is already active. Commands are shown for both
+**Windows** (PowerShell / Git Bash) and **Linux/macOS**.
+
+### Windows (Git Bash / PowerShell)
+
+```bash
+# Navigate to the project root
+cd /d/inven-Tory
+
+# Activate the virtual environment (if not already active)
+source .venv/Scripts/activate
+
+# Install all Node dependencies
+npm install
+
+# Remove any stale local SQLite databases
+find . -type f -name "inven_tory_local.db" -delete
+
+# Run the local SQLite Alembic migrations (packages/storage)
+.venv/Scripts/python -m alembic -c packages/storage/storage/migrations/alembic.ini upgrade head
+
+# Reset and recreate the PostgreSQL database
+psql -U postgres -h localhost -d postgres -c "DROP DATABASE IF EXISTS inventory;"
+psql -U postgres -h localhost -d postgres -c "CREATE DATABASE inventory;"
+
+# Set the PostgreSQL connection URL and run the cloud Alembic migrations
+export ALEMBIC_DB_URL="postgresql+asyncpg://postgres:YOUR_PASSWORD@localhost:5432/inventory"
+.venv/Scripts/python -m alembic -c infra/migrations/alembic.ini upgrade head
+
+# Start all three services (background processes)
+cd services/api && ../../.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000 &
+cd ../../apps/web && npm run dev &
+cd ../desktop && npm run dev
+```
+
+> **Note:** Replace `YOUR_PASSWORD` with your actual PostgreSQL password.
+> The `&` symbol runs each service in the background. On PowerShell, use
+> `Start-Process` or run each in a separate terminal tab instead.
+
+### Linux / macOS
+
+```bash
+# Navigate to the project root
+cd ~/path/to/inven-Tory
+
+# Activate the virtual environment (if not already active)
+source .venv/bin/activate
+
+# Install all Node dependencies
+npm install
+
+# Remove any stale local SQLite databases
+find . -type f -name "inven_tory_local.db" -delete
+
+# Run the local SQLite Alembic migrations (packages/storage)
+python -m alembic -c packages/storage/storage/migrations/alembic.ini upgrade head
+
+# Reset and recreate the PostgreSQL database
+psql -U postgres -h localhost -d postgres -c "DROP DATABASE IF EXISTS inventory;"
+psql -U postgres -h localhost -d postgres -c "CREATE DATABASE inventory;"
+
+# Set the PostgreSQL connection URL and run the cloud Alembic migrations
+export ALEMBIC_DB_URL="postgresql+asyncpg://postgres:YOUR_PASSWORD@localhost:5432/inventory"
+python -m alembic -c infra/migrations/alembic.ini upgrade head
+
+# Start all three services (background processes)
+cd services/api && python -m uvicorn app.main:app --reload --port 8000 &
+cd ../../apps/web && npm run dev &
+cd ../desktop && npm run dev
+```
+
+> **Note:** Replace `YOUR_PASSWORD` with your actual PostgreSQL password.
+> Each `&` starts a background process. Open a new terminal tab for each
+> service if you prefer isolated outputs.
 
 ---
 
@@ -160,150 +295,61 @@ pytest   # configuration in root pyproject.toml
 npm test --workspaces --if-present
 ```
 
-### Testing Authentication (Issue 25)
+---
 
-The authentication system uses FastAPI Users. Here's how to test the authentication flow:
+## Authentication workflow (quick reference)
 
-#### 1. Test API Authentication Endpoints
+After you've run the **Genesis script** (setup step 6 above):
 
-Start the API server:
+### Login endpoints
 
-```bash
-cd services/api
-uvicorn app.main:app --reload --port 8000
+| Endpoint | Client | Body |
+|---|---|---|
+| `POST /api/v1/auth/login` | Desktop + Web (via custom view) | `{ username, password, device_id? }` — `device_id` is optional; unknown values are auto-registered on first success. |
+| `POST /api/v1/auth/jwt/login` | FastAPI Users standard (web/mobile) | form-urlencoded `username` (email) + `password` |
+| `GET  /api/v1/auth/me` | Any (Bearer token) | — returns the current user profile |
+| `POST /api/v1/auth/refresh` | Any | `{ "refresh_token": "..." }` → new access token |
+
+### Desktop login flow
+1. On first launch the app generates a stable `DESKTOP-<host>-<rand>` device
+   ID and saves it to Tauri's secure store. **No pre-registration needed.**
+2. User submits `username + password`.
+3. `tauriAuthService.login()` first tries **offline SQLite bcrypt** against
+   the local `User.pin_hash` (seeded by Genesis). On success it returns an
+   `offline:*` session token, then upgrades to a real server JWT in the
+   background when network is available.
+4. Central API login auto-registers the generated device ID on first
+   successful hit.
+
+### Web login flow
+- Web uses the custom `LoginView` which posts `{ username, password, device_id: "WEB-DASHBOARD-DEVICE" }`
+  to `/auth/login`.  Genesis pre-creates the `WEB-DASHBOARD-DEVICE` row for
+  you, so this works without extra steps.
+- After login, a `/auth/me` call populates the user's role in the app shell;
+  role == `GLOBAL_ADMIN` is what enables **Users** page action buttons.
+
+### User management (admin UI)
+1. Log in to the web dashboard as the `GLOBAL_ADMIN` created in Genesis.
+2. Open the **Users** sidebar page.
+3. Use **New User** to create clerks, managers, auditors, or additional
+   admins.  Every created user can log in on **any** device immediately (the
+   first login registers that device automatically).
+4. Edit / deactivate / delete users from the same table.
+
+### Revoking a compromised device (edge case)
+Device auto-registration keeps UX frictionless. If a laptop is actually lost
+or stolen, revoke it by running this against the PostgreSQL DB directly:
+
+```sql
+UPDATE devices
+   SET is_active = false,
+       revocation_reason = 'Lost laptop S/N 12345',
+       revoked_at = NOW()
+ WHERE id = 'DESKTOP-HOSTNAME-RAND1234';
 ```
 
-Test the FastAPI Users endpoints using curl or a tool like Postman:
-
-**Register a new user:**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "test@example.com",
-    "password": "SecurePassword123!",
-    "username": "testuser",
-    "full_name": "Test User",
-    "role": "STORE_CLERK"
-  }'
-```
-
-**Login with username (desktop):**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "testuser",
-    "password": "SecurePassword123!",
-    "device_id": "test-device-001"
-  }'
-```
-
-**Login with email (web/mobile):**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/jwt/login \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "username=test@example.com&password=SecurePassword123!"
-```
-
-**Get current user profile:**
-
-```bash
-curl -X GET http://localhost:8000/api/v1/auth/me \
-  -H "Authorization: Bearer <your_access_token>"
-```
-
-**Refresh access token:**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d '{"refresh_token": "<your_refresh_token>"}'
-```
-
-#### 2. Test Desktop App Authentication
-
-1. Start the desktop app in development mode:
-
-```bash
-cd apps/desktop
-npm run dev
-```
-
-2. Register a device first (if not already registered)
-3. Use the login screen with the username/password you created
-4. Verify the token is cached in Tauri secure storage
-5. Test offline behavior: disconnect network, let token expire, verify local operations still work
-
-#### 3. Test Web Dashboard Authentication
-
-1. Start the web dashboard:
-
-```bash
-cd apps/web
-npm run dev
-```
-
-2. Navigate to the login screen
-3. Use email/password to log in
-4. Verify the token is stored in localStorage
-5. Test logout functionality
-
-#### 4. Test Mobile Companion Authentication
-
-1. Start the mobile app:
-
-```bash
-cd apps/mobile
-npm run dev
-```
-
-2. Navigate to the login screen
-3. Use email/password to log in
-4. Verify the token is stored in localStorage
-5. Test logout functionality
-
-#### 5. Test Permission Checks
-
-Test that permission dependencies work correctly:
-
-```bash
-# Try to access an admin endpoint as a regular user (should fail with 403)
-curl -X POST http://localhost:8000/api/v1/users \
-  -H "Authorization: Bearer <regular_user_token>" \
-  -H "Content-Type: application/json" \
-  -d '{"email": "new@example.com", "password": "password"}'
-```
-
-#### 6. Test Device Revocation
-
-1. Create a user and register a device
-2. Login with that device
-3. Revoke the device (via device management endpoint)
-4. Try to use the same token — should be rejected with 401
-
-#### 7. Run Authentication Tests
-
-The desktop app has authentication tests:
-
-```bash
-cd apps/desktop
-npm test -- AuthService.test
-```
-
-#### 8. Mock Data Audit
-
-Verify no mock data exists in the codebase:
-
-```bash
-# Search for mock, dummy, placeholder, fake
-grep -r "mock\|dummy\|placeholder\|fake" --include="*.ts" --include="*.tsx" --include="*.py" --exclude-dir=node_modules --exclude-dir=.venv --exclude-dir=infra/seed/dev_only
-```
-
-Expected: Zero hits outside of explicitly-labeled dev-fixture paths.
+The next login attempt with that device_id fails with 401 "device has been
+revoked". Any other device continues working normally.
 
 ---
 
@@ -322,3 +368,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the branch naming convention, commit 
 ## License
 
 See [LICENSE](LICENSE).
+

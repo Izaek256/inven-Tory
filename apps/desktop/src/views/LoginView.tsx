@@ -1,17 +1,18 @@
 /**
  * LoginView — real login screen that posts to /api/v1/auth/login.
  *
- * Issue 25 — Auth consolidation.
- *
- * The device must already be registered with the central API before login
- * can succeed (device_id is required by the login endpoint, per FR-STORE-003).
- * The device_id is stored in Tauri's secure store alongside the JWT session.
+ * Single-user mode (Issue fix/auth-bootstrap-single-user):
+ *   - deviceId is NOW ALWAYS available (App.tsx either reads it from secure
+ *     store or generates a stable one on first launch).
+ *   - The central API auto-registers any unknown device_id on first
+ *     successful login, so the desktop app can be placed and used on ANY
+ *     machine without a separate device-registration step.
  *
  * Offline behavior (Section 21):
- * - When offline with an expired token, users see a banner instead of this
- *   screen — local operations continue and the outbox keeps queuing.
- * - This screen is only shown when there is NO cached session at all
- *   (first-time launch or after explicit logout).
+ *   - When offline with an expired token, users see a banner instead of this
+ *     screen — local operations continue and the outbox keeps queuing.
+ *   - This screen is only shown when there is NO cached session at all
+ *     (first-time launch or after explicit logout).
  */
 
 import React, { useState } from 'react';
@@ -47,8 +48,10 @@ export const LoginView: React.FC<LoginViewProps> = ({
       setError('Password is required.');
       return;
     }
+    // In single-user mode, deviceId is guaranteed non-empty by App.tsx.
+    // Keep the guard for safety (defensive).
     if (!deviceId) {
-      setError('Device is not registered. Please register this device first.');
+      setError('Device is initializing… please retry in a moment.');
       return;
     }
 
@@ -143,7 +146,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
           Sign In
         </h2>
 
-        {/* Device ID indicator */}
+        {/* Device indicator (single-user mode: always present, informational) */}
         {deviceId ? (
           <div
             style={{
@@ -162,19 +165,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
           >
             <Wifi size={14} />
             <span>
-              Device registered:{' '}
+              Device ready:{' '}
               <code style={{ fontFamily: 'var(--it-font-mono)' }}>{deviceId.slice(0, 16)}…</code>
             </span>
           </div>
-        ) : (
-          <div
-            className="it-toast it-toast--error"
-            style={{ marginBottom: '20px', fontSize: '12px' }}
-          >
-            <AlertCircle size={14} />
-            <span>This device is not registered. Contact your administrator.</span>
-          </div>
-        )}
+        ) : null}
 
         {/* Error banner */}
         {error && (
@@ -198,7 +193,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
               autoComplete="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              disabled={loading || !deviceId}
+              disabled={loading}
               data-testid="login-username-input"
             />
           </div>
@@ -212,7 +207,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              disabled={loading || !deviceId}
+              disabled={loading}
               data-testid="login-password-input"
             />
           </div>
@@ -221,7 +216,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
             type="submit"
             variant="primary"
             loading={loading}
-            disabled={!deviceId}
             style={{ width: '100%' }}
             data-testid="login-submit-btn"
           >
