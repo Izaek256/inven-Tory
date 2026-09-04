@@ -215,6 +215,9 @@ psql -U postgres -h localhost -d postgres -c "CREATE DATABASE inventory;"
 export ALEMBIC_DB_URL="postgresql+asyncpg://postgres:YOUR_PASSWORD@localhost:5432/inventory"
 .venv/Scripts/python -m alembic -c infra/migrations/alembic.ini upgrade head
 
+# Seed initial admin credentials & device row into PostgreSQL + SQLite (Genesis script)
+.venv/Scripts/python infra/seed/genesis_single_user.py
+
 # Start all three services (background processes)
 cd services/api && ../../.venv/Scripts/python -m uvicorn app.main:app --reload --port 8000 &
 cd ../../apps/web && npm run dev &
@@ -250,6 +253,9 @@ psql -U postgres -h localhost -d postgres -c "CREATE DATABASE inventory;"
 # Set the PostgreSQL connection URL and run the cloud Alembic migrations
 export ALEMBIC_DB_URL="postgresql+asyncpg://postgres:YOUR_PASSWORD@localhost:5432/inventory"
 python -m alembic -c infra/migrations/alembic.ini upgrade head
+
+# Seed initial admin credentials & device row into PostgreSQL + SQLite (Genesis script)
+python infra/seed/genesis_single_user.py
 
 # Start all three services (background processes)
 cd services/api && python -m uvicorn app.main:app --reload --port 8000 &
