@@ -36,6 +36,7 @@ import { LoginView } from './views/LoginView';
 import { OfflineAuthBanner } from './components/OfflineAuthBanner';
 import { getStores } from './services/tauriStoreService';
 import { getSession, isAuthenticated, logout } from './services/tauriAuthService';
+import { startBackgroundSync, stopBackgroundSync, triggerSync } from './services/tauriSyncService';
 import { Store } from './types/store';
 import type { AuthSession } from './types/auth';
 import './index.css';
@@ -177,6 +178,26 @@ export function App(): React.ReactElement {
       fetchStores();
     }
   }, [fetchStores, authState]);
+
+  // Background Sync Engine (Issue 15 / Section 21)
+  useEffect(() => {
+    if (authState === 'authenticated') {
+      const envBaseUrl =
+        typeof import.meta !== 'undefined'
+          ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+          : undefined;
+      const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+      startBackgroundSync({ apiBaseUrl }, 30_000);
+      void triggerSync({ apiBaseUrl })
+        .then(() => fetchStores())
+        .catch(() => undefined);
+
+      return () => {
+        stopBackgroundSync();
+      };
+    }
+  }, [authState, fetchStores]);
 
   // Performance instrumentation
   useEffect(() => {

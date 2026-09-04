@@ -2,8 +2,36 @@ import { invoke } from '@tauri-apps/api/core';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
 import { isTauriEnvironment } from './tauriStoreService';
 
+async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T | null> {
+  try {
+    const { getAccessToken } = await import('./tauriAuthService');
+    const token = await getAccessToken();
+    const envBaseUrl =
+      typeof import.meta !== 'undefined'
+        ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+        : undefined;
+    const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...(options.headers as Record<string, string>),
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const res = await fetch(`${apiBaseUrl}${path}`, { ...options, headers });
+    if (res.ok) {
+      return (await res.json()) as T;
+    }
+  } catch {
+    // Network / API unreachable
+  }
+  return null;
+}
+
 /**
- * Fetch all products from local SQLite DB.
+ * Fetch all products from local SQLite DB or central API fallback.
  */
 export async function getProducts(): Promise<Product[]> {
   if (isTauriEnvironment()) {
@@ -15,6 +43,9 @@ export async function getProducts(): Promise<Product[]> {
       throw new Error(`Failed to load products: ${String(err)}`);
     }
   }
+
+  const apiProducts = await _fetchApi<Product[]>('/products');
+  if (apiProducts) return apiProducts;
 
   throw new Error(
     '[TauriProductService] getProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
@@ -35,6 +66,9 @@ export async function searchProducts(query: string): Promise<Product[]> {
     }
   }
 
+  const apiResults = await _fetchApi<Product[]>(`/products?search=${encodeURIComponent(query)}`);
+  if (apiResults) return apiResults;
+
   throw new Error(
     '[TauriProductService] searchProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
   );
@@ -53,6 +87,12 @@ export async function createProduct(input: CreateProductInput): Promise<Product>
       throw new Error(String(err));
     }
   }
+
+  const created = await _fetchApi<Product>('/products', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+  if (created) return created;
 
   throw new Error(
     '[TauriProductService] createProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
@@ -73,6 +113,12 @@ export async function updateProduct(input: UpdateProductInput): Promise<Product>
     }
   }
 
+  const updated = await _fetchApi<Product>(`/products/${input.id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(input),
+  });
+  if (updated) return updated;
+
   throw new Error(
     '[TauriProductService] updateProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
   );
@@ -91,6 +137,12 @@ export async function toggleProductActive(id: string, is_active: boolean): Promi
       throw new Error(String(err));
     }
   }
+
+  const toggled = await _fetchApi<Product>(`/products/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ is_active }),
+  });
+  if (toggled) return toggled;
 
   throw new Error(
     '[TauriProductService] toggleProductActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',

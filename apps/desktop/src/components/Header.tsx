@@ -19,7 +19,6 @@ export const Header: React.FC<HeaderProps> = ({
   stores,
   activeStoreId,
   onSelectStore,
-  interactiveTimeMs,
   currentUser,
   onLogout,
 }) => {
@@ -133,13 +132,6 @@ export const Header: React.FC<HeaderProps> = ({
                 label: `${store.name} (${store.code})`,
               }))}
             />
-          </div>
-        )}
-
-        {/* Startup Performance instrumentation badge */}
-        {interactiveTimeMs != null && (
-          <div className="perf-timer-badge" data-testid="perf-timer">
-            Interactive: {interactiveTimeMs.toFixed(0)}ms
           </div>
         )}
 

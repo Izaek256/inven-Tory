@@ -19,7 +19,7 @@ import { LoginView } from './views/LoginView';
 import { SearchView } from './views/SearchView';
 import { StoreView } from './views/StoreView';
 import { UsersView } from './views/UsersView';
-import { getStoreInventory } from './services/dashboardService';
+import { getStoreInventory, listStores } from './services/dashboardService';
 import './index.css';
 
 type NavView = 'dashboard' | 'search' | 'stores' | 'users';
@@ -151,8 +151,9 @@ interface MeData {
 function App(): React.ReactElement {
   const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(getToken()));
   const [currentView, setCurrentView] = useState<NavView>('dashboard');
-  const [storeIds] = useState<string[]>([]);
-  const [storeListLoading] = useState(false);
+  const [storeIds, setStoreIds] = useState<string[]>([]);
+  const [storeListLoading, setStoreListLoading] = useState(false);
+  const [storeListError, setStoreListError] = useState<string | null>(null);
   const [me, setMe] = useState<MeData | null>(null);
 
   const fetchMe = useCallback(async (): Promise<void> => {
@@ -189,15 +190,29 @@ function App(): React.ReactElement {
     setIsAuthenticated(false);
   }, []);
 
-  const handleRefresh = useCallback((): void => {
-    /* no-op: StoreView manages its own refetch */
+  const fetchStores = useCallback(async (): Promise<void> => {
+    setStoreListLoading(true);
+    setStoreListError(null);
+    try {
+      const stores = await listStores();
+      setStoreIds(stores.map((s) => s.id));
+    } catch (err) {
+      setStoreListError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStoreListLoading(false);
+    }
   }, []);
 
+  const handleRefresh = useCallback((): void => {
+    void fetchStores();
+  }, [fetchStores]);
+
   useEffect(() => {
-    if (isAuthenticated && !me) {
-      void fetchMe();
+    if (isAuthenticated) {
+      void fetchStores();
+      if (!me) void fetchMe();
     }
-  }, [isAuthenticated, me, fetchMe]);
+  }, [isAuthenticated, me, fetchMe, fetchStores]);
 
   if (!isAuthenticated) {
     return <LoginView onLoginSuccess={handleLoginSuccess} />;
@@ -266,8 +281,24 @@ function App(): React.ReactElement {
           })}
         </aside>
 
-        {/* Main content */}
+        {/* Main Content */}
         <main className="app-content" data-testid="web-main-content">
+          {storeListError && (
+            <div
+              style={{
+                padding: '12px 16px',
+                marginBottom: '16px',
+                backgroundColor: 'var(--it-red-surface)',
+                color: 'var(--it-red-text)',
+                border: '1px solid var(--it-red-border)',
+                borderRadius: 'var(--it-r-md)',
+                fontSize: '14px',
+              }}
+              data-testid="store-list-error"
+            >
+              {storeListError}
+            </div>
+          )}
           {renderView()}
         </main>
       </div>

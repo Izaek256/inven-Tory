@@ -10,7 +10,18 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Plus, RefreshCw, Shield, Trash2, UserCog, Users } from 'lucide-react';
-import { Badge, Button, Card, Modal, Select, Spinner, Table, TextInput } from '@inven-tory/ui';
+import {
+  Badge,
+  BadgeStatus,
+  Button,
+  Card,
+  ColumnDef,
+  DataTable,
+  Modal,
+  Select,
+  Spinner,
+  TextInput,
+} from '@inven-tory/ui';
 import {
   createUser as apiCreateUser,
   deleteUser as apiDeleteUser,
@@ -28,13 +39,13 @@ const ROLE_OPTIONS: { value: UserRole | string; label: string; hint: string }[] 
   { value: 'SYNC', label: 'Sync Service', hint: 'Device sync worker' },
 ];
 
-const ROLE_BADGE_VARIANT: Record<string, 'SUCCESS' | 'INFO' | 'WARNING' | 'ERROR' | 'NEUTRAL'> = {
-  GLOBAL_ADMIN: 'ERROR',
-  INVENTORY_MANAGER: 'WARNING',
-  STORE_MANAGER: 'INFO',
-  STORE_CLERK: 'SUCCESS',
-  AUDITOR: 'NEUTRAL',
-  SYNC: 'NEUTRAL',
+const ROLE_BADGE_VARIANT: Record<string, BadgeStatus> = {
+  GLOBAL_ADMIN: 'CANCELLED',
+  INVENTORY_MANAGER: 'STALE',
+  STORE_MANAGER: 'RECENT',
+  STORE_CLERK: 'FRESH',
+  AUDITOR: 'TRANSFER',
+  SYNC: 'TRANSFER',
 };
 
 interface UsersViewProps {
@@ -141,17 +152,17 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
     }
   }, [confirmDelete]);
 
-  const columns = useMemo(
+  const columns: ColumnDef<any>[] = useMemo(
     () => [
-      { key: 'id', label: 'ID', width: '60px' },
-      { key: 'username', label: 'Username' },
-      { key: 'full_name', label: 'Full Name' },
-      { key: 'email', label: 'Email' },
-      { key: 'role', label: 'Role' },
-      { key: 'assigned_store_id', label: 'Store' },
-      { key: 'is_active', label: 'Status' },
-      { key: 'created_at', label: 'Created' },
-      { key: 'actions', label: 'Actions', width: '160px' },
+      { key: 'id', header: 'ID', width: '60px' },
+      { key: 'username', header: 'Username' },
+      { key: 'full_name', header: 'Full Name' },
+      { key: 'email', header: 'Email' },
+      { key: 'role', header: 'Role' },
+      { key: 'assigned_store_id', header: 'Store' },
+      { key: 'is_active', header: 'Status' },
+      { key: 'created_at', header: 'Created' },
+      { key: 'actions', header: 'Actions', width: '160px' },
     ],
     [],
   );
@@ -165,7 +176,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
         email: u.email,
         role: (
           <Badge
-            status={ROLE_BADGE_VARIANT[u.role] ?? 'NEUTRAL'}
+            status={ROLE_BADGE_VARIANT[u.role] ?? 'TRANSFER'}
             label={
               ROLE_OPTIONS.find((r) => r.value === u.role)?.label ??
               String(u.role)
@@ -184,7 +195,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
         ),
         is_active: (
           <Badge
-            status={u.is_active ? 'SUCCESS' : 'ERROR'}
+            status={u.is_active ? 'ACTIVE' : 'INACTIVE'}
             label={u.is_active ? 'Active' : 'Deactivated'}
           />
         ),
@@ -211,7 +222,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
             </Button>
             <Button
               size="sm"
-              variant="danger"
+              variant="destructive"
               onClick={() => setConfirmDelete(u)}
               title="Delete user"
               data-testid={`user-delete-${u.id}`}
@@ -308,7 +319,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
             </div>
           </div>
         ) : (
-          <Table columns={columns} rows={rows} data-testid="users-table" />
+          <DataTable columns={columns} rows={rows} rowKey={(r) => String(r.id)} data-testid="users-table" />
         )}
       </Card>
 
@@ -322,7 +333,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
 
       {confirmDelete && (
         <Modal
-          open
+          isOpen
           title="Delete user?"
           onClose={() => setConfirmDelete(null)}
           footer={
@@ -331,7 +342,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
                 Cancel
               </Button>
               <Button
-                variant="danger"
+                variant="destructive"
                 onClick={() => void handleDelete()}
                 data-testid="confirm-delete-btn"
               >
@@ -414,7 +425,7 @@ function CreateUserModal({ onClose, onSubmit }: CreateModalProps): React.ReactEl
 
   return (
     <Modal
-      open
+      isOpen
       title="Create New User"
       onClose={onClose}
       data-testid="create-user-modal"
@@ -568,7 +579,7 @@ function EditUserModal({ user, onClose, onSubmit }: EditModalProps): React.React
 
   return (
     <Modal
-      open
+      isOpen
       title={`Edit user: ${user.username}`}
       onClose={onClose}
       data-testid="edit-user-modal"

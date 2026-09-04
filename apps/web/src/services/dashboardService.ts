@@ -51,6 +51,12 @@ export async function getStoreInventory(storeId: string): Promise<StoreInventory
   return api.get<StoreInventoryResponse>(`/stores/${storeId}/inventory`);
 }
 
+export async function listStores(): Promise<
+  Array<{ id: string; code: string; name: string; address?: string | null; is_active: boolean }>
+> {
+  return api.get('/stores');
+}
+
 export async function login(
   username: string,
   password: string,
