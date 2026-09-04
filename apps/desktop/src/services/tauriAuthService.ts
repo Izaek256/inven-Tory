@@ -57,6 +57,7 @@ const SESSION_KEY = 'auth_session';
 // ---------------------------------------------------------------------------
 
 let _memSession: AuthSession | null = null;
+let _lastCredentials: { username: string; password: string; deviceId?: string; apiBaseUrl?: string } | null = null;
 
 // @visibleForTesting
 export function _setMemSession(session: AuthSession | null): void {
@@ -172,6 +173,7 @@ export async function login(
   // stable default. App.tsx in the desktop shell always passes one, but
   // OfflineAuthBanner and other call sites may omit it in single-user mode.
   const resolvedDeviceId = (deviceId && deviceId.trim()) || 'SINGLE-USER-DEVICE';
+  _lastCredentials = { username, password, deviceId: resolvedDeviceId, apiBaseUrl };
 
   // ── 1. Tauri native app — local SQLite bcrypt check ───────────────────────
   if (isTauriEnvironment()) {
@@ -191,7 +193,7 @@ export async function login(
       const session: AuthSession = {
         access_token: offlineToken,
         refresh_token: '',
-        user_id: parseInt(local.user_id, 10) || 0,
+        user_id: local.user_id,
         username: local.username,
         full_name: local.full_name,
         role: local.role as UserRole,
@@ -234,7 +236,7 @@ export async function login(
       typeof import.meta !== 'undefined'
         ? ((import.meta as { env?: Record<string, string> }).env ?? {})
         : {};
-    const inViteDev = env.DEV === true && env.MODE !== 'test';
+    const inViteDev = Boolean(env.DEV) && env.MODE !== 'test';
 
     if (isNetworkError && inViteDev) {
       // API server is not running. Since we are in local Vite dev (desktop
@@ -471,6 +473,7 @@ export async function tryRefreshToken(): Promise<AuthSession | null> {
  * its exp claim; device revocation is the mechanism for immediate invalidation.
  */
 export async function logout(): Promise<void> {
+  _lastCredentials = null;
   const session = await _secureRead();
   if (session) {
     // Best-effort server notification (fire-and-forget)
@@ -502,6 +505,29 @@ export async function getSession(): Promise<AuthSession | null> {
 export async function getAccessToken(): Promise<string | null> {
   const session = await _secureRead();
   if (!session) return null;
+
+  // Offline sentinel tokens cannot be validated by central API JWT middleware.
+  // Try to upgrade using cached credentials if online.
+  if (
+    session.access_token.startsWith('offline:') ||
+    session.access_token.startsWith('dev-offline:') ||
+    session.access_token.startsWith('dev-local:')
+  ) {
+    if (_lastCredentials) {
+      try {
+        const upgraded = await _apiLogin(
+          _lastCredentials.username,
+          _lastCredentials.password,
+          _lastCredentials.deviceId || 'SINGLE-USER-DEVICE',
+          _lastCredentials.apiBaseUrl,
+        );
+        return upgraded.access_token;
+      } catch {
+        // Network or auth unavailable — stay offline
+      }
+    }
+    return null;
+  }
 
   // If online and token is expired, attempt a silent refresh
   if (_isTokenExpired(session.expires_at) && !session.token_expired_offline) {

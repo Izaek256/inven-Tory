@@ -36,7 +36,7 @@ from fastapi_users import exceptions as fu_exceptions
 from jose import JWTError
 from passlib.context import CryptContext
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -233,7 +233,9 @@ async def login(
     now = datetime.now(UTC)
 
     # 1. Look up user by username (not email, for our custom login)
-    result = await db.execute(select(User).where(User.username == body.username))
+    result = await db.execute(
+        select(User).where(func.lower(User.username) == func.lower(body.username))
+    )
     user: User | None = result.scalars().first()
 
     if user is None or not user.is_active:

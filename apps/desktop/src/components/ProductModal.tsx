@@ -21,6 +21,13 @@ const DEFAULT_CATEGORIES = [
 ];
 const DEFAULT_UNITS = ['pcs', 'ctn', 'set', 'box', 'kg', 'm'];
 
+function generateSkuFromCategory(cat: string): string {
+  const clean = cat.replace(/[^A-Za-z0-9]/g, '').slice(0, 4).toUpperCase();
+  const prefix = clean || 'PROD';
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `${prefix}-${rand}`;
+}
+
 export const ProductModal: React.FC<ProductModalProps> = ({
   isOpen,
   product,
@@ -57,11 +64,12 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       setSerialTrackingEnabled(product.serial_tracking_enabled);
       setIsActive(product.is_active);
     } else {
-      setSku('');
+      const defaultCat = DEFAULT_CATEGORIES[0];
+      setCategory(defaultCat);
+      setSku(generateSkuFromCategory(defaultCat));
       setName('');
       setBrand('');
       setModel('');
-      setCategory(DEFAULT_CATEGORIES[0]);
       setUnit('pcs');
       setBarcode('');
       setAlternateNames('');
@@ -71,14 +79,19 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     setError(null);
   }, [product, isOpen]);
 
+  const handleCategoryChange = (val: string): void => {
+    setCategory(val);
+    if (!isEdit) {
+      setSku(generateSkuFromCategory(val));
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
 
-    if (!isEdit && !sku.trim()) {
-      setError('Product SKU is required.');
-      return;
-    }
+    const finalSku = sku.trim() ? sku.trim().toUpperCase() : generateSkuFromCategory(category);
+
     if (!name.trim()) {
       setError('Product name is required.');
       return;
@@ -104,7 +117,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         });
       } else {
         await onSubmitCreate({
-          sku: sku.trim().toUpperCase(),
+          sku: finalSku,
           name: name.trim(),
           brand: brand.trim() || undefined,
           model: model.trim() || undefined,
@@ -217,7 +230,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             required
             placeholder="Select or type category..."
             value={category}
-            onChange={(e) => setCategory(e.target.value)}
+            onChange={(e) => handleCategoryChange(e.target.value)}
             disabled={submitting}
             data-testid="product-category-input"
           />

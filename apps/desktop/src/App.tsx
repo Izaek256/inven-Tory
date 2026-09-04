@@ -193,7 +193,7 @@ export function App(): React.ReactElement {
         .then(() => fetchStores())
         .catch(() => undefined);
 
-      return () => {
+      return (): void => {
         stopBackgroundSync();
       };
     }

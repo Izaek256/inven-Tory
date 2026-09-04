@@ -72,7 +72,7 @@ class ProductListItem(BaseModel):
 
 
 class CreateProductRequest(BaseModel):
-    sku: str
+    sku: str | None = None
     name: str
     brand: str | None = None
     model: str | None = None
@@ -212,21 +212,27 @@ async def create_product(
 ) -> ProductListItem:
     """
     Create a new product with the given fields.
-    Validates that the SKU is unique (409 on duplicate).
+    Validates SKU uniqueness; auto-generates SKU from category if omitted.
     """
+    import random
+    import uuid
+
+    sku = (request.sku or "").strip().upper()
+    if not sku:
+        prefix = "".join(c for c in request.category if c.isalnum())[:4].upper() or "PROD"
+        sku = f"{prefix}-{random.randint(1000, 9999)}"
+
     # Check for duplicate SKU
-    existing = await db.execute(select(Product).where(Product.sku == request.sku))
+    existing = await db.execute(select(Product).where(Product.sku == sku))
     if existing.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Product with SKU '{request.sku}' already exists",
+            detail=f"Product with SKU '{sku}' already exists",
         )
-
-    import uuid
 
     product = Product(
         id=str(uuid.uuid4()),
-        sku=request.sku,
+        sku=sku,
         name=request.name,
         brand=request.brand,
         model=request.model,

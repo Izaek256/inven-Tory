@@ -74,9 +74,19 @@ export interface StoreSnapshot {
   updated_at: string;
 }
 
+export interface StockBalanceSnapshot {
+  id: string;
+  store_id: string;
+  product_id: string;
+  stock_bucket: string;
+  quantity: number;
+  updated_at: string;
+}
+
 export interface PullResponse {
   products: ProductSnapshot[];
   stores: StoreSnapshot[];
+  stock_balances?: StockBalanceSnapshot[];
   server_time: string;
 }
 

@@ -51,6 +51,7 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           name: 'Updated Name',
           category: 'Test',
           unit: 'pcs',
+          serial_tracking_enabled: false,
         }),
       ).rejects.toThrow(
         '[TauriProductService] updateProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',

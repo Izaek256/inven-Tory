@@ -211,16 +211,18 @@ export async function getSyncStatus(): Promise<ClientSyncState> {
 function _buildPushItem(row: OutboxEventRow): TransactionPushItem | null {
   try {
     const p = JSON.parse(row.payload) as Record<string, unknown>;
+    const userIdStr = String(p.user_id ?? '').trim();
+    const deviceIdStr = String(p.device_id ?? '').trim();
     return {
       transaction_id: String(p.transaction_id ?? ''),
       store_id: String(p.store_id ?? ''),
       product_id: String(p.product_id ?? ''),
       movement_type: String(p.movement_type ?? ''),
       quantity_delta: Number(p.quantity_delta ?? 0),
-      occurred_at: String(p.occurred_at ?? new Date().toISOString()),
-      user_id: String(p.user_id ?? ''),
-      device_id: String(p.device_id ?? ''),
-      stock_bucket: String(p.stock_bucket ?? 'AVAILABLE'),
+      occurred_at: String(p.occurred_at || new Date().toISOString()),
+      user_id: userIdStr || 'LOCAL-USER',
+      device_id: deviceIdStr || 'SINGLE-USER-DEVICE',
+      stock_bucket: String(p.stock_bucket || 'AVAILABLE'),
       reference_number: (p.reference_number as string | null | undefined) ?? null,
       reason_code: (p.reason_code as string | null | undefined) ?? null,
       transfer_id: (p.transfer_id as string | null | undefined) ?? null,
@@ -486,6 +488,16 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
             } catch (err) {
               // eslint-disable-next-line no-console
               console.warn('[SyncService] Failed to upsert store:', store.id, err);
+            }
+          }
+          if (pullResponse.stock_balances && pullResponse.stock_balances.length > 0) {
+            for (const balance of pullResponse.stock_balances) {
+              try {
+                await invoke('upsert_stock_balance_from_server', { balance });
+              } catch (err) {
+                // eslint-disable-next-line no-console
+                console.warn('[SyncService] Failed to upsert stock balance:', balance.id, err);
+              }
             }
           }
         }
