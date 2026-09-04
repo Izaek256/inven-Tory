@@ -189,14 +189,20 @@ export function App(): React.ReactElement {
       const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
       console.info('[App] Starting background sync with API base URL:', apiBaseUrl);
+      // eslint-disable-next-line no-console
+      console.log('[App] AUTH STATE:', authState, 'API URL:', apiBaseUrl);
       startBackgroundSync({ apiBaseUrl }, 30_000);
       void triggerSync({ apiBaseUrl })
         .then(() => {
           console.info('[App] Initial sync completed, fetching stores');
+          // eslint-disable-next-line no-console
+          console.log('[App] SYNC SUCCESS - stores fetched');
           return fetchStores();
         })
         .catch((err) => {
           console.warn('[App] Initial sync failed:', err);
+          // eslint-disable-next-line no-console
+          console.error('[App] SYNC ERROR:', err);
         });
 
       return (): void => {

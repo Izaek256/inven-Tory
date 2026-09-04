@@ -331,6 +331,8 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     apiBaseUrl: config.apiBaseUrl,
     force: config.force,
   });
+  // eslint-disable-next-line no-console
+  console.log('[SyncService] SYNC START - Config:', JSON.stringify(config));
 
   // Resolve access token — prefer explicit config.accessToken, then auth service.
   let resolvedToken = config.accessToken;
@@ -342,8 +344,12 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         '[SyncService] Resolved access token:',
         resolvedToken ? 'Token available' : 'No token',
       );
+      // eslint-disable-next-line no-console
+      console.log('[SyncService] TOKEN RESOLVED:', resolvedToken ? 'YES' : 'NO');
     } catch (err) {
       console.warn('[SyncService] Failed to get access token:', err);
+      // eslint-disable-next-line no-console
+      console.error('[SyncService] TOKEN ERROR:', err);
       resolvedToken = undefined;
     }
   }
@@ -356,11 +362,15 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     console.warn(
       '[SyncService] No access token available - skipping sync (offline or token upgrade needed)',
     );
+    // eslint-disable-next-line no-console
+    console.log('[SyncService] SYNC SKIPPED - NO TOKEN');
     _mockLastOutcome = 'offline';
     return getSyncStatus();
   }
 
   _syncInProgress = true;
+  // eslint-disable-next-line no-console
+  console.log('[SyncService] SYNC IN PROGRESS - Starting push loop');
 
   const batchSize = config.batchSize ?? 100;
   let totalAccepted = 0;
@@ -371,12 +381,18 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
   try {
     // ── Push loop ────────────────────────────────────────────────────────────
+    // eslint-disable-next-line no-console
+    console.log('[SyncService] PUSH LOOP START - Batch size:', batchSize);
     let keepGoing = true;
 
     while (keepGoing) {
       const rows = await _getPendingOutboxEvents(batchSize, config.force);
+      // eslint-disable-next-line no-console
+      console.log('[SyncService] FETCHED ROWS:', rows.length, 'pending events');
 
       if (rows.length === 0) {
+        // eslint-disable-next-line no-console
+        console.log('[SyncService] NO MORE ROWS - Push loop complete');
         keepGoing = false;
         break;
       }
