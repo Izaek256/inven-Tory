@@ -2102,6 +2102,8 @@ pub mod commands {
 
     #[tauri::command]
     pub fn get_pending_outbox_count() -> Result<i32, String> {
+        println!("[TAURI-SYNC] get_pending_outbox_count called");
+        
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
@@ -2114,6 +2116,7 @@ pub mod commands {
             .query_row([], |row| row.get(0))
             .map_err(|e| format!("Failed to query pending outbox count: {}", e))?;
 
+        println!("[TAURI-SYNC] get_pending_outbox_count returning: {}", count);
         Ok(count)
     }
 
@@ -2130,6 +2133,8 @@ pub mod commands {
         limit: Option<i32>,
         force: Option<bool>,
     ) -> Result<Vec<serde_json::Value>, String> {
+        println!("[TAURI-SYNC] get_pending_outbox_events called with limit: {:?}, force: {:?}", limit, force);
+        
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
@@ -2137,6 +2142,8 @@ pub mod commands {
         let batch_limit = limit.unwrap_or(100).max(1).min(500);
         let force_sync = force.unwrap_or(false);
         let now = now_iso();
+        
+        println!("[TAURI-SYNC] batch_limit: {}, force_sync: {}, now: {}", batch_limit, force_sync, now);
 
         // 1. Revert any orphaned events left stuck in 'SENDING' or 'PERMANENT_REJECTION' back to 'PENDING'
         if force_sync {
@@ -2212,6 +2219,9 @@ pub mod commands {
         target_status: String,
         error_msg: Option<String>,
     ) -> Result<(), String> {
+        println!("[TAURI-SYNC] update_outbox_event_status called: event_id={}, target_status={}, error_msg={:?}", 
+                 event_id, target_status, error_msg);
+        
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
