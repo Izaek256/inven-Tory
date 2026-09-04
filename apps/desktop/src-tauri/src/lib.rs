@@ -197,14 +197,14 @@ fn get_db_path() -> PathBuf {
     }
 
     let candidates = [
-        "inven_tory_local.db",
-        "../inven_tory_local.db",
-        "../../inven_tory_local.db",
-        "../../../inven_tory_local.db",
         "packages/storage/inven_tory_local.db",
         "../packages/storage/inven_tory_local.db",
         "../../packages/storage/inven_tory_local.db",
         "../../../packages/storage/inven_tory_local.db",
+        "inven_tory_local.db",
+        "../inven_tory_local.db",
+        "../../inven_tory_local.db",
+        "../../../inven_tory_local.db",
     ];
 
     for cand in candidates {
@@ -259,10 +259,12 @@ pub mod commands {
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open local database: {}", e))?;
 
-        // Look up user by username
+        let clean_username = username.trim();
+
+        // Look up user by username (case-insensitive)
         let result = conn.query_row(
-            "SELECT id, username, full_name, role, pin_hash, is_active FROM users WHERE username = ?1",
-            rusqlite::params![username.trim()],
+            "SELECT id, username, full_name, role, pin_hash, is_active FROM users WHERE LOWER(username) = LOWER(?1)",
+            rusqlite::params![clean_username],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,          // id
@@ -278,35 +280,49 @@ pub mod commands {
         let (id, uname, full_name, role, pin_hash_opt, is_active) = match result {
             Ok(row) => row,
             Err(rusqlite::Error::QueryReturnedNoRows) => {
+                eprintln!(
+                    "[local_login] User '{}' not found in local SQLite database at {:?}",
+                    clean_username, db_path
+                );
                 return Err("Invalid username or password.".to_string());
             }
-            Err(e) => return Err(format!("Database error: {}", e)),
+            Err(e) => {
+                eprintln!("[local_login] Database error during lookup for user '{}': {}", clean_username, e);
+                return Err(format!("Database error: {}", e));
+            }
         };
 
         if is_active == 0 {
+            eprintln!("[local_login] User '{}' account is inactive", clean_username);
             return Err("Account is inactive.".to_string());
         }
 
-        let pin_hash = pin_hash_opt.ok_or_else(|| {
-            "Offline login not available — please connect to the server at least once.".to_string()
-        })?;
+        let pin_hash = match pin_hash_opt {
+            Some(h) => h,
+            None => {
+                eprintln!(
+                    "[local_login] User '{}' has no offline pin_hash configured in SQLite database",
+                    clean_username
+                );
+                return Err(
+                    "Offline login not available — please connect to the server at least once.".to_string(),
+                );
+            }
+        };
 
         // Verify password with bcrypt
         let valid = bcrypt::verify(&password, &pin_hash)
-            .map_err(|e| format!("Password verification error: {}", e))?;
+            .map_err(|e| {
+                eprintln!("[local_login] Bcrypt verification error for user '{}': {}", clean_username, e);
+                format!("Password verification error: {}", e)
+            })?;
 
         if !valid {
+            eprintln!("[local_login] Password mismatch for user '{}'", clean_username);
             return Err("Invalid username or password.".to_string());
         }
 
-        // Look up assigned_store_id from the stores table if the user has one
-        // (stored indirectly via the user's role — for simplicity we return None here;
-        //  the sync pull will populate it properly)
-        let assigned_store_id: Option<String> = conn.query_row(
-            "SELECT assigned_store_id FROM users WHERE id = ?1",
-            rusqlite::params![id],
-            |row| row.get(0),
-        ).unwrap_or(None);
+        println!("[local_login] User '{}' authenticated successfully offline", clean_username);
 
         Ok(LocalSession {
             user_id: id,
@@ -608,14 +624,25 @@ pub mod commands {
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        let sku_clean = input.sku.trim().to_uppercase();
         let name_clean = input.name.trim().to_string();
         let category_clean = input.category.trim().to_string();
         let unit_clean = input.unit.unwrap_or_else(|| "pcs".to_string()).trim().to_string();
 
-        if sku_clean.is_empty() {
-            return Err("Product SKU cannot be empty.".to_string());
-        }
+        let now = now_iso();
+        let sku_clean = if input.sku.trim().is_empty() {
+            let cat_prefix: String = category_clean
+                .chars()
+                .filter(|c| c.is_alphanumeric())
+                .take(4)
+                .collect::<String>()
+                .to_uppercase();
+            let prefix = if cat_prefix.is_empty() { "PROD".to_string() } else { cat_prefix };
+            let rand_val = (now.as_bytes().iter().map(|&b| b as u32).sum::<u32>() * 17) % 9000 + 1000;
+            format!("{}-{}", prefix, rand_val)
+        } else {
+            input.sku.trim().to_uppercase()
+        };
+
         if name_clean.is_empty() {
             return Err("Product name cannot be empty.".to_string());
         }
@@ -797,6 +824,59 @@ pub mod commands {
         Ok(prod)
     }
 
+    fn ensure_foreign_keys_exist(
+        conn: &Connection,
+        user_id: &str,
+        device_id: &str,
+        store_id: &str,
+        product_id: &str,
+    ) -> Result<(), String> {
+        let now = now_iso();
+
+        if !user_id.is_empty() {
+            conn.execute(
+                "INSERT INTO users (id, username, pin_hash, full_name, role, is_active, created_at) \
+                 VALUES (?1, ?1, '$2b$12$localplaceholderuserhash000000000000000000000000', ?1, 'GLOBAL_ADMIN', 1, ?2) \
+                 ON CONFLICT(id) DO NOTHING",
+                params![user_id, now],
+            )
+            .map_err(|e| format!("Failed to ensure user foreign key: {}", e))?;
+        }
+
+        if !store_id.is_empty() {
+            conn.execute(
+                "INSERT INTO stores (id, code, name, address, is_active, created_at, updated_at) \
+                 VALUES (?1, ?1, ?1, NULL, 1, ?2, ?2) \
+                 ON CONFLICT(id) DO NOTHING",
+                params![store_id, now],
+            )
+            .map_err(|e| format!("Failed to ensure store foreign key: {}", e))?;
+        }
+
+        if !product_id.is_empty() {
+            conn.execute(
+                "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) \
+                 VALUES (?1, ?1, ?1, NULL, NULL, 'DEFAULT', 'pcs', NULL, NULL, 0, 1, ?2, ?2) \
+                 ON CONFLICT(id) DO NOTHING",
+                params![product_id, now],
+            )
+            .map_err(|e| format!("Failed to ensure product foreign key: {}", e))?;
+        }
+
+        if !device_id.is_empty() {
+            let target_store_id = if store_id.is_empty() { "SINGLE-USER-STORE" } else { store_id };
+            conn.execute(
+                "INSERT INTO devices (id, store_id, device_name, is_active, registered_at) \
+                 VALUES (?1, ?2, 'Desktop Device', 1, ?3) \
+                 ON CONFLICT(id) DO NOTHING",
+                params![device_id, target_store_id, now],
+            )
+            .map_err(|e| format!("Failed to ensure device foreign key: {}", e))?;
+        }
+
+        Ok(())
+    }
+
     #[tauri::command]
     pub fn receive_stock(input: ReceiveStockInput) -> Result<InventoryTransaction, String> {
         let db_path = get_db_path();
@@ -807,6 +887,8 @@ pub mod commands {
         if input.quantity <= 0 {
             return Err("Quantity must be greater than zero.".to_string());
         }
+
+        ensure_foreign_keys_exist(&conn, &input.user_id, &input.device_id, &input.store_id, &input.product_id)?;
 
         let transaction_id = generate_id("TX");
         let now = now_iso();
@@ -855,7 +937,13 @@ pub mod commands {
             "store_id": input.store_id,
             "product_id": input.product_id,
             "movement_type": "RECEIPT",
-            "quantity_delta": input.quantity
+            "stock_bucket": "AVAILABLE",
+            "quantity_delta": input.quantity,
+            "occurred_at": now,
+            "user_id": input.user_id,
+            "device_id": input.device_id,
+            "reference_number": input.reference_number,
+            "reason_code": input.supplier
         }))
         .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
 
@@ -930,6 +1018,8 @@ pub mod commands {
             return Err("Quantity must be greater than zero.".to_string());
         }
 
+        ensure_foreign_keys_exist(&conn, &input.user_id, &input.device_id, &input.store_id, &input.product_id)?;
+
         // FR-MOV-008 / Section 21 strict-mode negative-stock rejection:
         // Read current AVAILABLE balance before committing.
         let available: i32 = conn
@@ -994,7 +1084,12 @@ pub mod commands {
             "store_id": input.store_id,
             "product_id": input.product_id,
             "movement_type": "SALE",
-            "quantity_delta": quantity_delta
+            "stock_bucket": "AVAILABLE",
+            "quantity_delta": quantity_delta,
+            "occurred_at": now,
+            "user_id": input.user_id,
+            "device_id": input.device_id,
+            "reference_number": input.reference_number
         }))
         .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
 
@@ -1110,6 +1205,8 @@ pub mod commands {
         let transaction_id = generate_id("TX");
         let now = now_iso();
 
+        ensure_foreign_keys_exist(&conn, &input.user_id, &input.device_id, &input.store_id, &input.product_id)?;
+
         // Insert RETURN transaction (FR-MOV-003, Section 13.3)
         conn.execute(
             "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, sync_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -1155,7 +1252,11 @@ pub mod commands {
             "movement_type": "RETURN",
             "stock_bucket": bucket_upper,
             "quantity_delta": quantity_delta,
-            "reference_number": input.reference_number
+            "occurred_at": now,
+            "user_id": input.user_id,
+            "device_id": input.device_id,
+            "reference_number": input.reference_number,
+            "reason_code": input.reason
         }))
         .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
 
@@ -1247,6 +1348,8 @@ pub mod commands {
         let outflow_tx_id = generate_id("TX");
         let inflow_tx_id = generate_id("TX");
 
+        ensure_foreign_keys_exist(&conn, &input.user_id, &input.device_id, &input.store_id, &input.product_id)?;
+
         // Insert outflow transaction (-quantity from from_bucket)
         conn.execute(
             "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reason_code, sync_status) VALUES (?1, ?2, ?3, 'DAMAGE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'PENDING')",
@@ -1320,6 +1423,9 @@ pub mod commands {
             "movement_type": "DAMAGE",
             "stock_bucket": from_upper,
             "quantity_delta": -input.quantity,
+            "occurred_at": now,
+            "user_id": input.user_id,
+            "device_id": input.device_id,
             "reason_code": reason_clean
         })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
 
@@ -1337,6 +1443,9 @@ pub mod commands {
             "movement_type": "DAMAGE",
             "stock_bucket": to_upper,
             "quantity_delta": input.quantity,
+            "occurred_at": now,
+            "user_id": input.user_id,
+            "device_id": input.device_id,
             "reason_code": reason_clean
         })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
 
@@ -1445,6 +1554,9 @@ pub mod commands {
         let transfer_id = generate_id("TRF");
         let now = now_iso();
 
+        ensure_foreign_keys_exist(&conn, &input.created_by_user_id, "SINGLE-USER-DEVICE", &input.source_store_id, &input.product_id)?;
+        ensure_foreign_keys_exist(&conn, &input.created_by_user_id, "SINGLE-USER-DEVICE", &input.destination_store_id, &input.product_id)?;
+
         conn.execute(
             "INSERT INTO transfers (id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
@@ -1532,6 +1644,8 @@ pub mod commands {
         let now = now_iso();
         let quantity_delta = -transfer.quantity;
 
+        ensure_foreign_keys_exist(&conn, &user_id, &device_id, &transfer.source_store_id, &transfer.product_id)?;
+
         conn.execute(
             "UPDATE transfers SET status = 'DISPATCHED', updated_at = ?1 WHERE id = ?2",
             params![now, transfer_id],
@@ -1578,6 +1692,9 @@ pub mod commands {
             "movement_type": "TRANSFER",
             "stock_bucket": "AVAILABLE",
             "quantity_delta": quantity_delta,
+            "occurred_at": now,
+            "user_id": user_id,
+            "device_id": device_id,
             "transfer_id": transfer_id,
             "reference_number": format!("TRF-DISP-{}", transfer_id)
         }))
@@ -1637,6 +1754,8 @@ pub mod commands {
         let now = now_iso();
         let quantity_delta = transfer.quantity;
 
+        ensure_foreign_keys_exist(&conn, &user_id, &device_id, &transfer.destination_store_id, &transfer.product_id)?;
+
         conn.execute(
             "UPDATE transfers SET status = 'RECEIVED', updated_at = ?1 WHERE id = ?2",
             params![now, transfer_id],
@@ -1683,6 +1802,9 @@ pub mod commands {
             "movement_type": "TRANSFER",
             "stock_bucket": "AVAILABLE",
             "quantity_delta": quantity_delta,
+            "occurred_at": now,
+            "user_id": user_id,
+            "device_id": device_id,
             "transfer_id": transfer_id,
             "reference_number": format!("TRF-RECV-{}", transfer_id)
         }))
@@ -1740,6 +1862,7 @@ pub mod commands {
         }
 
         let now = now_iso();
+        ensure_foreign_keys_exist(&conn, &user_id, &device_id, &transfer.source_store_id, &transfer.product_id)?;
 
         if transfer.status == "DISPATCHED" || transfer.status == "EXCEPTION" {
             let comp_tx_id = generate_id("TX");
@@ -1781,6 +1904,9 @@ pub mod commands {
                 "movement_type": "TRANSFER",
                 "stock_bucket": "AVAILABLE",
                 "quantity_delta": transfer.quantity,
+                "occurred_at": now,
+                "user_id": user_id,
+                "device_id": device_id,
                 "transfer_id": transfer_id,
                 "reference_number": format!("TRF-CNCL-{}", transfer_id)
             }))
@@ -1898,6 +2024,8 @@ pub mod commands {
         let now = now_iso();
         let ref_num = input.count_reference.or_else(|| Some(format!("COUNT-ADJ-{}", now)));
 
+        ensure_foreign_keys_exist(&conn, &input.user_id, &input.device_id, &input.store_id, &input.product_id)?;
+
         conn.execute(
             "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, sync_status) VALUES (?1, ?2, ?3, 'ADJUSTMENT', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'PENDING')",
             params![
@@ -1936,6 +2064,9 @@ pub mod commands {
             "movement_type": "ADJUSTMENT",
             "stock_bucket": "AVAILABLE",
             "quantity_delta": input.quantity_delta,
+            "occurred_at": now,
+            "user_id": input.user_id,
+            "device_id": input.device_id,
             "reason_code": reason_clean,
             "reference_number": ref_num
         })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
@@ -1971,6 +2102,8 @@ pub mod commands {
 
     #[tauri::command]
     pub fn get_pending_outbox_count() -> Result<i32, String> {
+        println!("[TAURI-SYNC] get_pending_outbox_count called");
+        
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
@@ -1983,6 +2116,7 @@ pub mod commands {
             .query_row([], |row| row.get(0))
             .map_err(|e| format!("Failed to query pending outbox count: {}", e))?;
 
+        println!("[TAURI-SYNC] get_pending_outbox_count returning: {}", count);
         Ok(count)
     }
 
@@ -1995,13 +2129,41 @@ pub mod commands {
     /// The sync worker reads these, posts them to /api/v1/sync/push, then calls
     /// update_outbox_event_status to advance each event's state.
     #[tauri::command]
-    pub fn get_pending_outbox_events(limit: Option<i32>) -> Result<Vec<serde_json::Value>, String> {
+    pub fn get_pending_outbox_events(
+        limit: Option<i32>,
+        force: Option<bool>,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        println!("[TAURI-SYNC] get_pending_outbox_events called with limit: {:?}, force: {:?}", limit, force);
+        
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
         let batch_limit = limit.unwrap_or(100).max(1).min(500);
+        let force_sync = force.unwrap_or(false);
         let now = now_iso();
+        
+        println!("[TAURI-SYNC] batch_limit: {}, force_sync: {}, now: {}", batch_limit, force_sync, now);
+
+        // 1. Revert any orphaned events left stuck in 'SENDING' or 'PERMANENT_REJECTION' back to 'PENDING'
+        if force_sync {
+            conn.execute(
+                "UPDATE outbox_events SET status = 'PENDING' WHERE status IN ('SENDING', 'PERMANENT_REJECTION')",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset outbox events: {}", e))?;
+            conn.execute(
+                "UPDATE outbox_events SET next_attempt_at = NULL WHERE status = 'RETRYABLE_ERROR'",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset retry backoff: {}", e))?;
+        } else {
+            conn.execute(
+                "UPDATE outbox_events SET status = 'PENDING' WHERE status = 'SENDING'",
+                [],
+            )
+            .map_err(|e| format!("Failed to reset sending outbox events: {}", e))?;
+        }
 
         let mut stmt = conn
             .prepare(
@@ -2057,6 +2219,9 @@ pub mod commands {
         target_status: String,
         error_msg: Option<String>,
     ) -> Result<(), String> {
+        println!("[TAURI-SYNC] update_outbox_event_status called: event_id={}, target_status={}, error_msg={:?}", 
+                 event_id, target_status, error_msg);
+        
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
@@ -2069,8 +2234,6 @@ pub mod commands {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|_| format!("Outbox event '{}' not found.", event_id))?;
-
-        let now = now_iso();
 
         match target_status.as_str() {
             "RETRYABLE_ERROR" => {
@@ -2262,6 +2425,41 @@ pub mod commands {
         Ok(store)
     }
 
+    /// Upsert a stock balance row from server data (INSERT ... ON CONFLICT DO UPDATE).
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct StockBalanceSnapshot {
+        pub id: String,
+        pub store_id: String,
+        pub product_id: String,
+        pub stock_bucket: String,
+        pub quantity: i32,
+        pub updated_at: String,
+    }
+
+    #[tauri::command]
+    pub fn upsert_stock_balance_from_server(balance: StockBalanceSnapshot) -> Result<(), String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = excluded.quantity, updated_at = excluded.updated_at",
+            params![
+                balance.id,
+                balance.store_id,
+                balance.product_id,
+                balance.stock_bucket,
+                balance.quantity,
+                balance.updated_at,
+            ],
+        )
+        .map_err(|e| format!("Failed to upsert stock balance: {}", e))?;
+
+        Ok(())
+    }
+
     /// Persist the last-successful-sync timestamp (SYNC-009).
     #[tauri::command]
     pub fn set_last_sync_timestamp(timestamp: String) -> Result<(), String> {
@@ -2326,6 +2524,7 @@ pub fn run() {
             commands::set_last_sync_timestamp,
             commands::upsert_product_from_server,
             commands::upsert_store_from_server,
+            commands::upsert_stock_balance_from_server,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -65,6 +65,8 @@ export interface SyncConfig {
   batchSize?: number;
   /** Abort signal for cancelling in-flight fetch calls */
   signal?: AbortSignal;
+  /** Force sync attempt: reset retry backoffs and clear trapped SENDING events */
+  force?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,9 +109,9 @@ export function setMockSyncState(partial: Partial<ClientSyncState>): void {
 // Tauri IPC wrappers
 // ---------------------------------------------------------------------------
 
-async function _getPendingOutboxEvents(limit: number): Promise<OutboxEventRow[]> {
+async function _getPendingOutboxEvents(limit: number, force?: boolean): Promise<OutboxEventRow[]> {
   if (isTauriEnvironment()) {
-    return invoke<OutboxEventRow[]>('get_pending_outbox_events', { limit });
+    return invoke<OutboxEventRow[]>('get_pending_outbox_events', { limit, force: force ?? false });
   }
   return [];
 }
@@ -211,16 +213,31 @@ export async function getSyncStatus(): Promise<ClientSyncState> {
 function _buildPushItem(row: OutboxEventRow): TransactionPushItem | null {
   try {
     const p = JSON.parse(row.payload) as Record<string, unknown>;
+    const userIdStr = String(p.user_id ?? '').trim();
+    const deviceIdStr = String(p.device_id ?? '').trim();
+
+    // Convert placeholder user IDs to numeric values
+    let userId: number;
+    if (userIdStr && !isNaN(Number(userIdStr))) {
+      userId = Number(userIdStr);
+    } else {
+      if (userIdStr === 'LOCAL-USER' || userIdStr === 'USER-LOCAL') {
+        userId = 1; // Default user ID for local operations
+      } else {
+        userId = 1; // Fallback to user ID 1
+      }
+    }
+
     return {
       transaction_id: String(p.transaction_id ?? ''),
       store_id: String(p.store_id ?? ''),
       product_id: String(p.product_id ?? ''),
       movement_type: String(p.movement_type ?? ''),
       quantity_delta: Number(p.quantity_delta ?? 0),
-      occurred_at: String(p.occurred_at ?? new Date().toISOString()),
-      user_id: String(p.user_id ?? ''),
-      device_id: String(p.device_id ?? ''),
-      stock_bucket: String(p.stock_bucket ?? 'AVAILABLE'),
+      occurred_at: String(p.occurred_at || new Date().toISOString()),
+      user_id: userId,
+      device_id: deviceIdStr || 'SINGLE-USER-DEVICE',
+      stock_bucket: String(p.stock_bucket || 'AVAILABLE'),
       reference_number: (p.reference_number as string | null | undefined) ?? null,
       reason_code: (p.reason_code as string | null | undefined) ?? null,
       transfer_id: (p.transfer_id as string | null | undefined) ?? null,
@@ -232,6 +249,30 @@ function _buildPushItem(row: OutboxEventRow): TransactionPushItem | null {
   } catch {
     return null;
   }
+}
+
+// Movement priority for deterministic push ordering.
+// Lower number = processed first by the server.
+const MOVEMENT_PUSH_PRIORITY: Record<string, number> = {
+  ADJUSTMENT: 0, // Baseline / count reconciliation first
+  RECEIPT: 1, // Then stock-increases
+  TRANSFER_IN: 1,
+  RETURN: 1,
+  SALE: 2, // Then stock-decreases
+  TRANSFER_OUT: 2,
+  DAMAGE: 2,
+};
+
+function _sortPushItems<T extends { item: TransactionPushItem }>(arr: T[]): T[] {
+  return [...arr].sort((a, b) => {
+    const pa = MOVEMENT_PUSH_PRIORITY[a.item.movement_type] ?? 3;
+    const pb = MOVEMENT_PUSH_PRIORITY[b.item.movement_type] ?? 3;
+    if (pa !== pb) return pa - pb;
+    const ta = new Date(a.item.occurred_at).getTime();
+    const tb = new Date(b.item.occurred_at).getTime();
+    if (ta !== tb) return ta - tb;
+    return a.item.transaction_id.localeCompare(b.item.transaction_id);
+  });
 }
 
 /**
@@ -256,6 +297,8 @@ async function _httpPush(
 
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText);
+    // eslint-disable-next-line no-console
+    console.error('[SyncService] Push HTTP error:', response.status, text);
     throw new Error(`Push HTTP ${response.status}: ${text}`);
   }
 
@@ -323,13 +366,31 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
   }
 
   // Resolve access token — prefer explicit config.accessToken, then auth service.
+  // Retry a few times if no token is available (background upgrade may still be in progress)
   let resolvedToken = config.accessToken;
   if (!resolvedToken) {
-    try {
-      const { getAccessToken } = await import('./tauriAuthService');
-      resolvedToken = (await getAccessToken()) ?? undefined;
-    } catch {
-      resolvedToken = undefined;
+    const maxRetries = 3;
+    const retryDelayMs = 1000;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const { getAccessToken } = await import('./tauriAuthService');
+        resolvedToken = (await getAccessToken()) ?? undefined;
+
+        if (resolvedToken) {
+          break; // Got token, no need to retry
+        }
+
+        if (attempt < maxRetries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[SyncService] TOKEN ERROR:', err);
+        if (attempt < maxRetries - 1) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        }
+      }
     }
   }
 
@@ -345,7 +406,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
   _syncInProgress = true;
 
   const batchSize = config.batchSize ?? 100;
-  let totalAccepted = 0;
   let totalRejected = 0;
   let hadRetryableError = false;
   let lastErrorMsg: string | null = null;
@@ -356,7 +416,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     let keepGoing = true;
 
     while (keepGoing) {
-      const rows = await _getPendingOutboxEvents(batchSize);
+      const rows = await _getPendingOutboxEvents(batchSize, config.force);
 
       if (rows.length === 0) {
         keepGoing = false;
@@ -388,11 +448,16 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         continue;
       }
 
+      // Reorder the batch so baseline (ADJUSTMENT) and stock-increase events
+      // are pushed before stock-decrease events.  This mirrors the server-side
+      // ingest_batch ordering and keeps the two sides consistent.
+      const sortedItemsWithRows = _sortPushItems(itemsWithRows);
+
       try {
         const pushResp = await _httpPush(
           config.apiBaseUrl,
           resolvedToken,
-          itemsWithRows.map((x) => x.item),
+          sortedItemsWithRows.map((x) => x.item),
           config.signal,
         );
 
@@ -400,7 +465,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         const receiptMap = new Map(pushResp.receipts.map((r) => [r.transaction_id, r]));
 
         // Update each event based on its receipt
-        for (const { item, row } of itemsWithRows) {
+        for (const { item, row } of sortedItemsWithRows) {
           const receipt = receiptMap.get(item.transaction_id);
           if (!receipt) {
             // No receipt returned — treat as retryable error
@@ -422,15 +487,20 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
                 receipt.received_at,
               ).catch(() => undefined),
             ]);
-            totalAccepted++;
           } else {
             // Server permanently rejected the event (validation failure)
+            const rejectionReason = receipt.rejection_reason ?? 'Server rejected transaction';
+            // eslint-disable-next-line no-console
+            console.error(
+              '[SyncService] Event rejected:',
+              item.transaction_id,
+              'Reason:',
+              rejectionReason,
+            );
             await Promise.all([
-              _updateOutboxEventStatus(
-                row.event_id,
-                'PERMANENT_REJECTION',
-                receipt.rejection_reason ?? 'Server rejected transaction',
-              ).catch(() => undefined),
+              _updateOutboxEventStatus(row.event_id, 'PERMANENT_REJECTION', rejectionReason).catch(
+                () => undefined,
+              ),
               _updateTransactionSyncStatus(item.transaction_id, 'PERMANENT_REJECTION').catch(
                 () => undefined,
               ),
@@ -464,39 +534,36 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     if (!hadRetryableError) {
       try {
         pullResponse = await _httpPull(config.apiBaseUrl, resolvedToken, config.signal);
-        // eslint-disable-next-line no-console
-        console.info(
-          `[SyncService] Pull complete: ${pullResponse.products.length} products, ` +
-            `${pullResponse.stores.length} stores`,
-        );
 
         // Upsert products and stores from server into local SQLite
         if (isTauriEnvironment()) {
           for (const product of pullResponse.products) {
             try {
               await invoke('upsert_product_from_server', { product });
-            } catch (err) {
-              // eslint-disable-next-line no-console
-              console.warn('[SyncService] Failed to upsert product:', product.id, err);
+            } catch {
+              // non-fatal upsert failure
             }
           }
           for (const store of pullResponse.stores) {
             try {
               await invoke('upsert_store_from_server', { store });
-            } catch (err) {
-              // eslint-disable-next-line no-console
-              console.warn('[SyncService] Failed to upsert store:', store.id, err);
+            } catch {
+              // non-fatal upsert failure
+            }
+          }
+          if (pullResponse.stock_balances && pullResponse.stock_balances.length > 0) {
+            for (const balance of pullResponse.stock_balances) {
+              try {
+                await invoke('upsert_stock_balance_from_server', { balance });
+              } catch {
+                // non-fatal upsert failure
+              }
             }
           }
         }
-      } catch (pullError) {
+      } catch {
         // Pull failure is non-fatal — we still record a successful push sync time
-        const errMsg = pullError instanceof Error ? pullError.message : String(pullError);
-        // eslint-disable-next-line no-console
-        console.warn('[SyncService] Pull failed (non-fatal):', errMsg);
       }
-
-      // Store the last successful sync timestamp (SYNC-009)
       const syncTime = new Date().toISOString();
       await _setLastSyncTimestamp(syncTime);
       _mockLastSyncAt = syncTime;
@@ -510,12 +577,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
     _mockLastOutcome = outcome;
     _mockLastError = lastErrorMsg;
-
-    // eslint-disable-next-line no-console
-    console.info(
-      `[SyncService] Sync complete — accepted: ${totalAccepted}, rejected: ${totalRejected}, ` +
-        `retryable_error: ${hadRetryableError}`,
-    );
   } finally {
     _syncInProgress = false;
   }
@@ -540,16 +601,10 @@ export function startBackgroundSync(config: SyncConfig, intervalMs: number = 30_
   }
 
   // Fire immediately on first call, then repeat
-  void triggerSync(config).catch((err) => {
-    // eslint-disable-next-line no-console
-    console.warn('[SyncService] Background sync error (initial):', err);
-  });
+  void triggerSync(config).catch(() => undefined);
 
   _backgroundIntervalId = setInterval(() => {
-    void triggerSync(config).catch((err) => {
-      // eslint-disable-next-line no-console
-      console.warn('[SyncService] Background sync error:', err);
-    });
+    void triggerSync(config).catch(() => undefined);
   }, intervalMs);
 }
 

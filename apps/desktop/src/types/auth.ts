@@ -11,7 +11,7 @@ export interface TokenResponse {
   refresh_token: string;
   token_type: 'bearer';
   role: string;
-  user_id: number; // Changed to number for FastAPI Users integer ID
+  user_id: string | number;
   username: string;
   full_name: string | null;
   assigned_store_id: string | null;
@@ -26,7 +26,7 @@ export interface AccessTokenResponse {
 
 /** Response from GET /api/v1/auth/me */
 export interface UserProfile {
-  id: number; // Changed to number for FastAPI Users integer ID
+  id: string | number;
   username: string;
   email: string | null;
   full_name: string | null;
@@ -49,7 +49,7 @@ export interface UserProfile {
 export interface AuthSession {
   access_token: string;
   refresh_token: string;
-  user_id: number; // Changed to number for FastAPI Users integer ID
+  user_id: string | number;
   username: string;
   full_name: string | null;
   role: string;

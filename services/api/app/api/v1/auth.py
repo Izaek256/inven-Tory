@@ -34,9 +34,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi_users import FastAPIUsers
 from fastapi_users import exceptions as fu_exceptions
 from jose import JWTError
-from passlib.context import CryptContext
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +47,8 @@ from app.core.security import (
     create_access_token,
     create_refresh_token,
     decode_refresh_token,
+    hash_password,
+    verify_password,
 )
 from app.models.device import Device
 
@@ -233,7 +234,9 @@ async def login(
     now = datetime.now(UTC)
 
     # 1. Look up user by username (not email, for our custom login)
-    result = await db.execute(select(User).where(User.username == body.username))
+    result = await db.execute(
+        select(User).where(func.lower(User.username) == func.lower(body.username))
+    )
     user: User | None = result.scalars().first()
 
     if user is None or not user.is_active:
@@ -241,8 +244,7 @@ async def login(
         raise _unauthorized
 
     # 2. Verify password using bcrypt directly
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    if not pwd_context.verify(body.password, user.hashed_password):
+    if not verify_password(body.password, user.hashed_password):
         logger.warning("LOGIN_FAILURE reason=wrong_password username=%s", body.username)
         raise _unauthorized
 
@@ -494,10 +496,8 @@ async def change_password(
     (stateless JWT). Clients should treat this as an implicit logout signal
     and prompt for re-authentication.
     """
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
     # Verify current password
-    if not pwd_context.verify(body.current_password, current_user.hashed_password):
+    if not verify_password(body.current_password, current_user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Current password is incorrect.",
@@ -510,7 +510,7 @@ async def change_password(
         )
 
     # Update password using bcrypt
-    current_user.hashed_password = pwd_context.hash(body.new_password)
+    current_user.hashed_password = hash_password(body.new_password)
     db.add(current_user)
     await db.flush()
 

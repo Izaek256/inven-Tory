@@ -73,6 +73,9 @@ export function _getMemSession(): AuthSession | null {
 // ---------------------------------------------------------------------------
 
 async function _secureWrite(session: AuthSession): Promise<void> {
+  // Always update in-memory cache first for immediate consistency
+  _memSession = session;
+
   if (isTauriEnvironment()) {
     try {
       // Dynamic import so the module tree-shakes cleanly in web/test builds.
@@ -81,22 +84,28 @@ async function _secureWrite(session: AuthSession): Promise<void> {
       await store.set(SESSION_KEY, session);
       await store.save();
     } catch (err) {
-      // eslint-disable-next-line no-console
-      console.warn('[AuthService] Secure write failed, falling back to memory:', err);
-      _memSession = session;
+      // _memSession is already set above
     }
-  } else {
-    _memSession = session;
   }
 }
 
 async function _secureRead(): Promise<AuthSession | null> {
+  // Check in-memory cache first for immediate consistency
+  if (_memSession) {
+    return _memSession;
+  }
+
   if (isTauriEnvironment()) {
     try {
       const { load } = await import('@tauri-apps/plugin-store');
       const store = await load(STORE_FILE, { autoSave: false });
       const val = await store.get<AuthSession>(SESSION_KEY);
-      return val ?? null;
+      if (val) {
+        // Cache the loaded value for future reads
+        _memSession = val;
+        return val;
+      }
+      return null;
     } catch {
       return _memSession;
     }
@@ -191,7 +200,7 @@ export async function login(
       const session: AuthSession = {
         access_token: offlineToken,
         refresh_token: '',
-        user_id: parseInt(local.user_id, 10) || 0,
+        user_id: local.user_id,
         username: local.username,
         full_name: local.full_name,
         role: local.role as UserRole,
@@ -201,7 +210,8 @@ export async function login(
       };
 
       await _secureWrite(session);
-      // Background: try to get a real server JWT for sync
+
+      // Fire upgrade in background without awaiting - login() resolves immediately
       void _tryUpgradeToServerToken(username, password, resolvedDeviceId, apiBaseUrl, session);
       return session;
     } catch (localErr) {
@@ -234,7 +244,7 @@ export async function login(
       typeof import.meta !== 'undefined'
         ? ((import.meta as { env?: Record<string, string> }).env ?? {})
         : {};
-    const inViteDev = env.DEV === true && env.MODE !== 'test';
+    const inViteDev = Boolean(env.DEV) && env.MODE !== 'test';
 
     if (isNetworkError && inViteDev) {
       // API server is not running. Since we are in local Vite dev (desktop
@@ -342,17 +352,28 @@ async function _apiLogin(
   password: string,
   deviceId: string,
   apiBaseUrl?: string,
+  timeoutMs: number = 60000,
 ): Promise<AuthSession> {
   const baseUrl = apiBaseUrl || API_BASE_URL;
-  const resp = await fetch(`${baseUrl}/auth/login`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username, password, device_id: deviceId }),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let resp: Response;
+  try {
+    resp = await fetch(`${baseUrl}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, device_id: deviceId }),
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({ detail: resp.statusText }));
     const detail = (body as { detail?: string }).detail ?? resp.statusText;
+    // eslint-disable-next-line no-console
+    console.error('[AuthService] API LOGIN FAILED - Status:', resp.status, 'Detail:', detail);
     throw new Error(detail);
   }
 
@@ -390,13 +411,52 @@ async function _tryUpgradeToServerToken(
   deviceId: string,
   apiBaseUrl: string | undefined,
   currentSession: AuthSession,
-): Promise<void> {
+): Promise<AuthSession | null> {
   try {
-    const upgraded = await _apiLogin(username, password, deviceId, apiBaseUrl);
+    const resolvedApiBaseUrl = apiBaseUrl || API_BASE_URL;
+
+    // Check if we're online first
+    const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
+    if (!isOnline) {
+      return null;
+    }
+
+    // Test basic connectivity first - short-circuit on failure
+    try {
+      const healthCheck = await fetch(`${resolvedApiBaseUrl.replace('/api/v1', '')}/health`, {
+        method: 'GET',
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!healthCheck.ok) {
+        return null;
+      }
+    } catch (healthErr) {
+      // eslint-disable-next-line no-console
+      console.error('[AuthService] Health check failed, skipping upgrade this cycle:', healthErr);
+      return null;
+    }
+
+    const upgraded = await _apiLogin(username, password, deviceId, resolvedApiBaseUrl, 15000);
     // Merge: keep local profile data, replace token
-    await _secureWrite({ ...currentSession, ...upgraded });
-  } catch {
+    const mergedSession = { ...currentSession, ...upgraded };
+    await _secureWrite(mergedSession);
+
+    // Trigger a sync after successful token upgrade
+    try {
+      const { triggerSync } = await import('./tauriSyncService');
+      void triggerSync({ apiBaseUrl: resolvedApiBaseUrl, force: true });
+    } catch (syncErr) {
+      // eslint-disable-next-line no-console
+      console.error('[AuthService] Failed to trigger sync after upgrade:', syncErr);
+    }
+
+    return mergedSession;
+  } catch (err) {
     // Network unavailable or server error — offline session stays as-is
+    // eslint-disable-next-line no-console
+    console.error('[AuthService] TOKEN UPGRADE FAILED:', err);
+    return null;
   }
 }
 
@@ -503,11 +563,26 @@ export async function getAccessToken(): Promise<string | null> {
   const session = await _secureRead();
   if (!session) return null;
 
+  const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
+
+  // Offline sentinel tokens cannot be validated by central API JWT middleware.
+  // The background upgrade in login() handles this - don't interfere here.
+  // Return null to let sync wait for the background upgrade to complete.
+  if (
+    session.access_token.startsWith('offline:') ||
+    session.access_token.startsWith('dev-offline:') ||
+    session.access_token.startsWith('dev-local:')
+  ) {
+    return null;
+  }
+
   // If online and token is expired, attempt a silent refresh
   if (_isTokenExpired(session.expires_at) && !session.token_expired_offline) {
-    const refreshed = await tryRefreshToken();
-    if (refreshed && !_isTokenExpired(refreshed.expires_at)) {
-      return refreshed.access_token;
+    if (isOnline) {
+      const refreshed = await tryRefreshToken();
+      if (refreshed && !_isTokenExpired(refreshed.expires_at)) {
+        return refreshed.access_token;
+      }
     }
     // Could not refresh — return null to block sync (but not local operations)
     return null;

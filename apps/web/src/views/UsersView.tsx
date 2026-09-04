@@ -152,7 +152,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
     }
   }, [confirmDelete]);
 
-  const columns: ColumnDef<any>[] = useMemo(
+  const columns: ColumnDef<UserRead>[] = useMemo(
     () => [
       { key: 'id', header: 'ID', width: '60px' },
       { key: 'username', header: 'Username' },
@@ -319,7 +319,12 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
             </div>
           </div>
         ) : (
-          <DataTable columns={columns} rows={rows} rowKey={(r) => String(r.id)} data-testid="users-table" />
+          <DataTable
+            columns={columns}
+            rows={rows}
+            rowKey={(r) => String(r.id)}
+            data-testid="users-table"
+          />
         )}
       </Card>
 

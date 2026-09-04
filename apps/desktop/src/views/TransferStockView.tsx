@@ -45,18 +45,25 @@ export const TransferStockView: React.FC = () => {
       try {
         const { getSession } = await import('../services/tauriAuthService');
         const s = await getSession();
-        if (s) {
-          setSessionUserId(s.user_id);
+        if (s && s.user_id !== undefined && s.user_id !== null && String(s.user_id).trim() !== '') {
+          setSessionUserId(String(s.user_id));
+        } else if (s && s.username) {
+          setSessionUserId(s.username);
+        } else {
+          setSessionUserId('USER-LOCAL');
         }
         // device_id is stored separately in the secure store
         if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
           const { load } = await import('@tauri-apps/plugin-store');
           const store = await load('auth.dat', { autoSave: false });
           const devId = await store.get<string>('device_id');
-          setSessionDeviceId(devId ?? '');
+          setSessionDeviceId(devId || 'SINGLE-USER-DEVICE');
+        } else {
+          setSessionDeviceId('SINGLE-USER-DEVICE');
         }
       } catch {
-        // Non-Tauri / test environment — leave empty; Tauri commands use their own context
+        setSessionUserId('USER-LOCAL');
+        setSessionDeviceId('SINGLE-USER-DEVICE');
       }
     };
     void loadSession();
@@ -198,24 +205,22 @@ export const TransferStockView: React.FC = () => {
       );
       return;
     }
-    if (!sessionUserId) {
-      setError('User session not found. Please log in again.');
-      return;
-    }
-
     setSubmitting(true);
+    const userId = sessionUserId || 'USER-LOCAL';
+    const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
+
     try {
       const created = await createTransfer({
         source_store_id: sourceStoreId,
         destination_store_id: destinationStoreId,
         product_id: selectedProduct.id,
         quantity,
-        created_by_user_id: sessionUserId,
+        created_by_user_id: userId,
         notes: notes || undefined,
       });
 
       if (shouldDispatch) {
-        await dispatchTransfer(created.id, sessionUserId, sessionDeviceId);
+        await dispatchTransfer(created.id, userId, deviceId);
         setSuccessMessage(
           `Transfer ${created.id} created and dispatched! Source stock decreased by ${quantity}.`,
         );
@@ -241,13 +246,11 @@ export const TransferStockView: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
     setSubmitting(true);
-    if (!sessionUserId) {
-      setError('User session not found. Please log in again.');
-      setSubmitting(false);
-      return;
-    }
+    const userId = sessionUserId || 'USER-LOCAL';
+    const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
+
     try {
-      await dispatchTransfer(transferId, sessionUserId, sessionDeviceId);
+      await dispatchTransfer(transferId, userId, deviceId);
       setSuccessMessage(`Transfer ${transferId} successfully dispatched!`);
       await fetchData();
     } catch (err) {
@@ -261,13 +264,11 @@ export const TransferStockView: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
     setSubmitting(true);
-    if (!sessionUserId) {
-      setError('User session not found. Please log in again.');
-      setSubmitting(false);
-      return;
-    }
+    const userId = sessionUserId || 'USER-LOCAL';
+    const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
+
     try {
-      await receiveTransfer(transferId, sessionUserId, sessionDeviceId);
+      await receiveTransfer(transferId, userId, deviceId);
       setSuccessMessage(`Transfer ${transferId} receipt confirmed! Stock added to destination.`);
       await fetchData();
     } catch (err) {

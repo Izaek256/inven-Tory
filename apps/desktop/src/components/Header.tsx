@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
-import { getLastSyncTimestamp } from '../services/tauriSyncService';
+import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
 import { Badge, ThemeToggle, Select, Button } from '@inven-tory/ui';
 import { LogOut, User } from 'lucide-react';
 import type { AuthSession } from '../types/auth';
@@ -28,8 +28,28 @@ export const Header: React.FC<HeaderProps> = ({
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
 
+  const triggerManualSync = async (): Promise<void> => {
+    try {
+      const envBaseUrl =
+        typeof import.meta !== 'undefined'
+          ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+          : undefined;
+      const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+      await triggerSync({ apiBaseUrl, force: true });
+      const count = await getPendingOutboxCount();
+      setPendingSyncCount(count);
+      const ts = await getLastSyncTimestamp();
+      setLastSyncAt(ts);
+    } catch {
+      // Ignore manual sync errors
+    }
+  };
+
   useEffect(() => {
-    const handleOnline = (): void => setIsOnline(true);
+    const handleOnline = (): void => {
+      setIsOnline(true);
+      void triggerManualSync();
+    };
     const handleOffline = (): void => setIsOnline(false);
 
     window.addEventListener('online', handleOnline);
@@ -48,7 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
     };
 
     fetchPendingCount();
-    const interval = setInterval(fetchPendingCount, 1000);
+    const interval = setInterval(fetchPendingCount, 10000);
 
     // Fetch last sync timestamp on mount and every 5 s (SYNC-009)
     const fetchLastSync = async (): Promise<void> => {
@@ -96,8 +116,10 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Pending Sync Count Badge */}
         <div
           className="pending-sync-badge"
-          title={`Pending sync outbox events: ${pendingSyncCount}`}
+          title={`Pending sync outbox events: ${pendingSyncCount}. Click to trigger manual sync.`}
           data-testid="pending-sync-badge"
+          onClick={triggerManualSync}
+          style={{ cursor: 'pointer' }}
         >
           <Badge status="PENDING" label={`Pending Sync: ${pendingSyncCount}`} />
           <span style={{ display: 'none' }} data-testid="pending-sync-count">

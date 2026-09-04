@@ -109,7 +109,7 @@ describe('Desktop Shell Application', () => {
 
   it('handles store loading errors gracefully', async () => {
     vi.spyOn(console, 'error').mockImplementation((): void => {});
-    vi.spyOn(tauriStoreService, 'getStores').mockRejectedValueOnce(
+    vi.spyOn(tauriStoreService, 'getStores').mockRejectedValue(
       new Error('Failed to connect to SQLite database'),
     );
 

@@ -37,18 +37,25 @@ export const DamageQuarantineView: React.FC = () => {
       try {
         const { getSession } = await import('../services/tauriAuthService');
         const s = await getSession();
-        if (s) {
-          setSessionUserId(s.user_id);
+        if (s && s.user_id !== undefined && s.user_id !== null && String(s.user_id).trim() !== '') {
+          setSessionUserId(String(s.user_id));
+        } else if (s && s.username) {
+          setSessionUserId(s.username);
+        } else {
+          setSessionUserId('USER-LOCAL');
         }
         // device_id is stored separately in the secure store
         if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
           const { load } = await import('@tauri-apps/plugin-store');
           const store = await load('auth.dat', { autoSave: false });
           const devId = await store.get<string>('device_id');
-          setSessionDeviceId(devId ?? '');
+          setSessionDeviceId(devId || 'SINGLE-USER-DEVICE');
+        } else {
+          setSessionDeviceId('SINGLE-USER-DEVICE');
         }
       } catch {
-        // Non-Tauri / test environment — leave empty; Tauri commands use their own context
+        setSessionUserId('USER-LOCAL');
+        setSessionDeviceId('SINGLE-USER-DEVICE');
       }
     };
     void loadSession();
@@ -161,14 +168,13 @@ export const DamageQuarantineView: React.FC = () => {
       setError(msg);
       return;
     }
-    if (!sessionUserId || !sessionDeviceId) {
-      setError('Session not loaded. Please log in again.');
-      return;
-    }
 
     setIsSubmitting(true);
 
     try {
+      const userId = sessionUserId || 'USER-LOCAL';
+      const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
+
       const input: MoveStockBucketInput = {
         store_id: selectedStoreId,
         product_id: selectedProduct.id,
@@ -176,8 +182,8 @@ export const DamageQuarantineView: React.FC = () => {
         to_bucket: toBucket,
         quantity,
         reason: reason.trim(),
-        user_id: sessionUserId,
-        device_id: sessionDeviceId,
+        user_id: userId,
+        device_id: deviceId,
       };
 
       await moveStockBucket(input);

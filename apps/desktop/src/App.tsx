@@ -188,15 +188,47 @@ export function App(): React.ReactElement {
           : undefined;
       const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
+      // Start background sync immediately
       startBackgroundSync({ apiBaseUrl }, 30_000);
-      void triggerSync({ apiBaseUrl })
-        .then(() => fetchStores())
-        .catch(() => undefined);
 
-      return () => {
+      // Trigger initial sync immediately (token upgrade should be synchronous now)
+      void triggerSync({ apiBaseUrl, force: true })
+        .then(() => {
+          return fetchStores();
+        })
+        .catch((err) => {
+          // eslint-disable-next-line no-console
+          console.error('[App] SYNC ERROR:', err);
+        });
+
+      return (): void => {
         stopBackgroundSync();
       };
     }
+  }, [authState, fetchStores]);
+
+  // Online reconnection listener: immediately attempt token upgrade and sync outbox
+  useEffect(() => {
+    const handleOnline = (): void => {
+      if (authState === 'authenticated' || authState === 'expired_offline') {
+        const envBaseUrl =
+          typeof import.meta !== 'undefined'
+            ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+            : undefined;
+        const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+        void triggerSync({ apiBaseUrl, force: true })
+          .then(() => {
+            return fetchStores();
+          })
+          .catch(() => undefined);
+      }
+    };
+
+    window.addEventListener('online', handleOnline);
+    return (): void => {
+      window.removeEventListener('online', handleOnline);
+    };
   }, [authState, fetchStores]);
 
   // Performance instrumentation
@@ -215,12 +247,6 @@ export function App(): React.ReactElement {
           performance.clearMarks('app-init-start');
           performance.clearMarks('app-interactive');
           performance.clearMeasures('cold-start-to-interactive');
-          // eslint-disable-next-line no-console
-          console.info(`[PERF] Cold start to interactive: ${duration.toFixed(2)}ms`);
-          if (duration > 3000) {
-            // eslint-disable-next-line no-console
-            console.warn(`[PERF-WARN] Cold start exceeded 3000ms budget (NFR-PERF-001)`);
-          }
         }
       } catch {
         // Non-fatal

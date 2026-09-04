@@ -26,9 +26,19 @@ async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T 
       headers.Authorization = `Bearer ${token}`;
     }
 
-    const res = await fetch(`${apiBaseUrl}${path}`, { ...options, headers });
-    if (res.ok) {
-      return (await res.json()) as T;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1000);
+    try {
+      const res = await fetch(`${apiBaseUrl}${path}`, {
+        ...options,
+        headers,
+        signal: options.signal ?? controller.signal,
+      });
+      if (res.ok) {
+        return (await res.json()) as T;
+      }
+    } finally {
+      clearTimeout(timer);
     }
   } catch {
     // Network / API unreachable

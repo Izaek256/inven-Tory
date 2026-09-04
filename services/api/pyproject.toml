@@ -11,31 +11,31 @@ requires-python = ">=3.12"
 license = { text = "See repository LICENSE" }
 dependencies = [
     # Web framework
-    "fastapi>=0.112.0",
-    "uvicorn[standard]>=0.30.0",
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
     # Data validation
-    "pydantic>=2.8.0",
-    "pydantic-settings>=2.4.0",
+    "pydantic==2.13.5",
+    "pydantic-settings==2.15.0",
     # Database
-    "sqlalchemy[asyncio]>=2.0.31",
-    "asyncpg>=0.29.0",       # PostgreSQL async driver
-    "alembic>=1.13.0",       # Migrations
+    "sqlalchemy[asyncio]==2.0.52",
+    "asyncpg==0.31.0",       # PostgreSQL async driver
+    "alembic==1.19.1",       # Migrations
     # Auth
-    "fastapi-users[sqlalchemy]>=13.0.0",
+    "fastapi-users[sqlalchemy]==15.0.5",
     # NOTE: passlib is a transitive dep of fastapi-users for password hashing.
     # Our own code imports ``bcrypt`` directly (see app/core/security.py and
     # infra/seed/genesis_single_user.py) rather than going through passlib's
     # CryptContext, because passlib probes ``bcrypt.__about__.__version__`` at
     # import time which emits a trapped-but-ugly AttributeError on some
     # combinations of the two libraries.
-    "passlib>=1.7.4",
-    "bcrypt>=3.1.0,<4.1",
-    "python-jose[cryptography]>=3.3.0",
+    "passlib==1.7.4",
+    "bcrypt==4.2.1",
+    "python-jose[cryptography]==3.5.0",
     # HTTP client (for internal calls)
-    "httpx>=0.27.0",
+    "httpx==0.28.1",
     # Utilities
-    "python-multipart>=0.0.9",  # Form/file upload
-    "python-dotenv>=1.0.0",
+    "python-multipart==0.0.32",  # Form/file upload
+    "python-dotenv==1.2.3",
     # Genesis bootstrap CLI dependency
     "click>=8.1.0",
     # Domain package (editable install from local path)
@@ -45,13 +45,13 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.3.0",
-    "pytest-asyncio>=0.23.0",
-    "httpx>=0.27.0",         # TestClient
+    "pytest-asyncio==1.4.0",
+    "httpx==0.28.1",         # TestClient
     "ruff>=0.5.0",
     "black>=24.0.0",
     "mypy>=1.11.0",
     "types-passlib",
-    "aiosqlite>=0.20.0",     # SQLAlchemy async SQLite driver (used by test fixtures)
+    "aiosqlite==0.22.1",     # SQLAlchemy async SQLite driver (used by test fixtures)
 ]
 
 [tool.setuptools.packages.find]

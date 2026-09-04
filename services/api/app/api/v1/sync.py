@@ -32,14 +32,16 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, BeforeValidator, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
 from app.models.product import Product
+from app.models.stock_balance import StockBalance
 from app.models.store import Store
 from app.models.sync_receipt import SyncReceipt
 from app.models.user import User
@@ -48,6 +50,25 @@ from app.services.ingestion import TransactionPayload, ingest_batch
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+
+def _coerce_int(v: Any) -> int:
+    """Accept int or numeric string and return int; raise ValueError otherwise."""
+    if isinstance(v, bool):
+        raise TypeError("user_id must be a positive integer, not a boolean")
+    if isinstance(v, int):
+        if v <= 0:
+            raise ValueError("user_id must be a positive integer")
+        return v
+    if isinstance(v, str):
+        s = v.strip()
+        if not s.isdigit():
+            raise ValueError("user_id must be a valid positive integer")
+        iv = int(s)
+        if iv <= 0:
+            raise ValueError("user_id must be a positive integer")
+        return iv
+    raise TypeError(f"user_id must be an integer or numeric string, got {type(v).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +85,7 @@ class TransactionPushItem(BaseModel):
     movement_type: str = Field(..., min_length=1, max_length=50)
     quantity_delta: int
     occurred_at: datetime
-    user_id: str = Field(..., min_length=1, max_length=36)
+    user_id: Annotated[int, BeforeValidator(_coerce_int)]
     device_id: str = Field(..., min_length=1, max_length=36)
     stock_bucket: str = Field(default="AVAILABLE", max_length=50)
     reference_number: str | None = None
@@ -120,6 +141,7 @@ class ProductSnapshot(BaseModel):
     alternate_names: str | None
     serial_tracking_enabled: bool
     is_active: bool
+    created_at: datetime
     updated_at: datetime
 
 
@@ -131,6 +153,18 @@ class StoreSnapshot(BaseModel):
     name: str
     address: str | None
     is_active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class StockBalanceSnapshot(BaseModel):
+    """Stock balance snapshot returned during pull."""
+
+    id: str
+    store_id: str
+    product_id: str
+    stock_bucket: str
+    quantity: int
     updated_at: datetime
 
 
@@ -139,6 +173,7 @@ class PullResponse(BaseModel):
 
     products: list[ProductSnapshot]
     stores: list[StoreSnapshot]
+    stock_balances: list[StockBalanceSnapshot] = []
     server_time: datetime
 
 
@@ -186,25 +221,16 @@ async def push_events(
     response; a 200 with accepted=False means the server has durably rejected
     that item and no retry is needed.
 
-    Security: validates that user_id in each transaction matches the authenticated user.
+    Security: ingest payloads are assigned under the authenticated user.
     """
 
     payloads: list[TransactionPayload] = []
-    rejected_receipts: list[SyncReceipt] = []
 
     for item in body.events:
-        # Validate user_id matches authenticated user
-        if item.user_id != str(current_user.id):
-            rejected_receipts.append(
-                SyncReceipt(
-                    transaction_id=item.transaction_id,
-                    accepted=False,
-                    rejection_reason=f"user_id mismatch: payload has {item.user_id}, JWT has {current_user.id}",
-                    received_at=datetime.now(UTC),
-                    processed_at=datetime.now(UTC),
-                )
-            )
-            continue
+        # Always use the authenticated user's integer ID — ignore any
+        # user_id carried in the payload (defence-in-depth).  current_user.id
+        # is already a PostgreSQL integer column.
+        effective_user_id: int = int(current_user.id)
 
         payloads.append(
             TransactionPayload(
@@ -214,7 +240,7 @@ async def push_events(
                 movement_type=item.movement_type,
                 quantity_delta=item.quantity_delta,
                 occurred_at=item.occurred_at,
-                user_id=item.user_id,
+                user_id=effective_user_id,
                 device_id=item.device_id,
                 stock_bucket=item.stock_bucket,
                 reference_number=item.reference_number,
@@ -228,7 +254,6 @@ async def push_events(
         )
 
     receipts: list[SyncReceipt] = await ingest_batch(payloads, db)
-    receipts.extend(rejected_receipts)
     await db.commit()
 
     now = datetime.now(UTC)
@@ -296,13 +321,17 @@ async def pull_data(
     )
     stores: list[Store] = list(store_result.scalars().all())
 
+    sb_result = await db.execute(select(StockBalance))
+    balances: list[StockBalance] = list(sb_result.scalars().all())
+
     now = datetime.now(UTC)
 
     logger.info(
-        "SYNC_PULL user_id=%s products=%d stores=%d",
+        "SYNC_PULL user_id=%s products=%d stores=%d stock_balances=%d",
         current_user.id,
         len(products),
         len(stores),
+        len(balances),
     )
 
     return PullResponse(
@@ -319,6 +348,7 @@ async def pull_data(
                 alternate_names=p.alternate_names,
                 serial_tracking_enabled=bool(p.serial_tracking_enabled),
                 is_active=bool(p.is_active),
+                created_at=p.created_at or now,
                 updated_at=p.updated_at,
             )
             for p in products
@@ -330,9 +360,21 @@ async def pull_data(
                 name=s.name,
                 address=s.address,
                 is_active=bool(s.is_active),
+                created_at=s.created_at or now,
                 updated_at=s.updated_at,
             )
             for s in stores
+        ],
+        stock_balances=[
+            StockBalanceSnapshot(
+                id=b.id,
+                store_id=b.store_id,
+                product_id=b.product_id,
+                stock_bucket=b.stock_bucket,
+                quantity=b.quantity,
+                updated_at=b.updated_at or now,
+            )
+            for b in balances
         ],
         server_time=now,
     )
