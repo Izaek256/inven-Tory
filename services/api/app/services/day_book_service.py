@@ -10,7 +10,6 @@ This service handles:
 
 import uuid
 from datetime import UTC, datetime
-from typing import Optional
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -239,7 +238,7 @@ async def get_day_books_for_store(
 async def get_day_book_with_entries(
     db: AsyncSession,
     day_book_id: str,
-) -> Optional[dict]:
+) -> dict | None:
     """
     Get a day book with all its entries, including product names and running balances.
     

@@ -232,9 +232,9 @@ async def push_events(
     body: PushRequest,
     db: AsyncSession = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
-    session_factory: async_sessionmaker[AsyncSession] = Depends(
+    session_factory: async_sessionmaker[AsyncSession] = Depends(  # noqa: B008
         get_ingest_session_factory
-    ),  # noqa: B008
+    ),
 ) -> PushResponse:
     """
     Idempotent batch push (SYNC-007, SYNC-010, AT-002, AT-003, AT-004).
