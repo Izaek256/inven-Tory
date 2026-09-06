@@ -287,7 +287,9 @@ async def push_events(
                 prod.name = p_snap.name
                 if not p_snap.sku.startswith("OFFLINE-"):
                     sku_owner = await db.scalar(
-                        select(Product.id).where(Product.sku == p_snap.sku, Product.id != p_snap.id).limit(1)
+                        select(Product.id)
+                        .where(Product.sku == p_snap.sku, Product.id != p_snap.id)
+                        .limit(1)
                     )
                     if not sku_owner:
                         prod.sku = p_snap.sku

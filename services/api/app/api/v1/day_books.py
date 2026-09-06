@@ -35,19 +35,19 @@ async def list_day_books(
 ) -> dict[str, Any]:
     """
     List day books for a specific store.
-    
+
     Args:
         store_id: Store identifier
         limit: Maximum number of day books to return (default: 30, max: 100)
         offset: Number of day books to skip (default: 0)
         db: Database session
         current_user: Authenticated user
-        
+
     Returns:
         Dictionary containing list of day books
     """
     day_books = await get_day_books_for_store(db, store_id, limit, offset)
-    
+
     return {
         "store_id": store_id,
         "day_books": [
@@ -58,7 +58,11 @@ async def list_day_books(
                 "opening_balance": db.opening_balance,
                 "closing_balance": db.closing_balance,
                 "balance_sheet_generated": db.balance_sheet_generated,
-                "balance_sheet_generated_at": db.balance_sheet_generated_at.isoformat() if db.balance_sheet_generated_at else None,
+                "balance_sheet_generated_at": (
+                    db.balance_sheet_generated_at.isoformat()
+                    if db.balance_sheet_generated_at
+                    else None
+                ),
                 "created_at": db.created_at.isoformat(),
                 "updated_at": db.updated_at.isoformat(),
             }
@@ -78,20 +82,20 @@ async def get_day_book(
 ) -> dict[str, Any]:
     """
     Get a specific day book with all its entries.
-    
+
     Args:
         day_book_id: Day book identifier
         db: Database session
         current_user: Authenticated user
-        
+
     Returns:
         Dictionary containing day book details and entries
     """
     day_book = await get_day_book_with_entries(db, day_book_id)
-    
+
     if not day_book:
         raise HTTPException(status_code=404, detail="Day book not found")
-    
+
     return day_book
 
 
@@ -103,15 +107,15 @@ async def create_balance_sheet(
 ) -> dict[str, Any]:
     """
     Generate a balance sheet for a day book.
-    
+
     This calculates the closing balance and marks the balance sheet as generated.
     Can only be called after the system is synced for the day.
-    
+
     Args:
         day_book_id: Day book identifier
         db: Database session
         current_user: Authenticated user
-        
+
     Returns:
         Dictionary containing balance sheet data
     """
@@ -131,13 +135,13 @@ async def get_day_book_by_date(
 ) -> dict[str, Any]:
     """
     Get a day book for a specific store and date.
-    
+
     Args:
         store_id: Store identifier
         date: Date in YYYY-MM-DD format
         db: Database session
         current_user: Authenticated user
-        
+
     Returns:
         Dictionary containing day book details and entries
     """
@@ -145,13 +149,13 @@ async def get_day_book_by_date(
         book_date = datetime.fromisoformat(date)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
-    
+
     from app.services.day_book_service import get_or_create_day_book
-    
+
     day_book = await get_or_create_day_book(db, store_id, book_date)
     day_book_data = await get_day_book_with_entries(db, day_book.id)
-    
+
     if not day_book_data:
         raise HTTPException(status_code=404, detail="Day book not found")
-    
+
     return day_book_data

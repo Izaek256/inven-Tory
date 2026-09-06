@@ -454,6 +454,7 @@ async def _ingest_transaction_impl(
             )
         if existing_code_owner:
             import uuid
+
             target_code = f"{target_code[:30]}-{uuid.uuid4().hex[:8]}".upper()
         auto_store = Store(
             id=payload.store_id,
@@ -490,6 +491,7 @@ async def _ingest_transaction_impl(
             )
         if existing_sku_owner:
             import uuid
+
             target_sku = f"OFFLINE-{sku_token[:70]}-{uuid.uuid4().hex[:8]}"
 
         auto_prod = Product(

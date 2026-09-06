@@ -648,4 +648,3 @@ async def test_push_with_products_upserts_and_pull_returns_them(
     assert len(matched) == 1
     assert matched[0]["name"] == "Client Created Product"
     assert matched[0]["sku"] == "CLIENT-001"
-

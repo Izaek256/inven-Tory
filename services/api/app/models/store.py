@@ -33,6 +33,6 @@ class Store(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
     )
-    
+
     # Relationships
     day_books = relationship("DayBook", back_populates="store", cascade="all, delete-orphan")
