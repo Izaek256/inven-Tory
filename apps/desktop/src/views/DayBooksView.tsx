@@ -7,11 +7,134 @@ import {
   RefreshCw,
   CheckCircle,
   AlertCircle,
+  WifiOff,
 } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
+import { getProducts } from '../services/tauriProductService';
+import { getLocalTransactions } from '../services/tauriTransactionService';
 import { getAccessToken } from '../services/tauriAuthService';
 import { Store } from '../types/store';
-import { Button, Badge, DataTable, EmptyState, Select, ColumnDef } from '@inven-tory/ui';
+import { InventoryTransaction } from '../types/transaction';
+import {
+  Button,
+  Badge,
+  DataTable,
+  EmptyState,
+  Select,
+  ColumnDef,
+  type BadgeStatus,
+} from '@inven-tory/ui';
+
+const DAYBOOKS_CACHE_PREFIX = 'inven_tory_daybooks_';
+const DAYBOOK_DETAIL_CACHE_PREFIX = 'inven_tory_daybook_detail_';
+
+function _cacheKey(prefix: string, storeId: string): string {
+  return `${prefix}${storeId}`;
+}
+
+function _safeReadCache(key: string): string | null {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return null;
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function _safeWriteCache(key: string, value: string): void {
+  if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // ignore
+  }
+}
+
+function _toDateStr(iso: string): string {
+  return iso.slice(0, 10);
+}
+
+function _buildProductMap(products: { id: string; name: string }[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const p of products) {
+    map.set(p.id, p.name);
+  }
+  return map;
+}
+
+function _buildLocalDayBooks(
+  transactions: InventoryTransaction[],
+  storeId: string,
+  productMap: Map<string, string>,
+): { dayBooks: DayBook[]; detailMap: Map<string, DayBookDetail> } {
+  const storeTxns = transactions
+    .filter((t) => t.store_id === storeId)
+    .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+
+  const byDate = new Map<string, InventoryTransaction[]>();
+  for (const t of storeTxns) {
+    const d = _toDateStr(t.occurred_at);
+    const existing = byDate.get(d) ?? [];
+    existing.push(t);
+    byDate.set(d, existing);
+  }
+
+  const dayBooks: DayBook[] = [];
+  const detailMap = new Map<string, DayBookDetail>();
+
+  for (const [date, txns] of byDate) {
+    const id = `local-${storeId}-${date}`;
+    const entries: DayBookEntry[] = txns.map((t, idx) => {
+      let balance = 0;
+      for (let i = 0; i <= idx; i++) {
+        balance += txns[i].quantity_delta;
+      }
+      return {
+        id: t.transaction_id,
+        transaction_id: t.transaction_id,
+        movement_type: t.movement_type,
+        product_id: t.product_id,
+        product_name: productMap.get(t.product_id) ?? t.product_id,
+        quantity_delta: t.quantity_delta,
+        reference_number: t.reference_number,
+        reason_code: t.reason_code,
+        occurred_at: t.occurred_at,
+        running_balance: balance,
+      };
+    });
+
+    const openingBalance =
+      entries.length > 0 ? entries[0].running_balance - entries[0].quantity_delta : 0;
+    const closingBalance = entries.length > 0 ? entries[entries.length - 1].running_balance : 0;
+
+    dayBooks.push({
+      id,
+      store_id: storeId,
+      book_date: date,
+      opening_balance: openingBalance,
+      closing_balance: closingBalance,
+      balance_sheet_generated: false,
+      balance_sheet_generated_at: null,
+      created_at: txns[0]?.occurred_at ?? date,
+      updated_at: txns[txns.length - 1]?.occurred_at ?? date,
+    });
+
+    detailMap.set(id, {
+      id,
+      store_id: storeId,
+      book_date: date,
+      opening_balance: openingBalance,
+      closing_balance: closingBalance,
+      balance_sheet_generated: false,
+      balance_sheet_generated_at: null,
+      entries,
+    });
+  }
+
+  dayBooks.sort((a, b) => b.book_date.localeCompare(a.book_date));
+
+  return { dayBooks, detailMap };
+}
 
 interface DayBook {
   id: string;
@@ -57,6 +180,8 @@ export const DayBooksView: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState<boolean>(false);
+  const [localDetailMap] = useState<Map<string, DayBookDetail>>(new Map());
 
   const getApiBaseUrl = (): string => {
     const envBaseUrl =
@@ -90,36 +215,86 @@ export const DayBooksView: React.FC = () => {
     loadStores();
   }, []);
 
+  const loadDayBooks = useCallback(
+    async (storeId: string): Promise<void> => {
+      if (!storeId) return;
+      setLoading(true);
+      setError(null);
+      setIsOffline(false);
+
+      try {
+        const resp = await apiFetch(`/stores/${storeId}/day-books?limit=30&offset=0`);
+        if (!resp.ok) {
+          const body = await resp.json().catch(() => ({ detail: resp.statusText }));
+          throw new Error((body as { detail?: string }).detail ?? resp.statusText);
+        }
+        const data = (await resp.json()) as { day_books: DayBook[] };
+        const serverDayBooks = data.day_books ?? [];
+        setDayBooks(serverDayBooks);
+        _safeWriteCache(_cacheKey(DAYBOOKS_CACHE_PREFIX, storeId), JSON.stringify(serverDayBooks));
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        setError(errMsg);
+        setIsOffline(true);
+
+        const cached = _safeReadCache(_cacheKey(DAYBOOKS_CACHE_PREFIX, storeId));
+        if (cached) {
+          try {
+            setDayBooks(JSON.parse(cached) as DayBook[]);
+          } catch {
+            // ignore corrupt cache
+          }
+        }
+
+        try {
+          const [localTxns, products] = await Promise.all([
+            getLocalTransactions().catch(() => [] as InventoryTransaction[]),
+            getProducts().catch(() => [] as { id: string; name: string }[]),
+          ]);
+          const productMap = _buildProductMap(products);
+          const { dayBooks: localDayBooks, detailMap } = _buildLocalDayBooks(
+            localTxns,
+            storeId,
+            productMap,
+          );
+          if (localDayBooks.length > 0) {
+            setDayBooks((prev) => {
+              const merged = [...localDayBooks];
+              for (const db of prev) {
+                if (!merged.some((m) => m.id === db.id)) {
+                  merged.push(db);
+                }
+              }
+              merged.sort((a, b) => b.book_date.localeCompare(a.book_date));
+              return merged;
+            });
+            for (const [key, value] of detailMap) {
+              localDetailMap.set(key, value);
+            }
+          }
+        } catch {
+          // non-fatal local fallback
+        }
+      } finally {
+        setLoading(false);
+      }
+    },
+    [apiFetch, localDetailMap],
+  );
+
   useEffect(() => {
     if (selectedStoreId) {
-      loadDayBooks();
+      setSelectedDayBook(null);
+      void loadDayBooks(selectedStoreId);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStoreId]);
-
-  const loadDayBooks = useCallback(async (): Promise<void> => {
-    if (!selectedStoreId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const resp = await apiFetch(`/stores/${selectedStoreId}/day-books?limit=30&offset=0`);
-      if (!resp.ok) {
-        const body = await resp.json().catch(() => ({ detail: resp.statusText }));
-        throw new Error((body as { detail?: string }).detail ?? resp.statusText);
-      }
-      const data = (await resp.json()) as { day_books: DayBook[] };
-      setDayBooks(data.day_books ?? []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedStoreId, apiFetch]);
+  }, [selectedStoreId, loadDayBooks]);
 
   const loadDayBookDetail = useCallback(
     async (dayBookId: string): Promise<void> => {
       setLoading(true);
       setError(null);
+      setIsOffline(false);
+
       try {
         const resp = await apiFetch(`/day-books/${dayBookId}`);
         if (!resp.ok) {
@@ -128,17 +303,39 @@ export const DayBooksView: React.FC = () => {
         }
         const data = (await resp.json()) as DayBookDetail;
         setSelectedDayBook(data);
+        _safeWriteCache(_cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId), JSON.stringify(data));
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        const errMsg = err instanceof Error ? err.message : String(err);
+        setError(errMsg);
+        setIsOffline(true);
+
+        const cached = _safeReadCache(_cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId));
+        if (cached) {
+          try {
+            setSelectedDayBook(JSON.parse(cached) as DayBookDetail);
+            return;
+          } catch {
+            // ignore corrupt cache
+          }
+        }
+
+        const localDetail = localDetailMap.get(dayBookId);
+        if (localDetail) {
+          setSelectedDayBook(localDetail);
+        }
       } finally {
         setLoading(false);
       }
     },
-    [apiFetch],
+    [apiFetch, localDetailMap],
   );
 
   const generateBalanceSheet = useCallback(async (): Promise<void> => {
     if (!selectedDayBook) return;
+    if (selectedDayBook.id.startsWith('local-')) {
+      setError('Balance sheet generation requires a server connection.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -151,7 +348,6 @@ export const DayBooksView: React.FC = () => {
       }
       setSuccessMessage('Balance sheet generated successfully');
       setTimeout(() => setSuccessMessage(null), 3000);
-      // Refresh the day book detail
       await loadDayBookDetail(selectedDayBook.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -182,7 +378,7 @@ export const DayBooksView: React.FC = () => {
   };
 
   const getMovementTypeBadge = (movementType: string): React.ReactElement => {
-    const typeMap: Record<string, { status: string; label: string }> = {
+    const typeMap: Record<string, { status: BadgeStatus; label: string }> = {
       SALE: { status: 'INACTIVE', label: 'SALE' },
       RECEIPT: { status: 'ACTIVE', label: 'RECEIPT' },
       RETURN: { status: 'PENDING', label: 'RETURN' },
@@ -190,8 +386,11 @@ export const DayBooksView: React.FC = () => {
       TRANSFER_OUT: { status: 'INACTIVE', label: 'TRANSFER OUT' },
       TRANSFER_IN: { status: 'ACTIVE', label: 'TRANSFER IN' },
     };
-    const config = typeMap[movementType] || { status: 'PENDING', label: movementType };
-    return <Badge status={config.status as any} label={config.label} />;
+    const config = typeMap[movementType] ?? {
+      status: 'PENDING' as BadgeStatus,
+      label: movementType,
+    };
+    return <Badge status={config.status} label={config.label} />;
   };
 
   const listColumns: ColumnDef<DayBook>[] = [
@@ -305,7 +504,7 @@ export const DayBooksView: React.FC = () => {
         </div>
         <Button
           variant="secondary"
-          onClick={() => void loadDayBooks()}
+          onClick={() => void loadDayBooks(selectedStoreId)}
           disabled={loading}
           data-testid="btn-refresh"
         >
@@ -314,7 +513,18 @@ export const DayBooksView: React.FC = () => {
         </Button>
       </div>
 
-      {error && (
+      {isOffline && (
+        <div
+          className="it-toast it-toast--warning"
+          style={{ marginBottom: '16px' }}
+          data-testid="offline-banner"
+        >
+          <WifiOff size={16} aria-hidden="true" />
+          <span>Offline mode — showing cached and locally stored day books</span>
+        </div>
+      )}
+
+      {error && !isOffline && (
         <div
           className="it-toast it-toast--error"
           style={{ marginBottom: '16px' }}
@@ -338,7 +548,6 @@ export const DayBooksView: React.FC = () => {
 
       {!selectedDayBook ? (
         <>
-          {/* Store Selection */}
           <div style={{ marginBottom: '20px' }}>
             <Select
               id="store-select"
@@ -350,7 +559,6 @@ export const DayBooksView: React.FC = () => {
             />
           </div>
 
-          {/* Day Books List */}
           <div
             style={{
               backgroundColor: 'var(--it-card)',
@@ -366,7 +574,7 @@ export const DayBooksView: React.FC = () => {
             {dayBooks.length === 0 ? (
               <EmptyState
                 heading="No day books found"
-                body="Day books will be created when stock operations are performed."
+                body="Day books are generated from synced stock operations. Perform operations offline and sync to see them here."
               />
             ) : (
               <DataTable
@@ -380,7 +588,6 @@ export const DayBooksView: React.FC = () => {
         </>
       ) : (
         <>
-          {/* Day Book Detail View */}
           <div style={{ marginBottom: '16px' }}>
             <Button variant="secondary" onClick={() => setSelectedDayBook(null)} disabled={loading}>
               <ChevronLeft size={16} />
@@ -429,7 +636,6 @@ export const DayBooksView: React.FC = () => {
               )}
             </div>
 
-            {/* Balance Sheet Status */}
             <div
               style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}
             >
@@ -452,7 +658,6 @@ export const DayBooksView: React.FC = () => {
             </div>
           </div>
 
-          {/* Entries Table */}
           <div
             style={{
               backgroundColor: 'var(--it-card)',

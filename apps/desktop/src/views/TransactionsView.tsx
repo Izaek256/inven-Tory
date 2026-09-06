@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { ArrowLeftRight, RefreshCw, AlertCircle } from 'lucide-react';
+import { ArrowLeftRight, RefreshCw, AlertCircle, WifiOff } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
 import { getAccessToken } from '../services/tauriAuthService';
+import { getLocalTransactions } from '../services/tauriTransactionService';
 import { Store } from '../types/store';
 import { Button, Badge, DataTable, EmptyState, Select, ColumnDef } from '@inven-tory/ui';
+
+const TRANSACTIONS_CACHE_KEY = 'inven_tory_transactions_cache_v1';
 
 interface TransactionItem {
   transaction_id: string;
@@ -29,6 +32,7 @@ export const TransactionsView: React.FC = () => {
   const [offset, setOffset] = useState<number>(0);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [isOffline, setIsOffline] = useState<boolean>(false);
 
   const LIMIT = 100;
 
@@ -68,7 +72,11 @@ export const TransactionsView: React.FC = () => {
     async (storeId: string, currentOffset: number): Promise<void> => {
       setLoading(true);
       setError(null);
+      setIsOffline(false);
+
       try {
+        const localTxns = await getLocalTransactions().catch(() => [] as TransactionItem[]);
+
         const params = new URLSearchParams({
           limit: String(LIMIT),
           offset: String(currentOffset),
@@ -81,10 +89,87 @@ export const TransactionsView: React.FC = () => {
           throw new Error((body as { detail?: string }).detail ?? resp.statusText);
         }
         const data = (await resp.json()) as { transactions: TransactionItem[]; total: number };
-        setTransactions(data.transactions ?? []);
-        setTotal(data.total ?? 0);
+        const serverTxns = data.transactions ?? [];
+
+        const serverIds = new Set(serverTxns.map((t) => t.transaction_id));
+        const merged = [...serverTxns];
+        for (const t of localTxns) {
+          if (!serverIds.has(t.transaction_id)) {
+            merged.push({
+              transaction_id: t.transaction_id,
+              store_id: t.store_id,
+              product_id: t.product_id,
+              movement_type: t.movement_type,
+              stock_bucket: t.stock_bucket,
+              quantity_delta: t.quantity_delta,
+              occurred_at: t.occurred_at,
+              user_id: Number(t.user_id),
+              device_id: t.device_id,
+              reference_number: t.reference_number,
+              reason_code: t.reason_code,
+              sync_status: t.sync_status,
+              server_accepted_at: t.server_accepted_at,
+            } as TransactionItem);
+          }
+        }
+
+        merged.sort(
+          (a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
+        );
+
+        setTransactions(merged);
+        setTotal(merged.length);
+
+        try {
+          localStorage.setItem(TRANSACTIONS_CACHE_KEY, JSON.stringify(merged));
+        } catch {
+          // ignore quota errors
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        const errMsg = err instanceof Error ? err.message : String(err);
+        setError(errMsg);
+        setIsOffline(true);
+
+        let localOnly: TransactionItem[] = [];
+        try {
+          const localTxns = await getLocalTransactions();
+          localOnly = localTxns.map((t) => ({
+            transaction_id: t.transaction_id,
+            store_id: t.store_id,
+            product_id: t.product_id,
+            movement_type: t.movement_type,
+            stock_bucket: t.stock_bucket,
+            quantity_delta: t.quantity_delta,
+            occurred_at: t.occurred_at,
+            user_id: Number(t.user_id),
+            device_id: t.device_id,
+            reference_number: t.reference_number,
+            reason_code: t.reason_code,
+            sync_status: t.sync_status,
+            server_accepted_at: t.server_accepted_at,
+          }));
+        } catch {
+          // non-fatal
+        }
+
+        if (localOnly.length > 0) {
+          localOnly.sort(
+            (a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
+          );
+          setTransactions(localOnly);
+          setTotal(localOnly.length);
+        } else {
+          const cached = localStorage.getItem(TRANSACTIONS_CACHE_KEY);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached) as TransactionItem[];
+              setTransactions(parsed);
+              setTotal(parsed.length);
+            } catch {
+              // ignore corrupt cache
+            }
+          }
+        }
       } finally {
         setLoading(false);
       }
@@ -222,7 +307,18 @@ export const TransactionsView: React.FC = () => {
         </Button>
       </div>
 
-      {error && (
+      {isOffline && (
+        <div
+          className="it-toast it-toast--warning"
+          style={{ marginBottom: '16px' }}
+          data-testid="offline-banner"
+        >
+          <WifiOff size={16} aria-hidden="true" />
+          <span>Offline mode — showing locally stored transactions</span>
+        </div>
+      )}
+
+      {error && !isOffline && (
         <div
           className="it-toast it-toast--error"
           style={{ marginBottom: '16px' }}

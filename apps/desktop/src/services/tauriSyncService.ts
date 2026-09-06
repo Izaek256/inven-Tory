@@ -282,6 +282,28 @@ const MOVEMENT_PUSH_PRIORITY: Record<string, number> = {
   DAMAGE: 2,
 };
 
+/**
+ * Validation errors returned by the server's _validate_payload are
+ * permanent — retrying them will never succeed.  All other rejections
+ * (domain errors like "Insufficient stock", server internal errors, etc.)
+ * are potentially stale and should be retried with backoff.
+ */
+const PERMANENT_REJECTION_PREFIXES = [
+  'transaction_id is required',
+  'store_id is required',
+  'product_id is required',
+  'user_id must be a positive integer',
+  'device_id is required',
+  'movement_type is required',
+  'quantity_delta must be non-zero',
+  'movement_type must be one of',
+];
+
+function _isPermanentRejection(reason: string): boolean {
+  const normalized = (reason ?? '').toLowerCase();
+  return PERMANENT_REJECTION_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
 function _sortPushItems<T extends { item: TransactionPushItem }>(arr: T[]): T[] {
   return [...arr].sort((a, b) => {
     const pa = MOVEMENT_PUSH_PRIORITY[a.item.movement_type] ?? 3;
@@ -534,7 +556,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
               }),
             ]);
           } else {
-            // Server permanently rejected the event (validation failure)
             const rejectionReason = receipt.rejection_reason ?? 'Server rejected transaction';
             // eslint-disable-next-line no-console
             console.error(
@@ -543,15 +564,25 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
               'Reason:',
               rejectionReason,
             );
+
+            // Distinguish permanent validation failures from stale domain errors
+            // (e.g. Insufficient stock) so offline-accumulated transactions are
+            // retried once the underlying data changes.
+            const isPermanent = _isPermanentRejection(rejectionReason);
+            const targetStatus = isPermanent ? 'PERMANENT_REJECTION' : 'RETRYABLE_ERROR';
+
+            if (!isPermanent) {
+              totalRejected++;
+            }
+
             await Promise.all([
-              _updateOutboxEventStatus(row.event_id, 'PERMANENT_REJECTION', rejectionReason).catch(
+              _updateOutboxEventStatus(row.event_id, targetStatus, rejectionReason).catch(
                 () => undefined,
               ),
-              _updateTransactionSyncStatus(item.transaction_id, 'PERMANENT_REJECTION').catch(
+              _updateTransactionSyncStatus(item.transaction_id, targetStatus).catch(
                 () => undefined,
               ),
             ]);
-            totalRejected++;
           }
         }
 

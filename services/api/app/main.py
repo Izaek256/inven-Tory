@@ -15,7 +15,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api.v1 import auth, devices, products, stores, sync, transactions, transfers, users
+from app.api.v1 import (
+    auth,
+    day_books,
+    devices,
+    products,
+    stores,
+    sync,
+    transactions,
+    transfers,
+    users,
+)
 from app.core.config import settings
 from app.db import get_engine
 
@@ -155,6 +165,7 @@ app.include_router(stores.router, prefix=API_V1_PREFIX)
 app.include_router(users.router, prefix=API_V1_PREFIX)
 app.include_router(transfers.router, prefix=API_V1_PREFIX)
 app.include_router(transactions.router, prefix=API_V1_PREFIX)
+app.include_router(day_books.router, prefix=API_V1_PREFIX)
 
 # Future routers (Issue 17+):
 #   Issue 17: audit log  →  app/api/v1/audit.py

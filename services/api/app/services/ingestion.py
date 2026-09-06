@@ -48,6 +48,7 @@ from app.models.product import Product
 from app.models.stock_balance import StockBalance
 from app.models.store import Store
 from app.models.sync_receipt import SyncReceipt
+from app.services.day_book_service import add_transaction_to_day_book
 
 logger = logging.getLogger(__name__)
 
@@ -588,6 +589,13 @@ async def _ingest_transaction_impl(
     db.add(tx_row)
     try:
         await db.flush()
+    except Exception:
+        await _rb()
+        raise
+
+    # 4b. Add transaction to day book for daily tracking
+    try:
+        await add_transaction_to_day_book(db, tx_row)
     except Exception:
         await _rb()
         raise

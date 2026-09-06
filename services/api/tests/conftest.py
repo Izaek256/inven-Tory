@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import (
 from app.db import Base, get_db
 from app.main import app
 from app.models.audit_event import AuditEvent  # noqa: F401 — registers with Base.metadata
+from app.models.day_book import DayBook, DayBookEntry  # noqa: F401
 from app.models.device import Device
 from app.models.inventory_transaction import InventoryTransaction  # noqa: F401
 from app.models.product import Product  # noqa: F401

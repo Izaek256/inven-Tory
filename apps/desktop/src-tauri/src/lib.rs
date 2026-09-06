@@ -1567,6 +1567,51 @@ pub mod commands {
     }
 
     #[tauri::command]
+    pub fn get_local_transactions() -> Result<Vec<InventoryTransaction>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, purchase_order_id, batch_id, client_sequence, sync_status, server_accepted_at, original_transaction_id FROM inventory_transactions ORDER BY occurred_at DESC")
+            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+
+        let txn_iter = stmt
+            .query_map([], |row| {
+                Ok(InventoryTransaction {
+                    transaction_id: row.get(0)?,
+                    store_id: row.get(1)?,
+                    product_id: row.get(2)?,
+                    movement_type: row.get(3)?,
+                    stock_bucket: row.get(4)?,
+                    quantity_delta: row.get(5)?,
+                    occurred_at: row.get(6)?,
+                    recorded_at: row.get(7)?,
+                    user_id: row.get(8)?,
+                    device_id: row.get(9)?,
+                    reference_number: row.get(10)?,
+                    reason_code: row.get(11)?,
+                    transfer_id: row.get(12)?,
+                    purchase_order_id: row.get(13)?,
+                    batch_id: row.get(14)?,
+                    client_sequence: row.get(15)?,
+                    sync_status: row.get(16)?,
+                    server_accepted_at: row.get(17)?,
+                    original_transaction_id: row.get(18)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query transactions: {}", e))?;
+
+        let mut transactions = Vec::new();
+        for txn in txn_iter {
+            let t = txn.map_err(|e| format!("Failed to read transaction record: {}", e))?;
+            transactions.push(t);
+        }
+
+        Ok(transactions)
+    }
+
+    #[tauri::command]
     pub fn create_transfer(input: CreateTransferInput) -> Result<Transfer, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
@@ -2586,6 +2631,7 @@ pub fn run() {
             commands::move_stock_bucket,
             commands::adjust_stock,
             commands::get_transfers,
+            commands::get_local_transactions,
             commands::create_transfer,
             commands::dispatch_transfer,
             commands::receive_transfer,

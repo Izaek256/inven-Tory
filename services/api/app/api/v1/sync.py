@@ -303,6 +303,7 @@ async def push_events(
                 prod.is_active = p_snap.is_active
                 prod.updated_at = p_snap.updated_at or now_dt
         await db.flush()
+        await db.commit()
 
     payloads: list[TransactionPayload] = []
 

@@ -648,3 +648,194 @@ async def test_push_with_products_upserts_and_pull_returns_them(
     assert len(matched) == 1
     assert matched[0]["name"] == "Client Created Product"
     assert matched[0]["sku"] == "CLIENT-001"
+
+
+@pytest.mark.asyncio
+async def test_push_product_name_is_preserved_on_server(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """Pushing a product and later updating its name must sync the exact name."""
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+    product_id = "PROD-NAME-SYNC-1"
+
+    # First push — create product with initial name
+    product_v1 = {
+        "id": product_id,
+        "sku": "NAME-SKU-1",
+        "name": "Original Name",
+        "category": "Electronics",
+        "unit": "pcs",
+        "is_active": True,
+    }
+    event_v1 = _tx_item(store.id, product_id, user.id, device.id, quantity_delta=5)
+
+    r1 = client.post(
+        "/api/v1/sync/push",
+        json={"events": [event_v1], "products": [product_v1]},
+        headers=headers,
+    )
+    assert r1.status_code == 200
+    assert r1.json()["accepted_count"] == 1
+
+    prod = await db_session.get(Product, product_id)
+    assert prod is not None
+    assert prod.name == "Original Name"
+
+    # Second push — update the product name
+    product_v2 = {
+        "id": product_id,
+        "sku": "NAME-SKU-1",
+        "name": "Updated Name",
+        "category": "Electronics",
+        "unit": "pcs",
+        "is_active": True,
+    }
+    event_v2 = _tx_item(
+        store.id,
+        product_id,
+        user.id,
+        device.id,
+        quantity_delta=3,
+        transaction_id=_uid(),
+    )
+
+    r2 = client.post(
+        "/api/v1/sync/push",
+        json={"events": [event_v2], "products": [product_v2]},
+        headers=headers,
+    )
+    assert r2.status_code == 200
+    assert r2.json()["accepted_count"] == 1
+
+    await db_session.refresh(prod)
+    assert prod.name == "Updated Name"
+
+
+@pytest.mark.asyncio
+async def test_push_event_for_existing_product_resolves_by_id(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """
+    Pushing an event for a product_id that already exists in the central DB
+    must resolve the product by ID without creating an OFFLINE-PROD placeholder.
+    """
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    product = await _seed_product(db_session)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+
+    tx_id = _uid()
+    event = _tx_item(
+        store.id,
+        product.id,
+        user.id,
+        device.id,
+        transaction_id=tx_id,
+        quantity_delta=5,
+    )
+
+    response = client.post(
+        "/api/v1/sync/push",
+        json={"events": [event]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["accepted_count"] == 1
+
+    # Exactly one product row — the original, not a placeholder
+    products = (
+        (await db_session.execute(select(Product).where(Product.id == product.id))).scalars().all()
+    )
+    assert len(products) == 1
+    assert not products[0].sku.startswith("OFFLINE-")
+    assert not products[0].name.startswith("OFFLINE-PROD-")
+
+    tx = await db_session.get(InventoryTransaction, tx_id)
+    assert tx is not None
+    assert tx.product_id == product.id
+
+
+@pytest.mark.asyncio
+async def test_push_same_product_and_event_twice_is_idempotent(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """Re-pushing an identical product+event batch must not create duplicates."""
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+
+    product_payload = {
+        "id": "PROD-IDEM-1",
+        "sku": "IDEM-SKU",
+        "name": "Idempotent Product",
+        "category": "Electronics",
+        "unit": "pcs",
+        "is_active": True,
+    }
+    tx_id = _uid()
+    event_payload = _tx_item(
+        store.id,
+        product_payload["id"],
+        user.id,
+        device.id,
+        transaction_id=tx_id,
+        quantity_delta=5,
+    )
+
+    body = {"events": [event_payload], "products": [product_payload]}
+
+    r1 = client.post("/api/v1/sync/push", json=body, headers=headers)
+    assert r1.status_code == 200
+    assert r1.json()["accepted_count"] == 1
+
+    r2 = client.post("/api/v1/sync/push", json=body, headers=headers)
+    assert r2.status_code == 200
+    assert r2.json()["accepted_count"] == 1
+
+    products = (
+        (await db_session.execute(select(Product).where(Product.id == product_payload["id"])))
+        .scalars()
+        .all()
+    )
+    assert len(products) == 1
+
+    txs = (
+        (
+            await db_session.execute(
+                select(InventoryTransaction).where(InventoryTransaction.transaction_id == tx_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(txs) == 1
+
+    balance = (
+        (
+            await db_session.execute(
+                select(StockBalance).where(
+                    StockBalance.store_id == store.id,
+                    StockBalance.product_id == product_payload["id"],
+                    StockBalance.stock_bucket == "AVAILABLE",
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert balance is not None
+    assert balance.quantity == 5
