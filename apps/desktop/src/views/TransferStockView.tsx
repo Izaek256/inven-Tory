@@ -12,7 +12,7 @@ import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { Transfer, TransferStatus } from '../types/transfer';
 import { getStores } from '../services/tauriStoreService';
-import { searchProducts } from '../services/tauriProductService';
+import { searchProducts, getProducts } from '../services/tauriProductService';
 import { getStockBalance } from '../services/tauriTransactionService';
 import {
   getTransfers,
@@ -71,6 +71,7 @@ export const TransferStockView: React.FC = () => {
 
   // Master Data
   const [stores, setStores] = useState<Store[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -95,8 +96,13 @@ export const TransferStockView: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const [fetchedStores, fetchedTransfers] = await Promise.all([getStores(), getTransfers()]);
+      const [fetchedStores, fetchedProducts, fetchedTransfers] = await Promise.all([
+        getStores(),
+        getProducts(),
+        getTransfers(),
+      ]);
       setStores(fetchedStores);
+      setProducts(fetchedProducts);
       setTransfers(fetchedTransfers);
 
       if (fetchedStores.length >= 2) {
@@ -340,6 +346,11 @@ export const TransferStockView: React.FC = () => {
     return store ? `${store.name} (${store.code})` : storeId;
   };
 
+  const getProductName = (productId: string): string => {
+    const product = products.find((p) => p.id === productId);
+    return product ? product.name : productId;
+  };
+
   const columns: ColumnDef<Transfer>[] = [
     {
       key: 'id',
@@ -363,11 +374,9 @@ export const TransferStockView: React.FC = () => {
     },
     {
       key: 'product',
-      header: 'Product ID',
-      render: (t) => (
-        <code style={{ fontFamily: 'var(--it-font-mono)', fontSize: '12px' }}>{t.product_id}</code>
-      ),
-      accessor: (t) => t.product_id,
+      header: 'Product',
+      render: (t) => <span style={{ fontWeight: 500 }}>{getProductName(t.product_id)}</span>,
+      accessor: (t) => getProductName(t.product_id),
     },
     {
       key: 'quantity',

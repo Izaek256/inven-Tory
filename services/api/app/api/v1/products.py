@@ -52,9 +52,10 @@ class ProductSearchResult(BaseModel):
     model: str | None
     category: str
     unit: str
-    barcode: str | None
     is_active: bool
     low_stock_threshold: int | None
+    total_quantity: int | None = None
+    last_balance_update: datetime | None = None
 
 
 class ProductListItem(BaseModel):
@@ -394,36 +395,69 @@ async def toggle_product_active(
     summary="Global product search (FR-SRCH-001)",
 )
 async def search_products(
-    q: str = Query(..., min_length=1, max_length=200, description="Search term"),
-    limit: int = Query(default=50, ge=1, le=200, description="Maximum results to return"),
+    q: str = Query(
+        default="", min_length=0, max_length=200, description="Search term (empty returns all)"
+    ),
+    limit: int = Query(default=200, ge=1, le=500, description="Maximum results to return"),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> ProductSearchResponse:
     """
     Substring search across product name, SKU, barcode, brand, model
-    and alternate_names.  Case-insensitive.
+    and alternate_names.  Case-insensitive.  If q is empty, returns all
+    products (general catalogue mode).
+
+    Each result includes the total AVAILABLE stock quantity and the
+    last balance update timestamp for that product.
 
     Requires INVENTORY_READ permission (all authenticated roles qualify).
     """
-    term = f"%{q.lower()}%"
-    stmt = (
-        select(Product)
-        .where(
-            or_(
-                func.lower(Product.name).like(term),
-                func.lower(Product.sku).like(term),
-                func.lower(Product.brand).like(term),
-                func.lower(Product.model).like(term),
-                func.lower(Product.barcode).like(term),
-                func.lower(Product.alternate_names).like(term),
+    if q.strip():
+        term = f"%{q.lower()}%"
+        stmt = (
+            select(Product)
+            .where(
+                or_(
+                    func.lower(Product.name).like(term),
+                    func.lower(Product.sku).like(term),
+                    func.lower(Product.brand).like(term),
+                    func.lower(Product.model).like(term),
+                    func.lower(Product.barcode).like(term),
+                    func.lower(Product.alternate_names).like(term),
+                )
             )
+            .order_by(Product.name)
+            .limit(limit)
         )
-        .order_by(Product.name)
-        .limit(limit)
-    )
+    else:
+        stmt = select(Product).order_by(Product.name).limit(limit)
 
     result = await db.execute(stmt)
     products: list[Product] = list(result.scalars().all())
+
+    # Fetch stock totals and last balance update for matched products in one query
+    product_ids = [p.id for p in products]
+    stock_map: dict[str, tuple[int, datetime | None]] = {}
+    if product_ids:
+        from sqlalchemy import and_
+
+        sb_stmt = (
+            select(
+                StockBalance.product_id,
+                func.sum(StockBalance.quantity).label("total_qty"),
+                func.max(StockBalance.updated_at).label("last_update"),
+            )
+            .where(
+                and_(
+                    StockBalance.product_id.in_(product_ids),
+                    StockBalance.stock_bucket == "AVAILABLE",
+                )
+            )
+            .group_by(StockBalance.product_id)
+        )
+        sb_result = await db.execute(sb_stmt)
+        for row in sb_result.all():
+            stock_map[row.product_id] = (int(row.total_qty or 0), row.last_update)
 
     logger.info("PRODUCT_SEARCH q=%r results=%d user_id=%s", q, len(products), _user.id)
 
@@ -437,9 +471,10 @@ async def search_products(
                 model=p.model,
                 category=p.category,
                 unit=p.unit or "pcs",
-                barcode=p.barcode,
                 is_active=bool(p.is_active),
                 low_stock_threshold=p.low_stock_threshold,
+                total_quantity=stock_map.get(p.id, (0, None))[0],
+                last_balance_update=stock_map.get(p.id, (0, None))[1],
             )
             for p in products
         ],

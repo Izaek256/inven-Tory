@@ -216,8 +216,8 @@ export async function getStockBalance(storeId: string, productId: string): Promi
   if (isTauriEnvironment()) {
     try {
       const quantity = await invoke<number>('get_stock_balance', {
-        store_id: storeId,
-        product_id: productId,
+        storeId,
+        productId,
       });
       return {
         id: `SB-${storeId}-${productId}-AVAILABLE`,
@@ -250,9 +250,9 @@ export async function getStockBalanceForBucket(
   if (isTauriEnvironment()) {
     try {
       const quantity = await invoke<number>('get_stock_balance_for_bucket', {
-        store_id: storeId,
-        product_id: productId,
-        stock_bucket: stockBucket,
+        storeId,
+        productId,
+        stockBucket,
       });
       return {
         id: `SB-${storeId}-${productId}-${stockBucket}`,

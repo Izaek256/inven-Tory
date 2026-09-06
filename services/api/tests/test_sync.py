@@ -608,3 +608,44 @@ async def test_push_large_batch_all_accepted(
     )
     assert balance is not None
     assert balance.quantity == 50
+
+
+@pytest.mark.asyncio
+async def test_push_with_products_upserts_and_pull_returns_them(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """Pushing products via /sync/push upserts them into DB and pull returns them."""
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+
+    # Push a new product
+    product_payload = {
+        "id": "PROD-CLIENT-NEW-1",
+        "sku": "CLIENT-001",
+        "name": "Client Created Product",
+        "category": "Electronics",
+        "unit": "pcs",
+        "is_active": True,
+    }
+
+    response = client.post(
+        "/api/v1/sync/push",
+        json={"events": [], "products": [product_payload]},
+        headers=headers,
+    )
+    assert response.status_code == 200
+
+    # Pull must return the new product with its real name
+    pull_res = client.post("/api/v1/sync/pull", headers=headers)
+    assert pull_res.status_code == 200
+    pulled_prods = pull_res.json()["products"]
+    matched = [p for p in pulled_prods if p["id"] == "PROD-CLIENT-NEW-1"]
+    assert len(matched) == 1
+    assert matched[0]["name"] == "Client Created Product"
+    assert matched[0]["sku"] == "CLIENT-001"
+

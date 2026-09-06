@@ -128,7 +128,7 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
 export async function toggleStoreActive(id: string, is_active: boolean): Promise<Store> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Store>('toggle_store_active', { id, is_active });
+      return await invoke<Store>('toggle_store_active', { id, isActive: is_active, is_active });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriStoreService] Error invoking toggle_store_active:', err);
@@ -156,7 +156,9 @@ export async function registerDevice(storeId: string, deviceName: string): Promi
   if (isTauriEnvironment()) {
     try {
       return await invoke<Device>('register_device', {
+        storeId,
         store_id: storeId,
+        deviceName,
         device_name: deviceName,
       });
     } catch (err) {

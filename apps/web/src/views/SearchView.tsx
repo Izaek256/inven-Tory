@@ -1,10 +1,16 @@
 /**
- * Global product search view — FR-SRCH-001–004.
+ * Product Catalogue view — FR-SRCH-001–005.
  *
- * Shows a search bar (FR-SRCH-001).  On selecting a result:
+ * Loads the full product catalogue on mount (general catalog mode).
+ * A search bar filters the results in real time (FR-SRCH-001).
+ *
+ * On selecting a product:
  *   - Per-store quantity breakdown + global total (FR-SRCH-002/003)
  *   - Movement history (FR-SRCH-004)
- *   - Last-sync timestamp for each store (FR-SRCH-005, via balance updated_at)
+ *   - Last-sync timestamp per store (FR-SRCH-005, via balance updated_at)
+ *
+ * Each row in the catalogue shows the last sync date/time for that product
+ * (the most recent stock_balance updated_at across all stores).
  */
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -22,9 +28,7 @@ import {
   ArrowLeft,
   BarChart2,
   Clock,
-  Hash,
   Package,
-  Search,
   Store,
   TrendingDown,
   TrendingUp,
@@ -138,10 +142,10 @@ function InventoryPanel({
     },
     {
       key: 'updated_at',
-      header: 'Balance Updated',
+      header: 'Last Sync',
       accessor: (r) => r.updated_at,
       render: (r) => (
-        <span className="web-cell-time" title={r.updated_at}>
+        <span className="web-cell-time" title={new Date(r.updated_at).toLocaleString()}>
           <Clock size={13} aria-hidden="true" />
           {formatRelativeTime(r.updated_at)}
         </span>
@@ -222,7 +226,7 @@ function InventoryPanel({
       <div className="web-panel-header">
         <Button variant="ghost" size="sm" onClick={onBack} data-testid="back-btn">
           <ArrowLeft size={16} aria-hidden="true" />
-          Back to results
+          Back to catalogue
         </Button>
         <div className="web-panel-title-row">
           <Package size={20} color="var(--it-green)" aria-hidden="true" />
@@ -333,47 +337,78 @@ function InventoryPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Main search view
+// Main catalogue / search view
 // ---------------------------------------------------------------------------
 
 export function SearchView(): React.ReactElement {
   const [query, setQuery] = useState('');
-  const [searching, setSearching] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [results, setResults] = useState<ProductSearchResult[] | null>(null);
+  const [allResults, setAllResults] = useState<ProductSearchResult[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<ProductSearchResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const runSearch = useCallback((q: string): void => {
-    if (!q.trim()) {
-      setResults(null);
-      setSearchError(null);
-      return;
-    }
-    setSearching(true);
+  // Load the full catalogue on mount
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
     setSearchError(null);
-    searchProducts(q.trim())
+    searchProducts('') // empty query → full catalogue
       .then((data) => {
-        setResults(data.results);
+        if (!cancelled) setAllResults(data.results);
       })
       .catch((err: unknown) => {
-        setSearchError(err instanceof Error ? err.message : String(err));
-        setResults(null);
+        if (!cancelled) setSearchError(err instanceof Error ? err.message : String(err));
       })
-      .finally(() => setSearching(false));
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return (): void => {
+      cancelled = true;
+    };
   }, []);
+
+  // Client-side filter for the search bar (fast, no round-trip for typing)
+  const filteredResults = query.trim()
+    ? allResults.filter((r) => {
+        const term = query.toLowerCase();
+        return (
+          r.name.toLowerCase().includes(term) ||
+          r.sku.toLowerCase().includes(term) ||
+          (r.brand ?? '').toLowerCase().includes(term) ||
+          (r.model ?? '').toLowerCase().includes(term) ||
+          r.category.toLowerCase().includes(term)
+        );
+      })
+    : allResults;
 
   const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const val = e.target.value;
     setQuery(val);
+    // Debounce a server-side search for more precise results on slow connections
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => runSearch(val), 350);
+    if (val.trim()) {
+      debounceRef.current = setTimeout(() => {
+        searchProducts(val.trim())
+          .then((data) => setAllResults(data.results))
+          .catch(() => undefined); // silent — client-side filter still works
+      }, 500);
+    } else {
+      // Reset to full catalogue when search is cleared
+      debounceRef.current = setTimeout(() => {
+        searchProducts('')
+          .then((data) => setAllResults(data.results))
+          .catch(() => undefined);
+      }, 500);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') {
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      runSearch(query);
+      searchProducts(query.trim())
+        .then((data) => setAllResults(data.results))
+        .catch(() => undefined);
     }
   };
 
@@ -393,7 +428,7 @@ export function SearchView(): React.ReactElement {
     );
   }
 
-  const searchCols: ColumnDef<ProductSearchResult>[] = [
+  const catalogueCols: ColumnDef<ProductSearchResult>[] = [
     {
       key: 'name',
       header: 'Product',
@@ -411,21 +446,53 @@ export function SearchView(): React.ReactElement {
       header: 'SKU',
       sortable: true,
       accessor: (r) => r.sku,
-      render: (r) => (
-        <span
-          className="web-cell-mono"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-        >
-          <Hash size={12} aria-hidden="true" />
-          {r.sku}
-        </span>
-      ),
+      render: (r) => <span className="web-cell-mono">{r.sku}</span>,
     },
     {
       key: 'category',
       header: 'Category',
       sortable: true,
       accessor: (r) => r.category,
+    },
+    {
+      key: 'total_quantity',
+      header: 'Stock (Avail.)',
+      numeric: true,
+      sortable: true,
+      accessor: (r) => r.total_quantity ?? 0,
+      render: (r): React.ReactElement => {
+        const qty = r.total_quantity ?? 0;
+        return (
+          <span
+            style={{
+              fontWeight: 600,
+              fontFamily: 'var(--it-font-mono)',
+              color: qty > 0 ? 'var(--it-green-text)' : 'var(--it-text-secondary)',
+            }}
+          >
+            {qty.toLocaleString()}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'last_balance_update',
+      header: 'Last Synced',
+      accessor: (r) => r.last_balance_update ?? '',
+      render: (r) =>
+        r.last_balance_update ? (
+          <span className="web-cell-time" title={new Date(r.last_balance_update).toLocaleString()}>
+            <Clock size={13} aria-hidden="true" />
+            {new Date(r.last_balance_update).toLocaleString()}
+          </span>
+        ) : (
+          <span
+            className="web-cell-empty"
+            style={{ color: 'var(--it-text-secondary)', fontSize: '12px' }}
+          >
+            Not yet synced
+          </span>
+        ),
     },
     {
       key: 'is_active',
@@ -454,10 +521,11 @@ export function SearchView(): React.ReactElement {
       <div className="web-view-header">
         <div>
           <h2 className="web-view-title">
-            <Search size={18} aria-hidden="true" /> Global Product Search
+            <Package size={18} aria-hidden="true" /> Product Catalogue
           </h2>
           <p className="web-view-subtitle">
-            Search by name, SKU, barcode, brand, model or alternate name (FR-SRCH-001)
+            Full product catalogue with stock levels and last sync time. Search by name, SKU, brand,
+            model or category.
           </p>
         </div>
       </div>
@@ -467,15 +535,10 @@ export function SearchView(): React.ReactElement {
           value={query}
           onChange={handleQueryChange}
           onKeyDown={handleKeyDown}
-          placeholder="Scan or type product name, SKU, barcode…"
+          placeholder="Search by name, SKU, brand, model or category…"
           aria-label="Search products"
           data-testid="search-input"
         />
-        {searching && (
-          <div className="web-search-spinner">
-            <Spinner size="sm" label="Searching…" />
-          </div>
-        )}
       </div>
 
       {searchError && (
@@ -484,31 +547,39 @@ export function SearchView(): React.ReactElement {
         </div>
       )}
 
-      {results === null && !searching && !searchError && (
-        <EmptyState
-          icon={<Search size={24} />}
-          heading="Search products"
-          body="Enter a product name, SKU, barcode, brand or model to see global stock quantities."
-        />
+      {loading && (
+        <div className="web-center-spinner" style={{ padding: '48px 0' }}>
+          <Spinner size="md" label="Loading catalogue…" />
+        </div>
       )}
 
-      {results !== null && results.length === 0 && !searching && (
-        <EmptyState
-          heading="No products found"
-          body={`No products matched "${query}". Try a different term.`}
-        />
-      )}
-
-      {results !== null && results.length > 0 && (
+      {!loading && !searchError && (
         <SummaryCard
-          title={`${results.length} result${results.length === 1 ? '' : 's'} for "${query}"`}
+          title={
+            query.trim()
+              ? `${filteredResults.length} result${filteredResults.length === 1 ? '' : 's'} for "${query}"`
+              : `${filteredResults.length} product${filteredResults.length === 1 ? '' : 's'} in catalogue`
+          }
           titleIcon={<Package size={18} />}
         >
           <DataTable
-            columns={searchCols}
-            rows={results}
+            columns={catalogueCols}
+            rows={filteredResults}
             rowKey={(r) => r.id}
             data-testid="search-results-table"
+            emptySlot={
+              query.trim() ? (
+                <EmptyState
+                  heading="No products found"
+                  body={`No products matched "${query}". Try a different term.`}
+                />
+              ) : (
+                <EmptyState
+                  heading="No products in catalogue"
+                  body="No products have been synced to the server yet."
+                />
+              )
+            }
           />
         </SummaryCard>
       )}

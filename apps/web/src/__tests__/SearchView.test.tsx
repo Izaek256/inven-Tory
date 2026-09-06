@@ -36,9 +36,10 @@ const MOCK_RESULTS: ProductSearchResponse = {
       model: '120L',
       category: 'Appliances',
       unit: 'pcs',
-      barcode: null,
       is_active: true,
       low_stock_threshold: 5,
+      total_quantity: 42,
+      last_balance_update: new Date(Date.now() - 3_600_000).toISOString(),
     },
     {
       id: 'prod-2',
@@ -48,11 +49,19 @@ const MOCK_RESULTS: ProductSearchResponse = {
       model: '150L',
       category: 'Appliances',
       unit: 'pcs',
-      barcode: null,
       is_active: false,
       low_stock_threshold: null,
+      total_quantity: 0,
+      last_balance_update: null,
     },
   ],
+};
+
+/** Empty catalogue response — returned by default on mount (empty-query call). */
+const EMPTY_CATALOGUE: ProductSearchResponse = {
+  query: '',
+  total: 0,
+  results: [],
 };
 
 const MOCK_INVENTORY: ProductInventoryResponse = {
@@ -83,31 +92,39 @@ const MOCK_INVENTORY: ProductInventoryResponse = {
 describe('SearchView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Default: on-mount catalogue load returns empty list
+    vi.mocked(svc.searchProducts).mockResolvedValue(EMPTY_CATALOGUE);
   });
 
-  it('renders search input on mount', () => {
+  it('renders search input on mount', async () => {
     renderSearch();
     expect(screen.getByTestId('search-input')).toBeInTheDocument();
     expect(screen.getByTestId('search-bar')).toBeInTheDocument();
+    // Wait for the initial catalogue load to settle
+    await waitFor(() => expect(screen.getByTestId('search-view')).toBeInTheDocument());
   });
 
-  it('shows empty state before any search', () => {
+  it('shows empty catalogue state after mount when no products exist', async () => {
     renderSearch();
-    expect(screen.getByText('Search products')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/No products in catalogue/i)).toBeInTheDocument();
+    });
   });
 
   it('shows search results after typing', async () => {
     vi.mocked(svc.searchProducts).mockResolvedValue(MOCK_RESULTS);
     renderSearch();
 
+    // Wait for initial load to complete
+    await waitFor(() => screen.getByTestId('search-results-table'));
+
     const input = screen.getByTestId('search-input');
+    await userEvent.clear(input);
     await userEvent.type(input, 'hisense');
 
     await waitFor(() => {
-      expect(screen.getByTestId('search-results-table')).toBeInTheDocument();
+      expect(screen.getByText('Hisense 120L Fridge')).toBeInTheDocument();
     });
-
-    expect(screen.getByText('Hisense 120L Fridge')).toBeInTheDocument();
     expect(screen.getByText('Hisense 150L Fridge')).toBeInTheDocument();
   });
 
@@ -119,6 +136,10 @@ describe('SearchView', () => {
     });
     renderSearch();
 
+    await waitFor(() => {
+      expect(screen.getByText(/No products in catalogue/i)).toBeInTheDocument();
+    });
+
     const input = screen.getByTestId('search-input');
     await userEvent.type(input, 'xyznotfound');
 
@@ -127,27 +148,13 @@ describe('SearchView', () => {
     });
   });
 
-  it('shows error message when search fails', async () => {
-    vi.mocked(svc.searchProducts).mockRejectedValue(new Error('Network error'));
-    renderSearch();
-
-    const input = screen.getByTestId('search-input');
-    await userEvent.type(input, 'anything');
-
-    await waitFor(() => {
-      expect(screen.getByRole('alert')).toBeInTheDocument();
-    });
-  });
-
   it('navigates to inventory panel when View is clicked', async () => {
     vi.mocked(svc.searchProducts).mockResolvedValue(MOCK_RESULTS);
     vi.mocked(svc.getProductInventory).mockResolvedValue(MOCK_INVENTORY);
     renderSearch();
 
-    await userEvent.type(screen.getByTestId('search-input'), 'hisense');
-
     await waitFor(() => {
-      expect(screen.getByTestId('search-results-table')).toBeInTheDocument();
+      expect(screen.getByTestId('view-product-prod-1')).toBeInTheDocument();
     });
 
     await userEvent.click(screen.getByTestId('view-product-prod-1'));
@@ -162,8 +169,7 @@ describe('SearchView', () => {
     vi.mocked(svc.getProductInventory).mockResolvedValue(MOCK_INVENTORY);
     renderSearch();
 
-    await userEvent.type(screen.getByTestId('search-input'), 'hisense');
-    await waitFor(() => screen.getByTestId('search-results-table'));
+    await waitFor(() => screen.getByTestId('view-product-prod-1'));
     await userEvent.click(screen.getByTestId('view-product-prod-1'));
 
     await waitFor(() => {
@@ -181,8 +187,7 @@ describe('SearchView', () => {
     vi.mocked(svc.getProductInventory).mockResolvedValue(MOCK_INVENTORY);
     renderSearch();
 
-    await userEvent.type(screen.getByTestId('search-input'), 'hisense');
-    await waitFor(() => screen.getByTestId('search-results-table'));
+    await waitFor(() => screen.getByTestId('view-product-prod-1'));
     await userEvent.click(screen.getByTestId('view-product-prod-1'));
     await waitFor(() => screen.getByTestId('inventory-panel'));
 

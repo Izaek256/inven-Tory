@@ -12,6 +12,8 @@ export interface Product {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  /** Total AVAILABLE stock quantity summed across all stores. */
+  stock_quantity?: number | null;
 }
 
 export interface CreateProductInput {

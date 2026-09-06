@@ -75,6 +75,7 @@ describe('App — authenticated', () => {
     vi.clearAllMocks();
     vi.mocked(apiClient.getToken).mockReturnValue('mock-token');
     vi.mocked(svc.getStoreInventory).mockRejectedValue(new Error('no stores'));
+    vi.mocked(svc.searchProducts).mockResolvedValue({ query: '', total: 0, results: [] });
   });
 
   it('shows the main app container when authenticated', () => {

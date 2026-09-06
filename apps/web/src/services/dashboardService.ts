@@ -28,7 +28,10 @@ function _authHeader(): HeadersInit {
   return { Authorization: `Bearer ${token}` };
 }
 
-export async function searchProducts(query: string, limit = 50): Promise<ProductSearchResponse> {
+export async function searchProducts(
+  query: string = '',
+  limit = 200,
+): Promise<ProductSearchResponse> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
   return api.get<ProductSearchResponse>(`/products/search?${params.toString()}`);
 }

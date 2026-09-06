@@ -8,7 +8,7 @@ Full store management endpoints land in a later issue.
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
@@ -33,3 +33,6 @@ class Store(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, onupdate=_utc_now, nullable=False
     )
+    
+    # Relationships
+    day_books = relationship("DayBook", back_populates="store", cascade="all, delete-orphan")

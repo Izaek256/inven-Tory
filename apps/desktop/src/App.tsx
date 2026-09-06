@@ -31,6 +31,7 @@ import { ReturnStockView } from './views/ReturnStockView';
 import { TransferStockView } from './views/TransferStockView';
 import { DamageQuarantineView } from './views/DamageQuarantineView';
 import { PhysicalCountAdjustmentView } from './views/PhysicalCountAdjustmentView';
+import { DayBooksView } from './views/DayBooksView';
 import { SettingsView } from './views/SettingsView';
 import { LoginView } from './views/LoginView';
 import { OfflineAuthBanner } from './components/OfflineAuthBanner';
@@ -332,6 +333,8 @@ export function App(): React.ReactElement {
         return <DamageQuarantineView />;
       case 'physical_count':
         return <PhysicalCountAdjustmentView userRole={currentUserRole} />;
+      case 'day_books':
+        return <DayBooksView />;
       case 'transactions':
         return <TransactionsView />;
       case 'settings':
