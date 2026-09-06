@@ -330,7 +330,7 @@ async def _ingest_transaction_impl(
     try:
         with db.no_autoflush:
             ledger_row = await db.get(InventoryTransaction, payload.transaction_id)
-    except Exception as _s1ae:
+    except Exception as _s1ae:  # noqa: BLE001
         _step1a_error = f"{type(_s1ae).__name__}: {_s1ae!s}"
         await _rb()
     if _step1a_error:
@@ -701,7 +701,7 @@ async def ingest_batch(
                         try:
                             await receipt_session.flush()
                             await receipt_session.commit()
-                        except Exception:
+            except Exception:  # noqa: BLE001
                             await _rb_sess(receipt_session)
                             raise
                 except Exception as receipt_error:  # noqa: BLE001

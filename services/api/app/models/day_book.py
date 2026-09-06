@@ -7,7 +7,7 @@ after sync operations.
 """
 
 from datetime import UTC, datetime
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, Integer
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
