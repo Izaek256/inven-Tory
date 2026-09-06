@@ -10,14 +10,12 @@ This service handles:
 
 import uuid
 from datetime import UTC, datetime
-from typing import Optional
 
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.day_book import DayBook, DayBookEntry
 from app.models.inventory_transaction import InventoryTransaction
-from app.models.stock_balance import StockBalance
 
 
 async def get_or_create_day_book(

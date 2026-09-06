@@ -30,8 +30,8 @@ async def list_day_books(
     store_id: str,
     limit: int = Query(30, ge=1, le=100),
     offset: int = Query(0, ge=0),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, Any]:
     """
     List day books for a specific store.
@@ -73,8 +73,8 @@ async def list_day_books(
 @router.get("/day-books/{day_book_id}")
 async def get_day_book(
     day_book_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, Any]:
     """
     Get a specific day book with all its entries.
@@ -98,8 +98,8 @@ async def get_day_book(
 @router.post("/day-books/{day_book_id}/balance-sheet")
 async def create_balance_sheet(
     day_book_id: str,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, Any]:
     """
     Generate a balance sheet for a day book.
@@ -126,8 +126,8 @@ async def create_balance_sheet(
 async def get_day_book_by_date(
     store_id: str,
     date: str,  # Format: YYYY-MM-DD
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> dict[str, Any]:
     """
     Get a day book for a specific store and date.
