@@ -571,9 +571,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
             const isPermanent = _isPermanentRejection(rejectionReason);
             const targetStatus = isPermanent ? 'PERMANENT_REJECTION' : 'RETRYABLE_ERROR';
 
-            if (!isPermanent) {
-              totalRejected++;
-            }
+            totalRejected++;
 
             await Promise.all([
               _updateOutboxEventStatus(row.event_id, targetStatus, rejectionReason).catch(

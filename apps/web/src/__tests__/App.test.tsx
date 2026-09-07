@@ -89,15 +89,14 @@ describe('App — authenticated', () => {
     expect(screen.getByTestId('web-sidebar')).toBeInTheDocument();
   });
 
-  it('shows dashboard overview by default', () => {
+  it('shows unified dashboard by default', () => {
     renderApp();
-    expect(screen.getByTestId('dashboard-overview')).toBeInTheDocument();
+    expect(screen.getByTestId('unified-dashboard')).toBeInTheDocument();
   });
 
-  it('navigates to search view via sidebar', async () => {
+  it('shows search input on unified dashboard', () => {
     renderApp();
-    await userEvent.click(screen.getByTestId('nav-search'));
-    expect(screen.getByTestId('search-view')).toBeInTheDocument();
+    expect(screen.getByTestId('search-input')).toBeInTheDocument();
   });
 
   it('navigates to store view via sidebar', async () => {
