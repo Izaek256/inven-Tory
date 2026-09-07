@@ -16,8 +16,7 @@ depends_on = None
 def upgrade() -> None:
     conn = op.get_bind()
 
-    conn.execute(
-        """
+    conn.execute("""
         CREATE VIRTUAL TABLE products_fts USING fts5(
             sku,
             name,
@@ -30,41 +29,32 @@ def upgrade() -> None:
             content_rowid='rowid',
             tokenize='porter unicode61'
         )
-        """
-    )
+        """)
 
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TRIGGER products_ai AFTER INSERT ON products BEGIN
             INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
             VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
         END
-        """
-    )
+        """)
 
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TRIGGER products_ad AFTER DELETE ON products BEGIN
             DELETE FROM products_fts WHERE rowid = old.rowid;
         END
-        """
-    )
+        """)
 
-    conn.execute(
-        """
+    conn.execute("""
         CREATE TRIGGER products_au AFTER UPDATE ON products BEGIN
             DELETE FROM products_fts WHERE rowid = old.rowid;
             INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
             VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
         END
-        """
-    )
+        """)
 
-    conn.execute(
-        """
+    conn.execute("""
         INSERT INTO products_fts(products_fts) VALUES ('rebuild')
-        """
-    )
+        """)
 
 
 def downgrade() -> None:
