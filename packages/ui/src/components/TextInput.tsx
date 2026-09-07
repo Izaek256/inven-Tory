@@ -74,19 +74,34 @@ export function NumericInput({
   'data-testid': testId,
 }: NumericInputProps): React.ReactElement {
   const inputId = id ?? `it-num-${Math.random().toString(36).slice(2, 7)}`;
+  const [internalValue, setInternalValue] = React.useState<string>(String(value));
+
+  React.useEffect(() => {
+    setInternalValue(String(value));
+  }, [value]);
 
   const decrement = (): void => {
-    const next = value - step;
-    if (min === undefined || next >= min) onChange(next);
+    const current = parseFloat(internalValue) || 0;
+    const next = current - step;
+    if (min === undefined || next >= min) {
+      setInternalValue(String(next));
+      onChange(next);
+    }
   };
 
   const increment = (): void => {
-    const next = value + step;
-    if (max === undefined || next <= max) onChange(next);
+    const current = parseFloat(internalValue) || 0;
+    const next = current + step;
+    if (max === undefined || next <= max) {
+      setInternalValue(String(next));
+      onChange(next);
+    }
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
-    const parsed = parseFloat(e.target.value);
+    const raw = e.target.value;
+    setInternalValue(raw);
+    const parsed = parseFloat(raw);
     if (!isNaN(parsed)) onChange(parsed);
   };
 
@@ -121,7 +136,7 @@ export function NumericInput({
           id={inputId}
           type="number"
           className="it-input it-input--numeric"
-          value={value}
+          value={internalValue}
           min={min}
           max={max}
           step={step}

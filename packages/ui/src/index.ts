@@ -1,6 +1,9 @@
 // Theme
 export * from './ThemeContext';
 
+// Hooks
+export * from './hooks/useKeyboardEntryFlow';
+
 // Components
 export * from './components/Button';
 export * from './components/TextInput';
@@ -14,3 +17,5 @@ export * from './components/ThemeToggle';
 export * from './components/EmptyState';
 export * from './components/Spinner';
 export * from './components/StepIndicator';
+export * from './components/LiveSearchPanel';
+export * from './components/LinearEntryForm';

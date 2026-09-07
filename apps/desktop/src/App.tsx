@@ -33,6 +33,7 @@ import { DamageQuarantineView } from './views/DamageQuarantineView';
 import { PhysicalCountAdjustmentView } from './views/PhysicalCountAdjustmentView';
 import { DayBooksView } from './views/DayBooksView';
 import { SettingsView } from './views/SettingsView';
+import { CreateProductView } from './views/CreateProductView';
 import { LoginView } from './views/LoginView';
 import { OfflineAuthBanner } from './components/OfflineAuthBanner';
 import { getStores } from './services/tauriStoreService';
@@ -335,6 +336,8 @@ export function App(): React.ReactElement {
         return <DamageQuarantineView />;
       case 'physical_count':
         return <PhysicalCountAdjustmentView userRole={currentUserRole} />;
+      case 'create_product':
+        return <CreateProductView />;
       case 'day_books':
         return <DayBooksView />;
       case 'transactions':

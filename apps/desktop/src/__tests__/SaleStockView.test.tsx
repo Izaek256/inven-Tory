@@ -113,7 +113,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', (): void => {
     });
     vi.spyOn(tauriAuthService, 'getSession').mockResolvedValue(MOCK_SESSION);
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
-    vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
     // Default: balance is 6 (AT-001 starting condition)
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
       id: 'SB-STORE-A-PROD-001-AVAILABLE',
@@ -148,11 +148,11 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', (): void => {
 
     // Wait for results and select the product
     await waitFor((): void => {
-      expect(screen.getByTestId('product-result-PROD-001')).toBeInTheDocument();
+      expect(screen.getByTestId('search-result-PROD-001')).toBeInTheDocument();
     });
 
     act((): void => {
-      fireEvent.click(screen.getByTestId('product-result-PROD-001'));
+      fireEvent.click(screen.getByTestId('search-result-PROD-001'));
     });
 
     // Wait for the balance to load and confirm product is selected
@@ -223,11 +223,11 @@ describe('SaleStockView — Issue 07 Acceptance Criteria', (): void => {
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('product-result-PROD-001')).toBeInTheDocument();
+      expect(screen.getByTestId('search-result-PROD-001')).toBeInTheDocument();
     });
 
     act((): void => {
-      fireEvent.click(screen.getByTestId('product-result-PROD-001'));
+      fireEvent.click(screen.getByTestId('search-result-PROD-001'));
     });
 
     // After product selection, getStockBalance is called and the UI shows available qty

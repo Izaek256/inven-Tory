@@ -1,17 +1,16 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useEffect, useCallback, useState } from 'react';
 import {
   ClipboardList,
-  Package,
-  X,
   Check,
   AlertCircle,
   ArrowRight,
   ShieldCheck,
   RotateCcw,
   ChevronLeft,
+  Trash2,
 } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
-import { searchProducts } from '../services/tauriProductService';
+import { searchProductsFts5 } from '../services/tauriProductService';
 import { getStockBalance, adjustStock } from '../services/tauriTransactionService';
 import { Store } from '../types/store';
 import { Product } from '../types/product';
@@ -19,17 +18,29 @@ import { InventoryTransaction, AdjustStockInput } from '../types/transaction';
 import {
   Button,
   StepIndicator as SharedStepIndicator,
-  TextInput,
-  Select,
   Badge,
   BadgeStatus,
+  LinearEntryForm,
+  FieldDef,
+  SearchResultItem,
 } from '@inven-tory/ui';
+import type { ColumnDef } from '@inven-tory/ui';
 
 type Step = 'count' | 'approve' | 'done';
 
 interface PhysicalCountAdjustmentViewProps {
-  /** Current user's role from the auth session — enforces permission gate. */
   userRole?: string;
+}
+
+interface CountEntry {
+  id: string;
+  productId: string;
+  productName: string;
+  sku: string;
+  systemQty: number;
+  countedQty: number;
+  variance: number;
+  timestamp: string;
 }
 
 function varianceLabel(delta: number): React.ReactElement {
@@ -61,23 +72,15 @@ function varianceLabel(delta: number): React.ReactElement {
 export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewProps> = ({
   userRole = 'STORE_CLERK',
 }) => {
-  // Auth: resolve user/device from the active session instead of hardcoded values.
-  const [sessionUserId, setSessionUserId] = useState<string>('');
-  const [sessionDeviceId, setSessionDeviceId] = useState<string>('');
+  const [sessionUserId, setSessionUserId] = useState('');
+  const [sessionDeviceId, setSessionDeviceId] = useState('');
 
   useEffect(() => {
     const loadSession = async (): Promise<void> => {
       try {
         const { getSession } = await import('../services/tauriAuthService');
         const s = await getSession();
-        if (s && s.user_id !== undefined && s.user_id !== null && String(s.user_id).trim() !== '') {
-          setSessionUserId(String(s.user_id));
-        } else if (s && s.username) {
-          setSessionUserId(s.username);
-        } else {
-          setSessionUserId('USER-LOCAL');
-        }
-        // device_id is stored separately in the secure store
+        setSessionUserId(s?.user_id ? String(s.user_id) : 'USER-LOCAL');
         if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
           const { load } = await import('@tauri-apps/plugin-store');
           const store = await load('auth.dat', { autoSave: false });
@@ -94,120 +97,142 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     void loadSession();
   }, []);
 
-  // Role-based permission: ADJUSTMENT permission is STORE_MANAGER and above.
   const hasAdjustmentPermission =
     userRole === 'GLOBAL_ADMIN' || userRole === 'INVENTORY_MANAGER' || userRole === 'STORE_MANAGER';
 
   const [step, setStep] = useState<Step>('count');
   const [stores, setStores] = useState<Store[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
-  const [productQuery, setProductQuery] = useState<string>('');
-  const [searchResults, setSearchResults] = useState<Product[]>([]);
+  const [selectedStoreId, setSelectedStoreId] = useState('');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-
-  const [systemQty, setSystemQty] = useState<number | null>(null);
-  const [countedQty, setCountedQty] = useState<string>('');
-  const [loadingBalance, setLoadingBalance] = useState<boolean>(false);
-
-  const [reason, setReason] = useState<string>('');
-  const [reasonError, setReasonError] = useState<string | null>(null);
-  const [elevatedPermissionChecked, setElevatedPermissionChecked] = useState<boolean>(false);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
-
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [countEntries, setCountEntries] = useState<CountEntry[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [approvedTransaction, setApprovedTransaction] = useState<InventoryTransaction | null>(null);
+
+  const [reason, setReason] = useState('');
+  const [reasonError, setReasonError] = useState<string | null>(null);
+  const [elevatedPermissionChecked, setElevatedPermissionChecked] = useState(false);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
+
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
 
   useEffect(() => {
     const loadStores = async (): Promise<void> => {
       try {
         const data = await getStores();
-        const active = data.filter((s) => s.is_active);
-        setStores(active);
-        if (active.length > 0) {
-          setSelectedStoreId(active[0].id);
+        setStores(data.filter((s) => s.is_active));
+        if (data.length > 0 && !selectedStoreId) {
+          setSelectedStoreId(data[0].id);
         }
-      } catch (_err) {
+      } catch {
         setError('Failed to load stores. Please refresh.');
       }
     };
     loadStores();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    const timer = setTimeout(async () => {
-      if (productQuery.trim()) {
-        try {
-          const results = await searchProducts(productQuery);
-          setSearchResults(results.filter((p) => p.is_active));
-        } catch (_err) {
-          // Silently handle search errors
-        }
-      } else {
-        setSearchResults([]);
-      }
-    }, 300);
-    return (): void => clearTimeout(timer);
-  }, [productQuery]);
-
-  const loadSystemQty = useCallback(async (storeId: string, product: Product): Promise<void> => {
-    setLoadingBalance(true);
-    setSystemQty(null);
+  const handleSearch = useCallback(async (query: string) => {
+    if (!query.trim()) {
+      setSearchResults([]);
+      return;
+    }
     try {
-      const bal = await getStockBalance(storeId, product.id);
-      setSystemQty(bal.quantity);
-    } catch (_err) {
-      setSystemQty(0);
-    } finally {
-      setLoadingBalance(false);
+      const results = await searchProductsFts5(query);
+      const mapped = results
+        .filter((p) => p.is_active)
+        .map((p) => ({
+          id: p.id,
+          label: p.name,
+          subtitle: `SKU: ${p.sku}${p.barcode ? ` • Barcode: ${p.barcode}` : ''}`,
+          name: p.name,
+          sku: p.sku,
+          category: p.category,
+          unit: p.unit,
+          barcode: p.barcode,
+          brand: p.brand,
+          model: p.model,
+          is_active: p.is_active,
+        })) as SearchResultItem[];
+      setSearchResults(mapped);
+    } catch {
+      setSearchResults([]);
     }
   }, []);
 
-  const handleProductSelect = (product: Product): void => {
-    setSelectedProduct(product);
-    setProductQuery(product.name);
-    setSearchResults([]);
-    setCountedQty('');
-    setSystemQty(null);
-    if (selectedStoreId) {
-      loadSystemQty(selectedStoreId, product);
-    }
-  };
+  const handleSearchSelect = useCallback(
+    (item: SearchResultItem) => {
+      const product = item as unknown as Product;
+      if (selectedStoreId) {
+        setSelectedProduct(product);
+        void getStockBalance(selectedStoreId, product.id).catch(() => {
+          // silently fail
+        });
+      } else {
+        setSelectedProduct(product);
+      }
+    },
+    [selectedStoreId],
+  );
 
-  const clearProduct = (): void => {
-    setSelectedProduct(null);
-    setProductQuery('');
-    setSearchResults([]);
-    setCountedQty('');
-    setSystemQty(null);
-  };
+  const handleCountCommit = useCallback(
+    async (values: Record<string, string | number>) => {
+      const storeId = values.store as string;
+      const countedQty = typeof values.countedQty === 'number' ? values.countedQty : 0;
 
-  const handleStoreChange = (storeId: string): void => {
-    setSelectedStoreId(storeId);
-    if (selectedProduct) {
-      loadSystemQty(storeId, selectedProduct);
-    }
-  };
+      if (!storeId) {
+        setError('Please select a store');
+        return;
+      }
 
-  const parsedCounted = countedQty === '' ? null : parseInt(countedQty, 10);
-  const variance = parsedCounted !== null && systemQty !== null ? parsedCounted - systemQty : null;
+      const product = selectedProduct;
+      if (!product) {
+        setError('Please select a product');
+        return;
+      }
+
+      let sysQty = 0;
+      try {
+        const bal = await getStockBalance(storeId, product.id);
+        sysQty = bal.quantity;
+      } catch {
+        sysQty = 0;
+      }
+
+      const entry: CountEntry = {
+        id: `${Date.now()}-${Math.random()}`,
+        productId: product.id,
+        productName: product.name,
+        sku: product.sku,
+        systemQty: sysQty,
+        countedQty,
+        variance: countedQty - sysQty,
+        timestamp: new Date().toLocaleString(),
+      };
+
+      setCountEntries((prev) => [...prev, entry]);
+      setSelectedProduct(null);
+      setSearchResults([]);
+    },
+    [selectedProduct],
+  );
+
+  const handleVoidCount = useCallback((id: string) => {
+    setCountEntries((prev) => prev.filter((entry) => entry.id !== id));
+  }, []);
 
   const handleProceedToApproval = (): void => {
     setError(null);
+    setReason('');
+    setReasonError(null);
+    setPermissionError(null);
+    setElevatedPermissionChecked(false);
     if (!selectedStoreId) {
       setError('Please select a store.');
       return;
     }
-    if (!selectedProduct) {
-      setError('Please select a product.');
-      return;
-    }
-    if (systemQty === null) {
-      setError('System quantity is still loading. Please wait.');
-      return;
-    }
-    if (parsedCounted === null || isNaN(parsedCounted) || parsedCounted < 0) {
-      setError('Please enter a valid non-negative counted quantity.');
+    if (countEntries.length === 0) {
+      setError('Please enter at least one count before proceeding.');
       return;
     }
     setStep('approve');
@@ -236,8 +261,11 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
     if (hasError) return;
 
-    if (variance === null || systemQty === null || !selectedProduct) {
-      setError('Session state is invalid. Please restart the count.');
+    const totalVariance = countEntries.reduce((sum, entry) => sum + entry.variance, 0);
+    const primaryEntry = countEntries[0];
+
+    if (!primaryEntry || !selectedStoreId) {
+      setError('No count entries to approve.');
       return;
     }
 
@@ -248,22 +276,16 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
       const input: AdjustStockInput = {
         store_id: selectedStoreId,
-        product_id: selectedProduct.id,
-        quantity_delta: variance,
+        product_id: primaryEntry.productId,
+        quantity_delta: totalVariance,
         reason: reason.trim(),
         user_id: userId,
         device_id: deviceId,
-        count_reference: `COUNT-${selectedStoreId}-${selectedProduct.id}-${Date.now()}`,
+        count_reference: `COUNT-${selectedStoreId}-${Date.now()}`,
       };
 
       const tx = await adjustStock(input);
       setApprovedTransaction(tx);
-
-      // Refresh system quantity to show updated balance after adjustment
-      if (selectedProduct && selectedStoreId) {
-        await loadSystemQty(selectedStoreId, selectedProduct);
-      }
-
       setStep('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -274,18 +296,16 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
   const handleReset = (): void => {
     setStep('count');
+    setCountEntries([]);
     setSelectedProduct(null);
-    setProductQuery('');
     setSearchResults([]);
-    setSystemQty(null);
-    setCountedQty('');
+    setError(null);
+    setApprovedTransaction(null);
+    setIsSubmitting(false);
     setReason('');
     setReasonError(null);
     setPermissionError(null);
     setElevatedPermissionChecked(false);
-    setError(null);
-    setApprovedTransaction(null);
-    setIsSubmitting(false);
   };
 
   const currentStepIdx = step === 'count' ? 0 : step === 'approve' ? 1 : 2;
@@ -295,9 +315,101 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     { id: 'done', label: 'Confirmed' },
   ];
 
+  const countColumns: ColumnDef<CountEntry>[] = [
+    {
+      key: 'productName',
+      header: 'Product',
+      render: (row) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>{row.productName}</div>
+          <div
+            style={{
+              fontSize: '12px',
+              color: 'var(--it-text-secondary)',
+              fontFamily: 'var(--it-font-mono)',
+            }}
+          >
+            SKU: {row.sku}
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'systemQty',
+      header: 'System Qty',
+      numeric: true,
+      render: (row) => <span style={{ fontFamily: 'var(--it-font-mono)' }}>{row.systemQty}</span>,
+    },
+    {
+      key: 'countedQty',
+      header: 'Counted Qty',
+      numeric: true,
+      render: (row) => (
+        <span style={{ fontFamily: 'var(--it-font-mono)', fontWeight: 600 }}>{row.countedQty}</span>
+      ),
+    },
+    {
+      key: 'variance',
+      header: 'Variance',
+      render: (row) => varianceLabel(row.variance),
+    },
+    {
+      key: 'timestamp',
+      header: 'Time',
+      render: (row) => (
+        <span style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>{row.timestamp}</span>
+      ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      numeric: true,
+      render: (row) => (
+        <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            title="Remove entry"
+            onClick={() => handleVoidCount(row.id)}
+            data-testid={`void-count-${row.id}`}
+          >
+            <Trash2 size={14} />
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
+  const countFields: FieldDef[] = [
+    {
+      id: 'store',
+      type: 'select',
+      label: 'Store',
+      required: true,
+      defaultValue: selectedStoreId,
+      options: stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` })),
+    },
+    {
+      id: 'product',
+      type: 'text',
+      label: 'Product',
+      required: true,
+      placeholder: selectedProduct ? selectedProduct.name : 'Search by name or SKU...',
+      defaultValue: selectedProduct ? selectedProduct.name : '',
+    },
+    {
+      id: 'countedQty',
+      type: 'number',
+      label: 'Counted Quantity',
+      required: true,
+      defaultValue: 0,
+      min: 0,
+    },
+  ];
+
   return (
-    <div className="view-container" data-testid="physical-count-view" style={{ maxWidth: '640px' }}>
-      {/* Header */}
+    <div className="view-container" data-testid="physical-count-view" style={{ maxWidth: '960px' }}>
       <div className="view-header">
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <ClipboardList size={28} color="var(--it-green)" />
@@ -311,11 +423,10 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         </div>
       </div>
 
-      <div data-testid="step-indicator">
+      <div data-testid="step-indicator" style={{ marginBottom: '20px' }}>
         <SharedStepIndicator steps={wizardSteps} currentStepIndex={currentStepIdx} />
       </div>
 
-      {/* Global error banner */}
       {error && (
         <div
           className="it-toast it-toast--error"
@@ -327,260 +438,59 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         </div>
       )}
 
-      {/* Step 1: Count Session */}
       {step === 'count' && (
         <div
-          style={{
-            backgroundColor: 'var(--it-card)',
-            border: '1px solid var(--it-border)',
-            borderRadius: 'var(--it-r-lg)',
-            padding: '24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '20px',
-          }}
           data-testid="count-session-panel"
+          style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}
         >
-          <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
-            Step 1 — Enter Physical Count
-          </h3>
-
-          {/* Store */}
-          <Select
-            id="count-store-select"
-            data-testid="store-select"
-            label="Store"
-            value={selectedStoreId}
-            onChange={(e): void => handleStoreChange(e.target.value)}
-            options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-          />
-
-          {/* Product search */}
-          <div style={{ position: 'relative' }}>
-            <label className="it-label" style={{ display: 'block', marginBottom: '4px' }}>
-              Product
-            </label>
-            {selectedProduct ? (
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '10px 14px',
-                  border: '1px solid var(--it-green-border)',
-                  borderRadius: 'var(--it-r-md)',
-                  backgroundColor: 'var(--it-green-surface)',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <Package size={18} color="var(--it-green)" />
-                  <span
-                    data-testid="selected-product-name"
-                    style={{ fontWeight: 600, color: 'var(--it-green-text)', fontSize: '13px' }}
-                  >
-                    {selectedProduct.name}
-                  </span>
-                  <span
-                    style={{
-                      fontSize: '12px',
-                      fontFamily: 'var(--it-font-mono)',
-                      color: 'var(--it-text-secondary)',
-                    }}
-                  >
-                    SKU: {selectedProduct.sku}
-                  </span>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  onClick={clearProduct}
-                  data-testid="clear-product-btn"
-                  title="Change Product"
-                >
-                  <X size={16} />
-                </Button>
-              </div>
-            ) : (
-              <div>
-                <TextInput
-                  id="count-product-search"
-                  data-testid="product-search-input"
-                  value={productQuery}
-                  onChange={(e): void => setProductQuery(e.target.value)}
-                  placeholder="Search by product name or SKU..."
-                />
-                {searchResults.length > 0 && (
-                  <ul
-                    data-testid="product-search-results"
-                    style={{
-                      position: 'absolute',
-                      top: '100%',
-                      left: 0,
-                      right: 0,
-                      zIndex: 10,
-                      margin: '4px 0 0 0',
-                      padding: 0,
-                      listStyle: 'none',
-                      backgroundColor: 'var(--it-card)',
-                      border: '1px solid var(--it-border)',
-                      borderRadius: 'var(--it-r-md)',
-                      boxShadow: 'var(--it-shadow-md)',
-                      maxHeight: '200px',
-                      overflowY: 'auto',
-                    }}
-                  >
-                    {searchResults.map((product) => (
-                      <li
-                        key={product.id}
-                        onClick={(): void => handleProductSelect(product)}
-                        data-testid={`product-result-${product.id}`}
-                        style={{
-                          padding: '10px 14px',
-                          cursor: 'pointer',
-                          borderBottom: '1px solid var(--it-border)',
-                        }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.backgroundColor = 'transparent')
-                        }
-                      >
-                        <div
-                          style={{
-                            fontWeight: 600,
-                            fontSize: '13px',
-                            color: 'var(--it-text-primary)',
-                          }}
-                        >
-                          {product.name}
-                        </div>
-                        <div
-                          style={{
-                            fontSize: '12px',
-                            color: 'var(--it-text-secondary)',
-                            fontFamily: 'var(--it-font-mono)',
-                          }}
-                        >
-                          SKU: {product.sku}
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Count table — only shown when a product is selected */}
-          {selectedProduct && (
-            <div
-              style={{
-                backgroundColor: 'var(--it-surface)',
-                border: '1px solid var(--it-border)',
-                borderRadius: 'var(--it-r-md)',
-                overflow: 'hidden',
+          <div style={{ flex: '1 1 60%', minWidth: '320px' }}>
+            <LinearEntryForm
+              dataTestid="count-session-linear"
+              title="Step 1 — Enter Physical Count"
+              subtitle="Scan or type products, enter counted quantity, press Enter to add to sheet"
+              fields={countFields}
+              fieldTestIds={{
+                store: 'field-store',
+                product: 'field-product',
+                countedQty: 'field-countedQty',
               }}
-              data-testid="count-variance-table"
-            >
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  padding: '12px 16px',
-                  borderBottom: '1px solid var(--it-border)',
-                }}
-              >
-                <span style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>
-                  System Quantity (projection)
-                </span>
-                <span
-                  data-testid="system-quantity-display"
+              onCommit={handleCountCommit}
+              searchResults={searchResults}
+              onSearch={handleSearch}
+              onSearchSelect={handleSearchSelect}
+              sessionTableTitle="Count Sheet"
+              sessionTableColumns={countColumns}
+              sessionTableRows={countEntries}
+              sessionTableEmptyState={
+                <div
                   style={{
-                    fontFamily: 'var(--it-font-mono)',
-                    fontWeight: 700,
-                    fontSize: '16px',
-                    color: 'var(--it-green-text)',
-                  }}
-                >
-                  {loadingBalance ? '…' : (systemQty ?? '—')}
-                </span>
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '12px 16px',
-                  borderBottom: '1px solid var(--it-border)',
-                }}
-              >
-                <label
-                  htmlFor="counted-qty-input"
-                  style={{ fontSize: '13px', color: 'var(--it-text-primary)', fontWeight: 600 }}
-                >
-                  Counted Quantity <span style={{ color: 'var(--it-red)' }}>*</span>
-                </label>
-                <input
-                  id="counted-qty-input"
-                  type="number"
-                  min="0"
-                  value={countedQty}
-                  onChange={(e): void => setCountedQty(e.target.value)}
-                  placeholder="0"
-                  data-testid="counted-quantity-input"
-                  className="it-input"
-                  style={{
-                    width: '120px',
+                    color: 'var(--it-text-secondary)',
+                    fontSize: '13px',
                     textAlign: 'center',
-                    fontFamily: 'var(--it-font-mono)',
-                    fontWeight: 600,
+                    padding: '40px 0',
                   }}
-                />
-              </div>
-
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  padding: '12px 16px',
-                  backgroundColor: 'var(--it-gray-surface)',
-                }}
+                >
+                  No entries yet
+                </div>
+              }
+            />
+            <div style={{ marginTop: '16px' }}>
+              <Button
+                type="button"
+                variant="primary"
+                onClick={handleProceedToApproval}
+                disabled={countEntries.length === 0}
+                data-testid="proceed-to-approval-btn"
+                style={{ width: '100%' }}
               >
-                <span style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>
-                  Variance (Counted − System)
-                </span>
-                <span style={{ fontSize: '14px' }}>
-                  {variance !== null ? (
-                    varianceLabel(variance)
-                  ) : (
-                    <span style={{ color: 'var(--it-text-disabled)' }}>—</span>
-                  )}
-                </span>
-              </div>
+                <ArrowRight size={18} />
+                <span>Proceed to Approval ({countEntries.length} items)</span>
+              </Button>
             </div>
-          )}
-
-          <div style={{ marginTop: '8px' }}>
-            <Button
-              type="button"
-              variant="primary"
-              onClick={handleProceedToApproval}
-              disabled={!selectedProduct || parsedCounted === null}
-              data-testid="proceed-to-approval-btn"
-              style={{ width: '100%' }}
-            >
-              <ArrowRight size={18} />
-              <span>Proceed to Approval</span>
-            </Button>
           </div>
         </div>
       )}
 
-      {/* Step 2: Approval */}
       {step === 'approve' && (
         <div
           style={{
@@ -614,52 +524,15 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
                     color: 'var(--it-text-secondary)',
                   }}
                 >
-                  <th
-                    style={{
-                      padding: '8px 14px',
-                      textAlign: 'left',
-                      borderBottom: '1px solid var(--it-border)',
-                    }}
-                  >
+                  <th style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
                     Field
                   </th>
-                  <th
-                    style={{
-                      padding: '8px 14px',
-                      textAlign: 'left',
-                      borderBottom: '1px solid var(--it-border)',
-                    }}
-                  >
+                  <th style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
                     Value
                   </th>
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
-                    Product
-                  </td>
-                  <td
-                    style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}
-                    data-testid="summary-product-name"
-                  >
-                    {selectedProduct?.name}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
-                    SKU
-                  </td>
-                  <td
-                    style={{
-                      padding: '8px 14px',
-                      borderBottom: '1px solid var(--it-border)',
-                      fontFamily: 'var(--it-font-mono)',
-                    }}
-                  >
-                    {selectedProduct?.sku}
-                  </td>
-                </tr>
                 <tr>
                   <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
                     Store
@@ -670,7 +543,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
                 </tr>
                 <tr>
                   <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
-                    System Quantity
+                    Lines Counted
                   </td>
                   <td
                     style={{
@@ -678,40 +551,53 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
                       borderBottom: '1px solid var(--it-border)',
                       fontFamily: 'var(--it-font-mono)',
                     }}
+                  >
+                    {countEntries.length}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    System Qty
+                  </td>
+                  <td
                     data-testid="summary-system-qty"
-                  >
-                    {systemQty}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
-                    Counted Quantity
-                  </td>
-                  <td
                     style={{
                       padding: '8px 14px',
                       borderBottom: '1px solid var(--it-border)',
                       fontFamily: 'var(--it-font-mono)',
                     }}
+                  >
+                    {countEntries[0]?.systemQty ?? 0}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Counted Qty
+                  </td>
+                  <td
                     data-testid="summary-counted-qty"
-                  >
-                    {parsedCounted}
-                  </td>
-                </tr>
-                <tr>
-                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
-                    <strong>Adjustment Delta</strong>
-                  </td>
-                  <td
                     style={{
                       padding: '8px 14px',
                       borderBottom: '1px solid var(--it-border)',
                       fontFamily: 'var(--it-font-mono)',
                     }}
                   >
-                    <strong data-testid="summary-variance">
-                      {variance !== null && variance >= 0 ? `+${variance}` : variance}
-                    </strong>
+                    {countEntries[0]?.countedQty ?? 0}
+                  </td>
+                </tr>
+                <tr>
+                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
+                    Total Variance
+                  </td>
+                  <td
+                    data-testid="summary-variance"
+                    style={{
+                      padding: '8px 14px',
+                      borderBottom: '1px solid var(--it-border)',
+                      fontFamily: 'var(--it-font-mono)',
+                    }}
+                  >
+                    <strong>{countEntries.reduce((sum, e) => sum + e.variance, 0)}</strong>
                   </td>
                 </tr>
                 <tr>
@@ -732,7 +618,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
               id="adjustment-reason-input"
               rows={3}
               value={reason}
-              onChange={(e): void => {
+              onChange={(e) => {
                 setReason(e.target.value);
                 if (reasonError) setReasonError(null);
                 if (error) setError(null);
@@ -773,7 +659,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
               <input
                 type="checkbox"
                 checked={elevatedPermissionChecked}
-                onChange={(e): void => {
+                onChange={(e) => {
                   setElevatedPermissionChecked(e.target.checked);
                   if (permissionError) setPermissionError(null);
                   if (error) setError(null);
@@ -834,7 +720,6 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         </div>
       )}
 
-      {/* Step 3: Done */}
       {step === 'done' && approvedTransaction && (
         <div
           style={{
@@ -902,11 +787,11 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
                   <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
                     Transaction ID
                   </td>
-                  <td style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}>
-                    <code
-                      data-testid="result-transaction-id"
-                      style={{ fontFamily: 'var(--it-font-mono)' }}
-                    >
+                  <td
+                    style={{ padding: '8px 14px', borderBottom: '1px solid var(--it-border)' }}
+                    data-testid="result-transaction-id"
+                  >
+                    <code style={{ fontFamily: 'var(--it-font-mono)' }}>
                       {approvedTransaction.transaction_id}
                     </code>
                   </td>

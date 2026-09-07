@@ -7,7 +7,7 @@
  *     with reason, responsible user, and audit trail.
  *
  * Additional coverage:
- *   - Step 1: renders count-session panel and shows system qty vs counted variance.
+ *   - Step 1: renders count session with linear entry form and count sheet.
  *   - Step 2: requires reason + elevated-permission flag; rejects on either missing.
  *   - Step 3: done panel shows the confirmed ADJUSTMENT transaction details.
  *   - Negative-stock guard: adjustment that would go below 0 is rejected cleanly.
@@ -71,7 +71,6 @@ function makeAdjustmentTx(delta: number, reason: string): InventoryTransaction {
     reference_number: 'COUNT-STORE-001-PROD-TV-55-001',
     reason_code: reason,
     transfer_id: null,
-    purchase_order_id: null,
     batch_id: null,
     client_sequence: null,
     sync_status: 'PENDING',
@@ -87,8 +86,13 @@ function makeAdjustmentTx(delta: number, reason: string): InventoryTransaction {
 describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
   beforeEach((): void => {
     vi.restoreAllMocks();
+    Object.defineProperty(window, '__TAURI_INTERNALS__', {
+      value: {},
+      writable: true,
+      configurable: true,
+    });
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
-    vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
   });
 
   /** Renders the view and walks through Step 1 to select store + product. */
@@ -104,30 +108,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     render(<PhysicalCountAdjustmentView />);
 
-    // Stores loaded
     await waitFor((): void => {
-      expect(screen.getByTestId('store-select')).toBeInTheDocument();
+      expect(screen.getByTestId('field-store')).toBeInTheDocument();
     });
 
-    // Search for product
     act((): void => {
-      fireEvent.change(screen.getByTestId('product-search-input'), {
+      fireEvent.change(screen.getByTestId('field-product'), {
         target: { value: 'Sony' },
       });
     });
 
-    // Select product from results
     await waitFor((): void => {
-      expect(screen.getByTestId('product-result-PROD-TV-55')).toBeInTheDocument();
+      expect(screen.getByTestId('search-result-PROD-TV-55')).toBeInTheDocument();
     });
 
     act((): void => {
-      fireEvent.click(screen.getByTestId('product-result-PROD-TV-55'));
-    });
-
-    // System qty loads
-    await waitFor((): void => {
-      expect(screen.getByTestId('system-quantity-display')).toHaveTextContent(String(systemQty));
+      fireEvent.click(screen.getByTestId('search-result-PROD-TV-55'));
     });
   }
 
@@ -151,22 +147,24 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
   });
 
   // -------------------------------------------------------------------------
-  // Step 1 — variance calculation (AT-008 setup)
+  // Step 1 — count entry and sheet
   // -------------------------------------------------------------------------
 
-  it('Step 1: shows system qty and computes variance when counted qty is entered', async (): Promise<void> => {
+  it('Step 1: adds a count line to the sheet when product and counted qty are entered', async (): Promise<void> => {
     await selectProductWithBalance(18);
 
-    // Enter counted quantity = 17
     act((): void => {
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '17' },
       });
     });
 
-    // Variance should show −1
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
     await waitFor((): void => {
-      expect(screen.getByTestId('variance-display')).toHaveTextContent('-1');
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
     });
   });
 
@@ -181,61 +179,59 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     await selectProductWithBalance(18);
 
-    // Enter counted quantity = 17
     act((): void => {
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '17' },
       });
     });
 
-    // Proceed to approval
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+    });
+
     await act(async (): Promise<void> => {
       fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
     });
 
-    // Should be on Step 2 now
     await waitFor((): void => {
       expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
     });
 
-    // Summary shows correct values
     expect(screen.getByTestId('summary-system-qty')).toHaveTextContent('18');
     expect(screen.getByTestId('summary-counted-qty')).toHaveTextContent('17');
     expect(screen.getByTestId('summary-variance')).toHaveTextContent('-1');
     expect(screen.getByTestId('summary-user')).toHaveTextContent('USER-DEMO');
 
-    // Fill in reason
     act((): void => {
       fireEvent.change(screen.getByTestId('reason-input'), {
         target: { value: 'Cycle count: one unit missing' },
       });
     });
 
-    // Tick elevated-permission checkbox
     act((): void => {
       fireEvent.click(screen.getByTestId('elevated-permission-checkbox'));
     });
 
-    // Approve
     await act(async (): Promise<void> => {
       fireEvent.click(screen.getByTestId('approve-adjustment-btn'));
     });
 
-    // Done panel appears
     await waitFor((): void => {
       expect(screen.getByTestId('adjustment-done-panel')).toBeInTheDocument();
     });
 
-    // adjustStock called with correct AT-008 payload
     expect(adjustSpy).toHaveBeenCalledOnce();
     const callArg = adjustSpy.mock.calls[0][0];
     expect(callArg.store_id).toBe('STORE-001');
     expect(callArg.product_id).toBe('PROD-TV-55');
-    expect(callArg.quantity_delta).toBe(-1); // ← core AT-008 assertion
+    expect(callArg.quantity_delta).toBe(-1);
     expect(callArg.reason).toBe('Cycle count: one unit missing');
     expect(callArg.user_id).toBe('USER-DEMO');
 
-    // Audit trail visible in done panel
     expect(screen.getByTestId('result-transaction-id')).toHaveTextContent('TX-ADJ-AT008');
     expect(screen.getByTestId('result-movement-type')).toHaveTextContent('ADJUSTMENT');
     expect(screen.getByTestId('result-quantity-delta')).toHaveTextContent('-1');
@@ -253,9 +249,17 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     await selectProductWithBalance(18);
 
     act((): void => {
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '17' },
       });
+    });
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -266,7 +270,6 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
       expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
     });
 
-    // Tick permission but leave reason blank
     act((): void => {
       fireEvent.click(screen.getByTestId('elevated-permission-checkbox'));
     });
@@ -293,9 +296,17 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     await selectProductWithBalance(18);
 
     act((): void => {
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '17' },
       });
+    });
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -306,7 +317,6 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
       expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
     });
 
-    // Fill reason but do NOT tick permission
     act((): void => {
       fireEvent.change(screen.getByTestId('reason-input'), {
         target: { value: 'Missing unit found' },
@@ -339,13 +349,17 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     await selectProductWithBalance(5);
 
     act((): void => {
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '8' },
       });
     });
 
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
     await waitFor((): void => {
-      expect(screen.getByTestId('variance-display')).toHaveTextContent('+3');
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -387,9 +401,17 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     await selectProductWithBalance(18);
 
     act((): void => {
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '17' },
       });
+    });
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -421,9 +443,17 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     await selectProductWithBalance(18);
 
     act((): void => {
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '17' },
       });
+    });
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -475,10 +505,17 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     await selectProductWithBalance(0);
 
     act((): void => {
-      // Counted qty 0 when system is also 0 would be no-op; use a mocked rejection
-      fireEvent.change(screen.getByTestId('counted-quantity-input'), {
+      fireEvent.change(screen.getByTestId('field-countedQty'), {
         target: { value: '0' },
       });
+    });
+
+    act((): void => {
+      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {

@@ -644,6 +644,7 @@ pub mod commands {
         Ok(products)
     }
 
+
     #[tauri::command]
     pub fn create_product(input: NewProductInput) -> Result<Product, String> {
         let db_path = get_db_path();
@@ -2581,6 +2582,127 @@ pub mod commands {
         Ok(())
     }
 
+    /// Ensure the products_fts FTS5 virtual table and its sync triggers exist.
+    /// Lazily creates them on first search if the Python Alembic migration hasn't
+    /// run in this database yet (Tauri/desktop context).
+    fn ensure_products_fts(conn: &Connection) -> Result<(), String> {
+        // Check if the FTS5 table already exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='products_fts'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .unwrap_or(0)
+            == 1;
+
+        if exists {
+            return Ok(());
+        }
+
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+                sku,
+                name,
+                brand,
+                model,
+                category,
+                barcode,
+                alternate_names,
+                content='products',
+                content_rowid='rowid',
+                tokenize='porter unicode61'
+            );
+
+            CREATE TRIGGER IF NOT EXISTS products_ai AFTER INSERT ON products BEGIN
+                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS products_ad AFTER DELETE ON products BEGIN
+                DELETE FROM products_fts WHERE rowid = old.rowid;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS products_au AFTER UPDATE ON products BEGIN
+                DELETE FROM products_fts WHERE rowid = old.rowid;
+                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
+            END;
+
+            INSERT INTO products_fts(products_fts) VALUES ('rebuild');",
+        )
+        .map_err(|e| format!("Failed to create products_fts table: {}", e))?;
+
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn search_products_fts5(query: String) -> Result<Vec<Product>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
+
+        // Lazily create the FTS5 table if it doesn't exist yet
+        ensure_products_fts(&conn)?;
+
+        let term = query.trim();
+        if term.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
+                 FROM ( \
+                    SELECT rowid, bm25(products_fts) AS rank \
+                    FROM products_fts \
+                    WHERE products_fts MATCH ?1 \
+                    ORDER BY rank ASC \
+                    LIMIT 50 \
+                 ) fts \
+                 JOIN products p ON p.rowid = fts.rowid \
+                 LEFT JOIN stock_balances sb ON sb.product_id = p.id AND sb.stock_bucket = 'AVAILABLE' \
+                 GROUP BY p.id \
+                 ORDER BY fts.rank ASC"
+            )
+            .map_err(|e| format!("Failed to prepare FTS5 search query: {}", e))?;
+
+        let prod_iter = stmt
+            .query_map(params![term], |row| {
+                let st_int: i32 = row.get(9)?;
+                let active_int: i32 = row.get(10)?;
+                let stock_qty: i32 = row.get(13)?;
+                Ok(Product {
+                    id: row.get(0)?,
+                    sku: row.get(1)?,
+                    name: row.get(2)?,
+                    brand: row.get(3)?,
+                    model: row.get(4)?,
+                    category: row.get(5)?,
+                    unit: row.get(6)?,
+                    barcode: row.get(7)?,
+                    alternate_names: row.get(8)?,
+                    serial_tracking_enabled: st_int != 0,
+                    is_active: active_int != 0,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    stock_quantity: Some(stock_qty),
+                })
+            })
+            .map_err(|e| format!("Failed to execute FTS5 product search: {}", e))?;
+
+        let mut products = Vec::new();
+        for prod in prod_iter {
+            let p = prod.map_err(|e| format!("Failed to read FTS5 product record: {}", e))?;
+            products.push(p);
+        }
+
+        Ok(products)
+    }
+
     /// Persist the last-successful-sync timestamp (SYNC-009).
     #[tauri::command]
     pub fn set_last_sync_timestamp(timestamp: String) -> Result<(), String> {
@@ -2620,6 +2742,7 @@ pub fn run() {
             commands::register_device,
             commands::get_products,
             commands::search_products,
+            commands::search_products_fts5,
             commands::create_product,
             commands::update_product,
             commands::toggle_product_active,

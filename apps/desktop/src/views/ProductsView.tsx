@@ -7,15 +7,7 @@ import {
   toggleProductActive,
 } from '../services/tauriProductService';
 import { ProductModal } from '../components/ProductModal';
-import {
-  Button,
-  Badge,
-  DataTable,
-  EmptyState,
-  SearchInput,
-  Select,
-  ColumnDef,
-} from '@inven-tory/ui';
+import { Button, Badge, DataTable, EmptyState, SearchInput, ColumnDef } from '@inven-tory/ui';
 import { Package, Plus, Edit2, Power, AlertTriangle } from 'lucide-react';
 
 interface ProductsViewProps {
@@ -79,7 +71,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       (p.barcode && p.barcode.toLowerCase().includes(term)) ||
       (p.alternate_names && p.alternate_names.toLowerCase().includes(term));
 
-    const matchesCategory = selectedCategory === 'ALL' || p.category === selectedCategory;
+    const matchesCategory =
+      selectedCategory === 'ALL' ||
+      p.category.toLowerCase().includes(selectedCategory.toLowerCase());
 
     const matchesActive =
       activeFilter === 'ALL' ||
@@ -296,14 +290,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            data-testid="category-filter-select"
-            options={[
-              { value: 'ALL', label: `All Categories (${categories.length})` },
-              ...categories.map((c) => ({ value: c, label: c })),
-            ]}
+          <SearchInput
+            placeholder="Filter by category..."
+            value={selectedCategory === 'ALL' ? '' : selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value || 'ALL')}
+            data-testid="category-filter-input"
           />
 
           <div

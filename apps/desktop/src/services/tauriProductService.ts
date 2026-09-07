@@ -40,16 +40,13 @@ async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T 
   return null;
 }
 
-/**
- * Fetch all products from local SQLite DB or central API fallback.
- */
 export async function getProducts(): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
       return await invoke<Product[]>('get_products');
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] Error invoking get_products:', err);
+      console.error('[TauriProductService] getProducts failed:', err);
       throw new Error(`Failed to load products: ${String(err)}`);
     }
   }
@@ -62,17 +59,18 @@ export async function getProducts(): Promise<Product[]> {
   );
 }
 
-/**
- * Search products by term (FR-PROD-003: matches name, SKU, model, barcode, alternate_names).
- */
 export async function searchProducts(query: string): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product[]>('search_products', { query });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[TauriProductService] Error invoking search_products:', err);
-      throw new Error(`Failed to search products: ${String(err)}`);
+      return await invoke<Product[]>('search_products_fts5', { query });
+    } catch {
+      try {
+        return await invoke<Product[]>('search_products', { query });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[TauriProductService] searchProducts failed:', err);
+        throw new Error(`Failed to search products: ${String(err)}`);
+      }
     }
   }
 
@@ -84,16 +82,29 @@ export async function searchProducts(query: string): Promise<Product[]> {
   );
 }
 
-/**
- * Create a new product (FR-PROD-001, FR-PROD-002 - v1.0.0 fields only).
- */
+export async function searchProductsFts5(query: string): Promise<Product[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<Product[]>('search_products_fts5', { query });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriProductService] searchProductsFts5 failed:', err);
+      throw new Error(`Failed to search products (FTS5): ${String(err)}`);
+    }
+  }
+
+  throw new Error(
+    '[TauriProductService] searchProductsFts5() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
+}
+
 export async function createProduct(input: CreateProductInput): Promise<Product> {
   if (isTauriEnvironment()) {
     try {
       return await invoke<Product>('create_product', { input });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] Error invoking create_product:', err);
+      console.error('[TauriProductService] createProduct failed:', err);
       throw new Error(String(err));
     }
   }
@@ -109,16 +120,13 @@ export async function createProduct(input: CreateProductInput): Promise<Product>
   );
 }
 
-/**
- * Update an existing product (v1.0.0 fields only; SKU and ID are immutable).
- */
 export async function updateProduct(input: UpdateProductInput): Promise<Product> {
   if (isTauriEnvironment()) {
     try {
       return await invoke<Product>('update_product', { input });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] Error invoking update_product:', err);
+      console.error('[TauriProductService] updateProduct failed:', err);
       throw new Error(String(err));
     }
   }
@@ -134,16 +142,13 @@ export async function updateProduct(input: UpdateProductInput): Promise<Product>
   );
 }
 
-/**
- * Activate or deactivate a product.
- */
 export async function toggleProductActive(id: string, is_active: boolean): Promise<Product> {
   if (isTauriEnvironment()) {
     try {
       return await invoke<Product>('toggle_product_active', { id, isActive: is_active, is_active });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] Error invoking toggle_product_active:', err);
+      console.error('[TauriProductService] toggleProductActive failed:', err);
       throw new Error(String(err));
     }
   }
