@@ -7,7 +7,6 @@ import {
   toggleProductActive,
 } from '../services/tauriProductService';
 import { ProductModal } from '../components/ProductModal';
-import { ProductPicker } from '../components/ProductPicker';
 import {
   Button,
   Badge,
@@ -17,7 +16,7 @@ import {
   Select,
   ColumnDef,
 } from '@inven-tory/ui';
-import { Package, Plus, Edit2, Power, Barcode, Sparkles, AlertTriangle, X } from 'lucide-react';
+import { Package, Plus, Edit2, Power, AlertTriangle } from 'lucide-react';
 
 interface ProductsViewProps {
   /** Current user's role from the auth session (Issue 25). */
@@ -38,10 +37,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   // Modal state
   const [productModalOpen, setProductModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-
-  // ProductPicker demo drawer/modal state
-  const [pickerDemoOpen, setPickerDemoOpen] = useState(false);
-  const [selectedPickerProduct, setSelectedPickerProduct] = useState<Product | null>(null);
 
   // Role-based authorization backed by the real auth session (Issue 25)
   const isAuthorized =
@@ -184,37 +179,25 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       accessor: (p) => p.unit,
     },
     {
-      key: 'barcode',
-      header: 'Barcode',
-      render: (p) =>
-        p.barcode ? (
+      key: 'stock_quantity',
+      header: 'Stock (Avail.)',
+      numeric: true,
+      sortable: true,
+      render: (p): React.ReactElement => {
+        const qty = p.stock_quantity ?? 0;
+        return (
           <span
             style={{
+              fontWeight: 600,
+              color: qty > 0 ? 'var(--it-green-text)' : 'var(--it-text-secondary)',
               fontFamily: 'var(--it-font-mono)',
-              fontSize: '12px',
-              color: 'var(--it-text-secondary)',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
             }}
           >
-            <Barcode size={13} /> {p.barcode}
+            {qty.toLocaleString()}
           </span>
-        ) : (
-          '-'
-        ),
-      accessor: (p) => p.barcode,
-    },
-    {
-      key: 'tracking',
-      header: 'Tracking',
-      render: (p) =>
-        p.serial_tracking_enabled ? (
-          <Badge status="SENT" label="Serial" />
-        ) : (
-          <span style={{ color: 'var(--it-text-secondary)', fontSize: '12px' }}>Standard</span>
-        ),
-      accessor: (p) => (p.serial_tracking_enabled ? 'Serial' : 'Standard'),
+        );
+      },
+      accessor: (p) => p.stock_quantity ?? 0,
     },
     {
       key: 'status',
@@ -267,13 +250,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {!isAuthorized && <Badge status="INACTIVE" label={`Restricted Role (${userRole})`} />}
           <Button
-            variant="secondary"
-            onClick={() => setPickerDemoOpen(!pickerDemoOpen)}
-            data-testid="toggle-picker-demo-btn"
-          >
-            <Sparkles size={16} /> Test Product Picker (FR-PROD-003)
-          </Button>
-          <Button
             variant="primary"
             onClick={handleOpenCreateModal}
             disabled={!isAuthorized}
@@ -292,76 +268,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
         >
           <AlertTriangle size={16} aria-hidden="true" />
           <span>{actionError}</span>
-        </div>
-      )}
-
-      {/* Product Picker Keyboard Demo Drawer */}
-      {pickerDemoOpen && (
-        <div
-          style={{
-            backgroundColor: 'var(--it-card)',
-            border: '1px solid var(--it-green-border)',
-            borderRadius: 'var(--it-r-lg)',
-            padding: '16px',
-            marginBottom: '20px',
-          }}
-          data-testid="picker-demo-container"
-        >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '12px',
-            }}
-          >
-            <div>
-              <h4
-                style={{
-                  fontWeight: 600,
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  color: 'var(--it-text-primary)',
-                }}
-              >
-                <Sparkles size={16} color="var(--it-green)" />
-                Reusable Search-First Product Picker (Section 18 Specification)
-              </h4>
-              <p style={{ fontSize: '12px', color: 'var(--it-text-secondary)', marginTop: '2px' }}>
-                Keyboard navigation: Arrow up/down to navigate, Enter to select, Escape to close.
-                Auto-focuses for barcode scanners.
-              </p>
-            </div>
-            <Button variant="ghost" size="sm" iconOnly onClick={() => setPickerDemoOpen(false)}>
-              <X size={16} />
-            </Button>
-          </div>
-
-          <ProductPicker
-            onSelectProduct={(p) => {
-              setSelectedPickerProduct(p);
-            }}
-            onClose={() => setPickerDemoOpen(false)}
-          />
-
-          {selectedPickerProduct && (
-            <div
-              style={{
-                marginTop: '12px',
-                padding: '10px 14px',
-                backgroundColor: 'var(--it-green-surface)',
-                border: '1px solid var(--it-green-border)',
-                borderRadius: 'var(--it-r-md)',
-                color: 'var(--it-green-text)',
-                fontSize: '13px',
-              }}
-              data-testid="picker-selection-result"
-            >
-              <strong>Selected Item via Picker:</strong> {selectedPickerProduct.sku} —{' '}
-              {selectedPickerProduct.name} ({selectedPickerProduct.category})
-            </div>
-          )}
         </div>
       )}
 

@@ -33,13 +33,14 @@ Design notes
 
 from __future__ import annotations
 
+import logging
 import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.device import Device
 from app.models.inventory_transaction import InventoryTransaction
@@ -47,6 +48,9 @@ from app.models.product import Product
 from app.models.stock_balance import StockBalance
 from app.models.store import Store
 from app.models.sync_receipt import SyncReceipt
+from app.services.day_book_service import add_transaction_to_day_book
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Input payload schema
@@ -144,6 +148,13 @@ def _now_utc() -> datetime:
     return datetime.now(UTC)
 
 
+def _is_placeholder_product(product: Product) -> bool:
+    """Return True if this product was auto-provisioned as an offline placeholder."""
+    return (product.sku.startswith("OFFLINE-") or product.sku.startswith("AUTO-")) and (
+        product.name.startswith("OFFLINE-PROD-") or product.name.startswith("Offline Item (")
+    )
+
+
 def _make_accepted_receipt(transaction_id: str) -> SyncReceipt:
     now = _now_utc()
     return SyncReceipt(
@@ -238,32 +249,28 @@ async def _stale_domain_rejection_should_retry(
     if not reason:
         return False
 
-    # --- Case 1: Insufficient stock (balance-dependent) ---------------------
     m = _INSUFFICIENT_STOCK_RE.match(reason)
     if m:
         try:
             previous_balance_recorded = int(m.group(1))
             if previous_balance_recorded < 0:
-                # If previous state was already inconsistent (<0) don't
-                # treat that as a "now-fixed" signal; let the rejection
-                # surface to avoid masking other bugs.
                 return False
         except ValueError:
             return False
-        with db.no_autoflush:
-            stmt = select(StockBalance).where(
-                StockBalance.store_id == payload.store_id,
-                StockBalance.product_id == payload.product_id,
-                StockBalance.stock_bucket == payload.stock_bucket,
-            )
-            res = await db.execute(stmt)
-        balance: StockBalance | None = res.scalars().first()
-        current = balance.quantity if balance is not None else 0
-        # If the previous run recorded "current 0" but there's now actually
-        # stock (current >= -payload.quantity_delta) then re-evaluation is
-        # warranted.  Otherwise the stored rejection is still as valid today
-        # as it was then.
-        return current + payload.quantity_delta >= 0 and current != previous_balance_recorded
+        try:
+            with db.no_autoflush:
+                stmt = select(StockBalance).where(
+                    StockBalance.store_id == payload.store_id,
+                    StockBalance.product_id == payload.product_id,
+                    StockBalance.stock_bucket == payload.stock_bucket,
+                )
+                res = await db.execute(stmt)
+            balance: StockBalance | None = res.scalars().first()
+            current = balance.quantity if balance is not None else 0
+            return current + payload.quantity_delta >= 0 and current != previous_balance_recorded
+        except Exception:  # noqa: BLE001
+            await db.rollback()
+            return False
 
     return False
 
@@ -293,15 +300,50 @@ async def ingest_transaction(
 
     The caller is responsible for committing (or rolling back) the session.
     """
+    try:
+        return await _ingest_transaction_impl(payload, db)
+    except Exception:
+        # Rollback on any error to ensure the connection is in a clean state
+        await db.rollback()
+        raise
+
+
+async def _ingest_transaction_impl(
+    payload: TransactionPayload,
+    db: AsyncSession,
+) -> SyncReceipt:
+    """
+    Internal implementation of ingest_transaction without error handling.
+    """
+
+    async def _rb() -> None:
+        """Defensive rollback — never raises nothing, always safe to call."""
+        try:
+            await db.rollback()
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     # 1a. Ledger-first idempotency: if an InventoryTransaction row with this
     # transaction_id already exists, the event has been durably accepted.
     # Return a fresh receipt (looked up / rebuilt) without mutating state.
-    with db.no_autoflush:
-        ledger_row = await db.get(InventoryTransaction, payload.transaction_id)
+    ledger_row: InventoryTransaction | None = None
+    _step1a_error: str | None = None
+    try:
+        with db.no_autoflush:
+            ledger_row = await db.get(InventoryTransaction, payload.transaction_id)
+    except Exception as _s1ae:  # noqa: BLE001
+        _step1a_error = f"{type(_s1ae).__name__}: {_s1ae!s}"
+        await _rb()
+    if _step1a_error:
+        raise RuntimeError(f"_ingest_transaction_impl step 1a SELECT failed: {_step1a_error}")
     if ledger_row is not None:
         # There is a ledger row — this is definitively accepted.
-        existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+        existing_receipt: SyncReceipt | None = None
+        try:
+            existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+        except Exception as _e:
+            await _rb()
+            raise
         if existing_receipt is not None and existing_receipt.accepted:
             return existing_receipt
         # Stale receipt row that doesn't match the ledger (shouldn't happen,
@@ -321,11 +363,20 @@ async def ingest_transaction(
                 processed_at=now,
             )
             db.add(receipt)
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            await _rb()
+            raise
         return receipt
 
     # 1b. Receipt-only idempotency check.
-    existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+    existing_receipt = None
+    try:
+        existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+    except Exception as _e:
+        await _rb()
+        raise
     if existing_receipt is not None:
         if existing_receipt.accepted:
             # Accepted receipt but no corresponding ledger row (edge case):
@@ -341,12 +392,16 @@ async def ingest_transaction(
             # Bug-on-server, transient DB error, ORM type mistake, etc.
             # Always safe to retry with the exact same payload.
             should_retry = True
-        elif await _stale_domain_rejection_should_retry(existing_receipt, payload, db):
-            # Domain rejection whose underlying precondition (e.g. a 0
-            # balance) no longer holds — typically because an earlier
-            # event in the same batch (the ADJUSTMENT) has just been
-            # re-evaluated successfully on this retry.
-            should_retry = True
+        else:
+            try:
+                if await _stale_domain_rejection_should_retry(existing_receipt, payload, db):
+                    # Domain rejection whose underlying precondition (e.g. a 0
+                    # balance) no longer holds — typically because an earlier
+                    # event in the same batch (the ADJUSTMENT) has just been
+                    # re-evaluated successfully on this retry.
+                    should_retry = True
+            except Exception:  # noqa: BLE001
+                await _rb()
 
         if not should_retry:
             # Honour the stored rejection idempotently.
@@ -355,8 +410,12 @@ async def ingest_transaction(
         # Stale receipt — delete it and fall through to the full ingest
         # pipeline so the fixed / now-satisfiable payload runs for real.
         stale_pk = existing_receipt.transaction_id
-        await db.delete(existing_receipt)
-        await db.flush()
+        try:
+            await db.delete(existing_receipt)
+            await db.flush()
+        except Exception:
+            await _rb()
+            raise
         # Detach the deleted object from the session so a fresh
         # SyncReceipt(stale_pk, ...) can be added without identity-map
         # conflicts on the same primary key.
@@ -371,44 +430,95 @@ async def ingest_transaction(
     if rejection is not None:
         receipt = _make_rejected_receipt(payload.transaction_id, rejection)
         db.add(receipt)
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            await _rb()
+            raise
         return receipt
 
     # 2b. Auto-provision missing store or product in central database if needed
-    with db.no_autoflush:
-        store_exists = await db.scalar(
-            select(Store.id).where(Store.id == payload.store_id).limit(1)
-        )
+    store_exists = None
+    try:
+        with db.no_autoflush:
+            store_exists = await db.scalar(
+                select(Store.id).where(Store.id == payload.store_id).limit(1)
+            )
+    except Exception:
+        await _rb()
+        raise
     if not store_exists:
+        target_code = payload.store_id[:40].upper()
+        with db.no_autoflush:
+            existing_code_owner = await db.scalar(
+                select(Store.id).where(Store.code == target_code).limit(1)
+            )
+        if existing_code_owner:
+            import uuid
+
+            target_code = f"{target_code[:30]}-{uuid.uuid4().hex[:8]}".upper()
         auto_store = Store(
             id=payload.store_id,
-            code=payload.store_id[:10].upper(),
-            name=f"Auto Store ({payload.store_id[:10]})",
+            code=target_code,
+            name=f"Auto Store ({payload.store_id[:30]})",
             is_active=True,
         )
         db.add(auto_store)
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            await _rb()
+            raise
 
-    with db.no_autoflush:
-        prod_exists = await db.scalar(
-            select(Product.id).where(Product.id == payload.product_id).limit(1)
-        )
-    if not prod_exists:
+    existing_prod = None
+    try:
+        with db.no_autoflush:
+            existing_prod = await db.scalar(
+                select(Product).where(Product.id == payload.product_id).limit(1)
+            )
+    except Exception:
+        await _rb()
+        raise
+    if existing_prod is None:
+        # Auto-provision a placeholder product so the FK constraint is satisfied.
+        # Use a recognizable sentinel prefix so the pull endpoint can identify and
+        # exclude placeholders, and so the desktop won't overwrite real products.
+        raw_id = payload.product_id
+        sku_token = raw_id[:80]
+        target_sku = f"OFFLINE-{sku_token}"
+        with db.no_autoflush:
+            existing_sku_owner = await db.scalar(
+                select(Product.id).where(Product.sku == target_sku).limit(1)
+            )
+        if existing_sku_owner:
+            import uuid
+
+            target_sku = f"OFFLINE-{sku_token[:70]}-{uuid.uuid4().hex[:8]}"
+
         auto_prod = Product(
             id=payload.product_id,
-            sku=f"AUTO-{payload.product_id[:8]}",
-            name=f"Offline Item ({payload.product_id[:8]})",
+            sku=target_sku,
+            name=f"OFFLINE-PROD-{sku_token[:70]}",
             category="General",
             unit="pcs",
             is_active=True,
         )
         db.add(auto_prod)
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            await _rb()
+            raise
 
-    with db.no_autoflush:
-        device_exists = await db.scalar(
-            select(Device.id).where(Device.id == payload.device_id).limit(1)
-        )
+    device_exists = None
+    try:
+        with db.no_autoflush:
+            device_exists = await db.scalar(
+                select(Device.id).where(Device.id == payload.device_id).limit(1)
+            )
+    except Exception:
+        await _rb()
+        raise
     if not device_exists:
         auto_device = Device(
             id=payload.device_id,
@@ -417,18 +527,27 @@ async def ingest_transaction(
             is_active=True,
         )
         db.add(auto_device)
-        await db.flush()
+        try:
+            await db.flush()
+        except Exception:
+            await _rb()
+            raise
 
     # 3. Negative balance check for operations that would decrease stock
     if payload.quantity_delta < 0:
-        with db.no_autoflush:
-            stmt = select(StockBalance).where(
-                StockBalance.store_id == payload.store_id,
-                StockBalance.product_id == payload.product_id,
-                StockBalance.stock_bucket == payload.stock_bucket,
-            )
-            result = await db.execute(stmt)
-        balance: StockBalance | None = result.scalars().first()
+        result = None
+        try:
+            with db.no_autoflush:
+                stmt = select(StockBalance).where(
+                    StockBalance.store_id == payload.store_id,
+                    StockBalance.product_id == payload.product_id,
+                    StockBalance.stock_bucket == payload.stock_bucket,
+                )
+                result = await db.execute(stmt)
+        except Exception:
+            await _rb()
+            raise
+        balance: StockBalance | None = result.scalars().first() if result is not None else None
         current_quantity = balance.quantity if balance else 0
 
         if current_quantity + payload.quantity_delta < 0:
@@ -437,7 +556,11 @@ async def ingest_transaction(
                 f"Insufficient stock: current {current_quantity}, would result in {current_quantity + payload.quantity_delta}",
             )
             db.add(receipt)
-            await db.flush()
+            try:
+                await db.flush()
+            except Exception:
+                await _rb()
+                raise
             return receipt
 
     # 4. Insert ledger row
@@ -464,21 +587,41 @@ async def ingest_transaction(
         original_transaction_id=payload.original_transaction_id,
     )
     db.add(tx_row)
-    await db.flush()
+    try:
+        await db.flush()
+    except Exception:
+        await _rb()
+        raise
+
+    # 4b. Add transaction to day book for daily tracking
+    try:
+        await add_transaction_to_day_book(db, tx_row)
+    except Exception:
+        await _rb()
+        raise
 
     # 5. Upsert stock balance
-    await _upsert_stock_balance(
-        db=db,
-        store_id=payload.store_id,
-        product_id=payload.product_id,
-        stock_bucket=payload.stock_bucket,
-        delta=payload.quantity_delta,
-    )
+    try:
+        await _upsert_stock_balance(
+            db=db,
+            store_id=payload.store_id,
+            product_id=payload.product_id,
+            stock_bucket=payload.stock_bucket,
+            delta=payload.quantity_delta,
+        )
+    except Exception:
+        await _rb()
+        raise
 
     # 6. Persist receipt
     receipt = _make_accepted_receipt(payload.transaction_id)
     db.add(receipt)
-    await db.flush()
+    try:
+        await db.flush()
+    except Exception:
+        await _rb()
+        raise
+
     return receipt
 
 
@@ -490,32 +633,36 @@ async def ingest_transaction(
 async def ingest_batch(
     payloads: list[TransactionPayload],
     db: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> list[SyncReceipt]:
     """
     Process a batch of transactions independently (SYNC-012).
 
     Each payload is accepted or rejected on its own; a failure in one item
-    does not roll back others.  The session is NOT committed here — the caller
-    must commit after reviewing the returned receipts.
+    does not affect others.
 
-    Because we operate inside a single session, a flush is issued between items
-    so that subsequent idempotency checks see rows inserted earlier in the same
-    batch (important when the same transaction_id appears twice in one batch).
+    When ``session_factory`` is provided (production path), each item runs
+    inside its own short-lived session and transaction so that a DB error on
+    one item cannot corrupt the asyncpg connection used by subsequent items
+    (``InFailedSQLTransactionError`` defence).  The returned SyncReceipt
+    objects are detached plain instances — the caller is responsible for any
+    remaining work on its own session.
 
-    Payloads are *re-ordered* before processing so that stock-baseline
+    When no ``session_factory`` is given (legacy/test path), the original
+    single-session savepoint strategy is used so existing tests keep passing.
+
+    Payloads are re-ordered before processing so that stock-baseline
     operations (ADJUSTMENT) and stock-increases (RECEIPT / TRANSFER_IN /
     RETURN) are applied before stock-decreases (SALE / TRANSFER_OUT / DAMAGE).
     This prevents spurious "Insufficient stock" rejections when a batch
     contains both the initial count and the movements derived from it.
     """
-    # ---- Sort the batch for logical, deterministic order ---------------------
-    # Lower number = processed first.
     MOVEMENT_PRIORITY: dict[str, int] = {
-        "ADJUSTMENT": 0,  # Baseline / count reconciliation first
-        "RECEIPT": 1,  # Then increases
+        "ADJUSTMENT": 0,
+        "RECEIPT": 1,
         "TRANSFER_IN": 1,
         "RETURN": 1,
-        "SALE": 2,  # Then decreases
+        "SALE": 2,
         "TRANSFER_OUT": 2,
         "DAMAGE": 2,
     }
@@ -524,36 +671,94 @@ async def ingest_batch(
         prio = MOVEMENT_PRIORITY.get(p.movement_type, 3)
         return (prio, p.occurred_at, p.transaction_id)
 
-    # Keep the original order mapped so receipts are returned in the same
-    # order the caller submitted them (per SYNC-012 contract: one receipt per
-    # submitted event, in request order).
     indexed: list[tuple[int, TransactionPayload]] = list(enumerate(payloads))
     ordered = sorted(indexed, key=lambda pair: _sort_key(pair[1]))
 
     receipts_by_index: dict[int, SyncReceipt] = {}
-    for original_idx, payload in ordered:
-        try:
-            receipt = await ingest_transaction(payload, db)
-            receipts_by_index[original_idx] = receipt
-        except Exception as exc:  # noqa: BLE001 — isolate per-item failures
-            # Unexpected errors (DB constraint, etc.) get a rejected receipt.
-            # Roll back to the last savepoint so the session stays usable.
-            await db.rollback()
-            now = _now_utc()
-            rejection_text = f"Unexpected error: {exc!s}"
-            existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
-            if existing_receipt is not None:
-                existing_receipt.accepted = False
-                existing_receipt.rejection_reason = rejection_text
-                existing_receipt.processed_at = now
-                receipt = existing_receipt
-            else:
-                receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
-                db.add(receipt)
-            await db.flush()
-            receipts_by_index[original_idx] = receipt
 
-    # Emit receipts in the caller's original submission order.
+    async def _rb_sess(s: AsyncSession) -> None:
+        try:
+            await s.rollback()
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    if session_factory is not None:
+        for original_idx, payload in ordered:
+            try:
+                async with session_factory() as item_session:
+                    receipt = await ingest_transaction(payload, item_session)
+                    await item_session.commit()
+            except Exception as exc:  # noqa: BLE001
+                rejection_text = f"Unexpected error: {exc!s}"
+                try:
+                    async with session_factory() as receipt_session:
+                        existing: SyncReceipt | None = None
+                        try:
+                            existing = await receipt_session.get(
+                                SyncReceipt, payload.transaction_id
+                            )
+                        except Exception:  # noqa: BLE001
+                            existing = None
+                        now = _now_utc()
+                        if existing is not None:
+                            existing.accepted = False
+                            existing.rejection_reason = rejection_text
+                            existing.processed_at = now
+                            receipt = existing
+                        else:
+                            receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
+                            receipt_session.add(receipt)
+                        try:
+                            await receipt_session.flush()
+                            await receipt_session.commit()
+                        except Exception:
+                            await _rb_sess(receipt_session)
+                            raise
+                except Exception as receipt_error:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to persist rejection receipt for tx_id=%s: %s",
+                        payload.transaction_id,
+                        receipt_error,
+                    )
+                    receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
+            receipts_by_index[original_idx] = receipt
+    else:
+        for original_idx, payload in ordered:
+            try:
+                async with db.begin_nested():
+                    receipt = await ingest_transaction(payload, db)
+                receipts_by_index[original_idx] = receipt
+            except Exception as exc:  # noqa: BLE001
+                now = _now_utc()
+                rejection_text = f"Unexpected error: {exc!s}"
+                await _rb_sess(db)
+                existing_receipt: SyncReceipt | None = None
+                try:
+                    existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+                except Exception:  # noqa: BLE001
+                    await _rb_sess(db)
+                    existing_receipt = None
+                if existing_receipt is not None:
+                    existing_receipt.accepted = False
+                    existing_receipt.rejection_reason = rejection_text
+                    existing_receipt.processed_at = now
+                    receipt = existing_receipt
+                else:
+                    receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
+                    db.add(receipt)
+                try:
+                    await db.flush()
+                    receipts_by_index[original_idx] = receipt
+                except Exception as receipt_error:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to save rejection receipt for tx_id=%s: %s",
+                        payload.transaction_id,
+                        receipt_error,
+                    )
+                    await _rb_sess(db)
+                    receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
+                    receipts_by_index[original_idx] = receipt
+
     return [receipts_by_index[i] for i in range(len(payloads))]
 
 

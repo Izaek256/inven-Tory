@@ -216,8 +216,8 @@ export async function getStockBalance(storeId: string, productId: string): Promi
   if (isTauriEnvironment()) {
     try {
       const quantity = await invoke<number>('get_stock_balance', {
-        store_id: storeId,
-        product_id: productId,
+        storeId,
+        productId,
       });
       return {
         id: `SB-${storeId}-${productId}-AVAILABLE`,
@@ -250,9 +250,9 @@ export async function getStockBalanceForBucket(
   if (isTauriEnvironment()) {
     try {
       const quantity = await invoke<number>('get_stock_balance_for_bucket', {
-        store_id: storeId,
-        product_id: productId,
-        stock_bucket: stockBucket,
+        storeId,
+        productId,
+        stockBucket,
       });
       return {
         id: `SB-${storeId}-${productId}-${stockBucket}`,
@@ -296,5 +296,25 @@ export async function adjustStock(input: AdjustStockInput): Promise<InventoryTra
 
   throw new Error(
     '[TauriTransactionService] adjustStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
+}
+
+/**
+ * Get all local transactions from SQLite for offline-first display (Issue 1).
+ * Falls back to server API when not in Tauri.
+ */
+export async function getLocalTransactions(): Promise<InventoryTransaction[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<InventoryTransaction[]>('get_local_transactions');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking get_local_transactions:', err);
+      throw new Error(`Failed to get local transactions: ${String(err)}`);
+    }
+  }
+
+  throw new Error(
+    '[TauriTransactionService] getLocalTransactions() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
   );
 }

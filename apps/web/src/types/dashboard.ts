@@ -18,9 +18,12 @@ export interface ProductSearchResult {
   model: string | null;
   category: string;
   unit: string;
-  barcode: string | null;
   is_active: boolean;
   low_stock_threshold: number | null;
+  /** Total AVAILABLE quantity summed across all stores. */
+  total_quantity: number | null;
+  /** ISO-8601 timestamp of the most recent stock balance update for this product. */
+  last_balance_update: string | null;
 }
 
 export interface ProductSearchResponse {

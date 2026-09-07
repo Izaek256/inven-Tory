@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ArrowUpCircle, X, Check, AlertCircle } from 'lucide-react';
+import { Package, ArrowUpCircle, X, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
 import { searchProducts } from '../services/tauriProductService';
 import { sellStock, getStockBalance } from '../services/tauriTransactionService';
@@ -20,6 +20,16 @@ export const SaleStockView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
   const [availableQuantity, setAvailableQuantity] = useState<number | null>(null);
+  const [showEntryLog, setShowEntryLog] = useState<boolean>(true);
+  const [entryLog, setEntryLog] = useState<
+    Array<{
+      productName: string;
+      quantity: number;
+      movementType: string;
+      referenceNumber: string | null;
+      timestamp: string;
+    }>
+  >([]);
 
   // Auth: resolve user/device from the active session instead of hardcoded values.
   const [sessionUserId, setSessionUserId] = useState<string>('');
@@ -123,6 +133,23 @@ export const SaleStockView: React.FC = () => {
       await sellStock(input);
       setSuccess(true);
 
+      // Add to entry log
+      setEntryLog((prev) => [
+        ...prev,
+        {
+          productName: selectedProduct.name,
+          quantity: input.quantity,
+          movementType: 'SALE',
+          referenceNumber: input.reference_number || null,
+          timestamp: new Date().toLocaleString(),
+        },
+      ]);
+
+      // Refresh available quantity if product is still selected
+      if (selectedProduct && selectedStoreId) {
+        await loadAvailableQuantity(selectedStoreId, selectedProduct);
+      }
+
       // Reset form
       setProductQuery('');
       setSelectedProduct(null);
@@ -168,247 +195,336 @@ export const SaleStockView: React.FC = () => {
   };
 
   return (
-    <div className="sale-stock-view" data-testid="sale-stock-view" style={{ maxWidth: '640px' }}>
-      <div className="view-header">
-        <div>
-          <h2 className="view-title">Sale / Issue Stock</h2>
-          <p className="view-subtitle">
-            Record sales and stock removals (FR-MOV-002, Section 13.2)
-          </p>
+    <div
+      className="sale-stock-view"
+      data-testid="sale-stock-view"
+      style={{ display: 'flex', gap: '24px' }}
+    >
+      <div style={{ flex: 1, maxWidth: '640px' }}>
+        <div className="view-header">
+          <div>
+            <h2 className="view-title">Sale / Issue Stock</h2>
+            <p className="view-subtitle">
+              Record sales and stock removals (FR-MOV-002, Section 13.2)
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowEntryLog(!showEntryLog)}
+            data-testid="toggle-entry-log"
+          >
+            {showEntryLog ? <EyeOff size={16} /> : <Eye size={16} />}
+            <span>{showEntryLog ? 'Hide Log' : 'Show Log'}</span>
+          </Button>
         </div>
-      </div>
 
-      {success && (
-        <div
-          className="it-toast it-toast--success"
-          data-testid="sale-success-banner"
-          style={{ marginBottom: '16px' }}
-        >
-          <Check size={16} aria-hidden="true" />
-          <span>Stock sold successfully. Transaction recorded and balance updated.</span>
-        </div>
-      )}
+        {success && (
+          <div
+            className="it-toast it-toast--success"
+            data-testid="sale-success-banner"
+            style={{ marginBottom: '16px' }}
+          >
+            <Check size={16} aria-hidden="true" />
+            <span>Stock sold successfully. Transaction recorded and balance updated.</span>
+          </div>
+        )}
 
-      {error && (
-        <div
-          className="it-toast it-toast--error"
-          data-testid="sale-error-banner"
-          style={{ marginBottom: '16px' }}
-        >
-          <AlertCircle size={16} aria-hidden="true" />
-          <span>{error}</span>
-        </div>
-      )}
+        {error && (
+          <div
+            className="it-toast it-toast--error"
+            data-testid="sale-error-banner"
+            style={{ marginBottom: '16px' }}
+          >
+            <AlertCircle size={16} aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        )}
 
-      {stores.length === 0 ? (
-        <div
-          style={{
-            backgroundColor: 'var(--it-card)',
-            border: '1px solid var(--it-border)',
-            borderRadius: 'var(--it-r-lg)',
-            padding: '48px 24px',
-            textAlign: 'center',
-          }}
-        >
-          <Package size={48} style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }} />
-          <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
-          <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
-            Create a store location first to record stock movements.
-          </p>
-        </div>
-      ) : (
-        <form
-          onSubmit={handleSubmit}
-          className="transaction-form"
-          style={{
-            backgroundColor: 'var(--it-card)',
-            border: '1px solid var(--it-border)',
-            borderRadius: 'var(--it-r-lg)',
-            padding: '24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '20px',
-          }}
-        >
-          {/* Store Selection */}
-          <Select
-            id="store-select"
-            data-testid="store-select"
-            label="Store"
-            required
-            value={selectedStoreId}
-            onChange={(e) => setSelectedStoreId(e.target.value)}
-            options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-          />
-
-          {/* Product Search */}
-          <div style={{ position: 'relative' }}>
-            <TextInput
-              id="product-search"
-              data-testid="product-search-input"
-              label="Product"
-              required
-              value={productQuery}
-              onChange={(e) => setProductQuery(e.target.value)}
-              placeholder="Search by name, SKU, barcode..."
+        {stores.length === 0 ? (
+          <div
+            style={{
+              backgroundColor: 'var(--it-card)',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-lg)',
+              padding: '48px 24px',
+              textAlign: 'center',
+            }}
+          >
+            <Package
+              size={48}
+              style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}
             />
-            {selectedProduct && (
-              <button
-                type="button"
-                onClick={clearProduct}
-                style={{
-                  position: 'absolute',
-                  right: '8px',
-                  top: '34px',
-                  background: 'none',
-                  border: 'none',
-                  cursor: 'pointer',
-                  color: 'var(--it-text-secondary)',
-                }}
-              >
-                <X size={16} />
-              </button>
-            )}
+            <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
+            <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
+              Create a store location first to record stock movements.
+            </p>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleSubmit}
+            className="transaction-form"
+            style={{
+              backgroundColor: 'var(--it-card)',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-lg)',
+              padding: '24px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+            }}
+          >
+            {/* Store Selection */}
+            <Select
+              id="store-select"
+              data-testid="store-select"
+              label="Store"
+              required
+              value={selectedStoreId}
+              onChange={(e) => setSelectedStoreId(e.target.value)}
+              options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+            />
 
-            {/* Search Results Dropdown */}
-            {searchResults.length > 0 && !selectedProduct && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  right: 0,
-                  backgroundColor: 'var(--it-card)',
-                  border: '1px solid var(--it-border)',
-                  borderRadius: 'var(--it-r-md)',
-                  marginTop: '4px',
-                  maxHeight: '240px',
-                  overflowY: 'auto',
-                  zIndex: 10,
-                  boxShadow: 'var(--it-shadow-md)',
-                }}
-              >
-                {searchResults.map((product) => (
-                  <div
-                    key={product.id}
-                    data-testid={`product-result-${product.id}`}
-                    onClick={() => handleProductSelect(product)}
-                    style={{
-                      padding: '10px 14px',
-                      cursor: 'pointer',
-                      borderBottom: '1px solid var(--it-border)',
-                    }}
-                    onMouseEnter={(e) =>
-                      (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
-                    }
-                    onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                  >
+            {/* Product Search */}
+            <div style={{ position: 'relative' }}>
+              <TextInput
+                id="product-search"
+                data-testid="product-search-input"
+                label="Product"
+                required
+                value={productQuery}
+                onChange={(e) => setProductQuery(e.target.value)}
+                placeholder="Search by name, SKU, barcode..."
+              />
+              {selectedProduct && (
+                <button
+                  type="button"
+                  onClick={clearProduct}
+                  style={{
+                    position: 'absolute',
+                    right: '8px',
+                    top: '34px',
+                    background: 'none',
+                    border: 'none',
+                    cursor: 'pointer',
+                    color: 'var(--it-text-secondary)',
+                  }}
+                >
+                  <X size={16} />
+                </button>
+              )}
+
+              {/* Search Results Dropdown */}
+              {searchResults.length > 0 && !selectedProduct && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: '100%',
+                    left: 0,
+                    right: 0,
+                    backgroundColor: 'var(--it-card)',
+                    border: '1px solid var(--it-border)',
+                    borderRadius: 'var(--it-r-md)',
+                    marginTop: '4px',
+                    maxHeight: '240px',
+                    overflowY: 'auto',
+                    zIndex: 10,
+                    boxShadow: 'var(--it-shadow-md)',
+                  }}
+                >
+                  {searchResults.map((product) => (
                     <div
-                      style={{ fontWeight: 600, fontSize: '13px', color: 'var(--it-text-primary)' }}
-                    >
-                      {product.name}
-                    </div>
-                    <div
+                      key={product.id}
+                      data-testid={`product-result-${product.id}`}
+                      onClick={() => handleProductSelect(product)}
                       style={{
-                        fontSize: '12px',
-                        color: 'var(--it-text-secondary)',
+                        padding: '10px 14px',
+                        cursor: 'pointer',
+                        borderBottom: '1px solid var(--it-border)',
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
+                      }
+                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    >
+                      <div
+                        style={{
+                          fontWeight: 600,
+                          fontSize: '13px',
+                          color: 'var(--it-text-primary)',
+                        }}
+                      >
+                        {product.name}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: 'var(--it-text-secondary)',
+                          fontFamily: 'var(--it-font-mono)',
+                        }}
+                      >
+                        SKU: {product.sku} {product.barcode && `• Barcode: ${product.barcode}`}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Selected Product Display with Available Quantity */}
+              {selectedProduct && (
+                <div
+                  style={{
+                    marginTop: '8px',
+                    padding: '8px 12px',
+                    backgroundColor: 'var(--it-green-surface)',
+                    border: '1px solid var(--it-green-border)',
+                    borderRadius: 'var(--it-r-md)',
+                    fontSize: '13px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    color: 'var(--it-green-text)',
+                  }}
+                >
+                  <Package size={16} />
+                  <span data-testid="selected-product-name">
+                    {selectedProduct.name} ({selectedProduct.sku})
+                  </span>
+                  {availableQuantity !== null && (
+                    <span
+                      data-testid="available-quantity-display"
+                      style={{
+                        marginLeft: 'auto',
+                        fontWeight: 600,
                         fontFamily: 'var(--it-font-mono)',
                       }}
                     >
-                      SKU: {product.sku} {product.barcode && `• Barcode: ${product.barcode}`}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+                      Available: {availableQuantity}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
 
-            {/* Selected Product Display with Available Quantity */}
-            {selectedProduct && (
-              <div
-                style={{
-                  marginTop: '8px',
-                  padding: '8px 12px',
-                  backgroundColor: 'var(--it-green-surface)',
-                  border: '1px solid var(--it-green-border)',
-                  borderRadius: 'var(--it-r-md)',
-                  fontSize: '13px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '8px',
-                  color: 'var(--it-green-text)',
-                }}
+            {/* Quantity */}
+            <div>
+              <NumericInput
+                id="quantity"
+                data-testid="quantity-input"
+                label="Quantity"
+                required
+                value={quantity}
+                min={1}
+                onChange={(v) => setQuantity(Math.max(1, v))}
+              />
+              {availableQuantity !== null && quantity > availableQuantity && (
+                <div
+                  style={{
+                    marginTop: '4px',
+                    fontSize: '12px',
+                    color: 'var(--it-red-text)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px',
+                  }}
+                >
+                  <AlertCircle size={12} />
+                  <span>Warning: Quantity exceeds available stock ({availableQuantity})</span>
+                </div>
+              )}
+            </div>
+
+            {/* Reference Number */}
+            <TextInput
+              id="reference-number"
+              label="Receipt / Reference Number"
+              value={referenceNumber}
+              onChange={(e) => setReferenceNumber(e.target.value)}
+              placeholder="e.g., S-1002, INV-2024-001"
+            />
+
+            {/* Submit Button */}
+            <div style={{ marginTop: '8px' }}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={isSubmitting}
+                data-testid="submit-sale-btn"
+                style={{ width: '100%' }}
               >
-                <Package size={16} />
-                <span data-testid="selected-product-name">
-                  {selectedProduct.name} ({selectedProduct.sku})
-                </span>
-                {availableQuantity !== null && (
-                  <span
-                    data-testid="available-quantity-display"
+                <ArrowUpCircle size={18} />
+                Sell Stock
+              </Button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {/* Entry Log Side Panel */}
+      {showEntryLog && (
+        <div
+          style={{
+            width: '400px',
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '20px',
+            maxHeight: 'calc(100vh - 120px)',
+            overflowY: 'auto',
+          }}
+          data-testid="entry-log-panel"
+        >
+          <h3 style={{ marginBottom: '16px', fontSize: '16px', fontWeight: 600 }}>Entry Log</h3>
+          {entryLog.length === 0 ? (
+            <div
+              style={{
+                color: 'var(--it-text-secondary)',
+                fontSize: '13px',
+                textAlign: 'center',
+                padding: '40px 0',
+              }}
+            >
+              No entries yet
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {entryLog.map((entry, index) => (
+                <div
+                  key={index}
+                  style={{
+                    padding: '12px',
+                    backgroundColor: 'var(--it-surface)',
+                    border: '1px solid var(--it-border)',
+                    borderRadius: 'var(--it-r-md)',
+                    fontSize: '13px',
+                  }}
+                >
+                  <div
                     style={{
-                      marginLeft: 'auto',
                       fontWeight: 600,
-                      fontFamily: 'var(--it-font-mono)',
+                      marginBottom: '4px',
+                      color: 'var(--it-text-primary)',
                     }}
                   >
-                    Available: {availableQuantity}
-                  </span>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Quantity */}
-          <div>
-            <NumericInput
-              id="quantity"
-              data-testid="quantity-input"
-              label="Quantity"
-              required
-              value={quantity}
-              min={1}
-              onChange={(v) => setQuantity(Math.max(1, v))}
-            />
-            {availableQuantity !== null && quantity > availableQuantity && (
-              <div
-                style={{
-                  marginTop: '4px',
-                  fontSize: '12px',
-                  color: 'var(--it-red-text)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px',
-                }}
-              >
-                <AlertCircle size={12} />
-                <span>Warning: Quantity exceeds available stock ({availableQuantity})</span>
-              </div>
-            )}
-          </div>
-
-          {/* Reference Number */}
-          <TextInput
-            id="reference-number"
-            label="Receipt / Reference Number"
-            value={referenceNumber}
-            onChange={(e) => setReferenceNumber(e.target.value)}
-            placeholder="e.g., S-1002, INV-2024-001"
-          />
-
-          {/* Submit Button */}
-          <div style={{ marginTop: '8px' }}>
-            <Button
-              type="submit"
-              variant="primary"
-              loading={isSubmitting}
-              data-testid="submit-sale-btn"
-              style={{ width: '100%' }}
-            >
-              <ArrowUpCircle size={18} />
-              Sell Stock
-            </Button>
-          </div>
-        </form>
+                    {entry.productName}
+                  </div>
+                  <div style={{ color: 'var(--it-text-secondary)', lineHeight: '1.5' }}>
+                    <div>
+                      <strong>Qty:</strong> {entry.quantity > 0 ? '+' : ''}
+                      {entry.quantity} ({entry.movementType})
+                    </div>
+                    <div>
+                      <strong>Ref:</strong> {entry.referenceNumber || '—'}
+                    </div>
+                    <div>
+                      <strong>Time:</strong> {entry.timestamp}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -1,19 +1,13 @@
 /**
- * Product Catalogue view — FR-SRCH-001–005.
+ * Unified web dashboard — single-page interface combining
+ * recent activity and the product catalog search.
  *
- * Loads the full product catalogue on mount (general catalog mode).
- * A search bar filters the results in real time (FR-SRCH-001).
- *
- * On selecting a product:
- *   - Per-store quantity breakdown + global total (FR-SRCH-002/003)
- *   - Movement history (FR-SRCH-004)
- *   - Last-sync timestamp per store (FR-SRCH-005, via balance updated_at)
- *
- * Each row in the catalogue shows the last sync date/time for that product
- * (the most recent stock_balance updated_at across all stores).
+ * Layout:
+ *   - Recent Activity: most recently synced products at the top
+ *   - Product Catalog: full searchable catalogue as the primary feature
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Badge,
   Button,
@@ -45,8 +39,11 @@ import type {
 } from '../types/dashboard';
 import { formatRelativeTime, movementTypeBadge } from '../utils/formatters';
 
+const RECENT_LIMIT = 8;
+const CATALOG_LIMIT = 200;
+
 // ---------------------------------------------------------------------------
-// Sub-views
+// Inventory panel sub-view (reused from SearchView)
 // ---------------------------------------------------------------------------
 
 interface InventoryPanelProps {
@@ -337,66 +334,84 @@ function InventoryPanel({
 }
 
 // ---------------------------------------------------------------------------
-// Main catalogue / search view
+// Main unified dashboard
 // ---------------------------------------------------------------------------
 
-export function SearchView(): React.ReactElement {
-  const [query, setQuery] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  const [allResults, setAllResults] = useState<ProductSearchResult[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<ProductSearchResult | null>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+interface UnifiedDashboardProps {
+  onNavigateToStores: () => void;
+  onNavigateToUsers: () => void;
+}
 
-  // Load the full catalogue on mount
+export function UnifiedDashboard({
+  onNavigateToStores: _onNavigateToStores,
+  onNavigateToUsers: _onNavigateToUsers,
+}: UnifiedDashboardProps): React.ReactElement {
+  const [query, setQuery] = useState('');
+  const [catalogLoading, setCatalogLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [allResults, setAllResults] = useState<ProductSearchResult[]>([]);
+  const [recentProducts, setRecentProducts] = useState<ProductSearchResult[]>([]);
+  const [recentLoading, setRecentLoading] = useState(true);
+  const [selectedProduct, setSelectedProduct] = useState<ProductSearchResult | null>(null);
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setSearchError(null);
-    searchProducts('') // empty query → full catalogue
+    setCatalogLoading(true);
+    setCatalogError(null);
+    searchProducts('', CATALOG_LIMIT)
       .then((data) => {
-        if (!cancelled) setAllResults(data.results);
+        if (!cancelled) {
+          setAllResults(data.results);
+          const sorted = [...data.results].sort((a, b) => {
+            const aTime = a.last_balance_update ? new Date(a.last_balance_update).getTime() : 0;
+            const bTime = b.last_balance_update ? new Date(b.last_balance_update).getTime() : 0;
+            return bTime - aTime;
+          });
+          setRecentProducts(sorted.slice(0, RECENT_LIMIT));
+        }
       })
       .catch((err: unknown) => {
-        if (!cancelled) setSearchError(err instanceof Error ? err.message : String(err));
+        if (!cancelled) setCatalogError(err instanceof Error ? err.message : String(err));
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setCatalogLoading(false);
+          setRecentLoading(false);
+        }
       });
     return (): void => {
       cancelled = true;
     };
   }, []);
 
-  // Client-side filter for the search bar (fast, no round-trip for typing)
-  const filteredResults = query.trim()
-    ? allResults.filter((r) => {
-        const term = query.toLowerCase();
-        return (
-          r.name.toLowerCase().includes(term) ||
-          r.sku.toLowerCase().includes(term) ||
-          (r.brand ?? '').toLowerCase().includes(term) ||
-          (r.model ?? '').toLowerCase().includes(term) ||
-          r.category.toLowerCase().includes(term)
-        );
-      })
-    : allResults;
+  const filteredResults = useMemo(() => {
+    if (!query.trim()) return allResults;
+    const term = query.toLowerCase();
+    return allResults.filter((r) => {
+      return (
+        r.name.toLowerCase().includes(term) ||
+        r.sku.toLowerCase().includes(term) ||
+        (r.brand ?? '').toLowerCase().includes(term) ||
+        (r.model ?? '').toLowerCase().includes(term) ||
+        r.category.toLowerCase().includes(term)
+      );
+    });
+  }, [allResults, query]);
 
   const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const val = e.target.value;
     setQuery(val);
-    // Debounce a server-side search for more precise results on slow connections
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (val.trim()) {
       debounceRef.current = setTimeout(() => {
-        searchProducts(val.trim())
+        searchProducts(val.trim(), CATALOG_LIMIT)
           .then((data) => setAllResults(data.results))
-          .catch(() => undefined); // silent — client-side filter still works
+          .catch(() => undefined);
       }, 500);
     } else {
-      // Reset to full catalogue when search is cleared
       debounceRef.current = setTimeout(() => {
-        searchProducts('')
+        searchProducts('', CATALOG_LIMIT)
           .then((data) => setAllResults(data.results))
           .catch(() => undefined);
       }, 500);
@@ -406,7 +421,7 @@ export function SearchView(): React.ReactElement {
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') {
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      searchProducts(query.trim())
+      searchProducts(query.trim(), CATALOG_LIMIT)
         .then((data) => setAllResults(data.results))
         .catch(() => undefined);
     }
@@ -516,8 +531,59 @@ export function SearchView(): React.ReactElement {
     },
   ];
 
+  const recentCols: ColumnDef<ProductSearchResult>[] = [
+    {
+      key: 'name',
+      header: 'Product',
+      accessor: (r) => r.name,
+      render: (r) => (
+        <span className="web-cell-product">
+          <span className="web-cell-product__name">{r.name}</span>
+          {r.brand && <span className="web-cell-secondary">{r.brand}</span>}
+        </span>
+      ),
+    },
+    {
+      key: 'total_quantity',
+      header: 'Stock',
+      numeric: true,
+      accessor: (r) => r.total_quantity ?? 0,
+      render: (r) => (
+        <span className="web-cell-mono">{(r.total_quantity ?? 0).toLocaleString()}</span>
+      ),
+    },
+    {
+      key: 'last_balance_update',
+      header: 'Last Sync',
+      accessor: (r) => r.last_balance_update ?? '',
+      render: (r) =>
+        r.last_balance_update ? (
+          <span className="web-cell-time" title={new Date(r.last_balance_update).toLocaleString()}>
+            <Clock size={13} aria-hidden="true" />
+            {formatRelativeTime(r.last_balance_update)}
+          </span>
+        ) : (
+          <span className="web-cell-empty">Never</span>
+        ),
+    },
+    {
+      key: 'actions',
+      header: '',
+      render: (r) => (
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setSelectedProduct(r)}
+          data-testid={`recent-view-${r.id}`}
+        >
+          View
+        </Button>
+      ),
+    },
+  ];
+
   return (
-    <div className="web-view" data-testid="search-view">
+    <div className="web-view" data-testid="unified-dashboard">
       <div className="web-view-header">
         <div>
           <h2 className="web-view-title">
@@ -530,7 +596,31 @@ export function SearchView(): React.ReactElement {
         </div>
       </div>
 
-      <div className="web-search-bar" data-testid="search-bar">
+      {/* Recent Activity */}
+      <div style={{ marginBottom: '24px' }}>
+        <SummaryCard
+          title="Recent Activity"
+          titleIcon={<Clock size={18} />}
+          headerAction={recentLoading ? <Spinner size="sm" label="Loading…" /> : undefined}
+        >
+          {recentProducts.length === 0 && !recentLoading ? (
+            <EmptyState
+              heading="No recent activity"
+              body="Synced stock movements will appear here."
+            />
+          ) : (
+            <DataTable
+              columns={recentCols}
+              rows={recentProducts}
+              rowKey={(r) => `recent-${r.id}`}
+              data-testid="recent-activity-table"
+            />
+          )}
+        </SummaryCard>
+      </div>
+
+      {/* Product Search Bar */}
+      <div className="web-search-bar" data-testid="search-bar" style={{ marginBottom: '16px' }}>
         <SearchInput
           value={query}
           onChange={handleQueryChange}
@@ -541,19 +631,19 @@ export function SearchView(): React.ReactElement {
         />
       </div>
 
-      {searchError && (
+      {catalogError && (
         <div className="it-toast it-toast--error web-search-error" role="alert">
-          {searchError}
+          {catalogError}
         </div>
       )}
 
-      {loading && (
+      {catalogLoading && (
         <div className="web-center-spinner" style={{ padding: '48px 0' }}>
           <Spinner size="md" label="Loading catalogue…" />
         </div>
       )}
 
-      {!loading && !searchError && (
+      {!catalogLoading && !catalogError && (
         <SummaryCard
           title={
             query.trim()

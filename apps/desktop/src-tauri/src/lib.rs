@@ -41,6 +41,10 @@ pub struct Product {
     pub is_active: bool,
     pub created_at: String,
     pub updated_at: String,
+    /// Total AVAILABLE stock quantity across all stores (summed from stock_balances).
+    /// Will be None if the stock_balances table has no row for this product yet.
+    #[serde(default)]
+    pub stock_quantity: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -541,13 +545,22 @@ pub mod commands {
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
         let mut stmt = conn
-            .prepare("SELECT id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at FROM products ORDER BY name ASC")
+            .prepare(
+                "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
+                 FROM products p \
+                 LEFT JOIN stock_balances sb ON sb.product_id = p.id \
+                 GROUP BY p.id \
+                 ORDER BY p.name ASC"
+            )
             .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
 
         let prod_iter = stmt
             .query_map([], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
+                let stock_qty: i32 = row.get(13)?;
                 Ok(Product {
                     id: row.get(0)?,
                     sku: row.get(1)?,
@@ -562,6 +575,7 @@ pub mod commands {
                     is_active: active_int != 0,
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
+                    stock_quantity: Some(stock_qty),
                 })
             })
             .map_err(|e| format!("Failed to query products: {}", e))?;
@@ -584,13 +598,24 @@ pub mod commands {
         let term = format!("%{}%", query.trim().to_lowercase());
 
         let mut stmt = conn
-            .prepare("SELECT id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at FROM products WHERE LOWER(name) LIKE ?1 OR LOWER(sku) LIKE ?1 OR LOWER(COALESCE(model, '')) LIKE ?1 OR LOWER(COALESCE(barcode, '')) LIKE ?1 OR LOWER(COALESCE(alternate_names, '')) LIKE ?1 ORDER BY name ASC")
+            .prepare(
+                "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
+                 FROM products p \
+                 LEFT JOIN stock_balances sb ON sb.product_id = p.id \
+                 WHERE LOWER(p.name) LIKE ?1 OR LOWER(p.sku) LIKE ?1 OR LOWER(COALESCE(p.model, '')) LIKE ?1 \
+                    OR LOWER(COALESCE(p.barcode, '')) LIKE ?1 OR LOWER(COALESCE(p.alternate_names, '')) LIKE ?1 \
+                 GROUP BY p.id \
+                 ORDER BY p.name ASC"
+            )
             .map_err(|e| format!("Failed to prepare search query: {}", e))?;
 
         let prod_iter = stmt
             .query_map(params![term], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
+                let stock_qty: i32 = row.get(13)?;
                 Ok(Product {
                     id: row.get(0)?,
                     sku: row.get(1)?,
@@ -605,6 +630,7 @@ pub mod commands {
                     is_active: active_int != 0,
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
+                    stock_quantity: Some(stock_qty),
                 })
             })
             .map_err(|e| format!("Failed to execute product search: {}", e))?;
@@ -701,6 +727,7 @@ pub mod commands {
             is_active: input.is_active.unwrap_or(true),
             created_at: now.clone(),
             updated_at: now,
+            stock_quantity: Some(0),
         })
     }
 
@@ -768,6 +795,7 @@ pub mod commands {
                     is_active: active_val != 0,
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
+                    stock_quantity: None,
                 })
             })
             .map_err(|e| format!("Failed to fetch updated product: {}", e))?;
@@ -817,6 +845,7 @@ pub mod commands {
                     is_active: active_val != 0,
                     created_at: row.get(11)?,
                     updated_at: row.get(12)?,
+                    stock_quantity: None,
                 })
             })
             .map_err(|e| format!("Failed to fetch product status: {}", e))?;
@@ -1535,6 +1564,51 @@ pub mod commands {
         }
 
         Ok(transfers)
+    }
+
+    #[tauri::command]
+    pub fn get_local_transactions() -> Result<Vec<InventoryTransaction>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare("SELECT transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, purchase_order_id, batch_id, client_sequence, sync_status, server_accepted_at, original_transaction_id FROM inventory_transactions ORDER BY occurred_at DESC")
+            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+
+        let txn_iter = stmt
+            .query_map([], |row| {
+                Ok(InventoryTransaction {
+                    transaction_id: row.get(0)?,
+                    store_id: row.get(1)?,
+                    product_id: row.get(2)?,
+                    movement_type: row.get(3)?,
+                    stock_bucket: row.get(4)?,
+                    quantity_delta: row.get(5)?,
+                    occurred_at: row.get(6)?,
+                    recorded_at: row.get(7)?,
+                    user_id: row.get(8)?,
+                    device_id: row.get(9)?,
+                    reference_number: row.get(10)?,
+                    reason_code: row.get(11)?,
+                    transfer_id: row.get(12)?,
+                    purchase_order_id: row.get(13)?,
+                    batch_id: row.get(14)?,
+                    client_sequence: row.get(15)?,
+                    sync_status: row.get(16)?,
+                    server_accepted_at: row.get(17)?,
+                    original_transaction_id: row.get(18)?,
+                })
+            })
+            .map_err(|e| format!("Failed to query transactions: {}", e))?;
+
+        let mut transactions = Vec::new();
+        for txn in txn_iter {
+            let t = txn.map_err(|e| format!("Failed to read transaction record: {}", e))?;
+            transactions.push(t);
+        }
+
+        Ok(transactions)
     }
 
     #[tauri::command]
@@ -2351,13 +2425,60 @@ pub mod commands {
         Ok(result)
     }
 
+    /// Returns true if a product name/sku looks like a server-side auto-provisioned
+    /// placeholder (created when a transaction references an unknown product_id).
+    fn is_placeholder_product(sku: &str, name: &str) -> bool {
+        (sku.starts_with("OFFLINE-") || sku.starts_with("AUTO-"))
+            && (name.starts_with("OFFLINE-PROD-") || name.starts_with("Offline Item ("))
+    }
+
     /// Upsert a product from server data (INSERT ... ON CONFLICT DO UPDATE).
+    ///
+    /// If the incoming server record is an auto-provisioned placeholder
+    /// (sku starts with "OFFLINE-" or "AUTO-") and the local row already has
+    /// a real name, the local name/sku/brand/model/category/unit are preserved.
+    /// Only non-placeholder server data overwrites local data.
     #[tauri::command]
     pub fn upsert_product_from_server(product: Product) -> Result<Product, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
+        let incoming_is_placeholder = is_placeholder_product(&product.sku, &product.name);
+
+        if incoming_is_placeholder {
+            // Check whether the local row already has a real (non-placeholder) name.
+            let local_is_placeholder: bool = conn
+                .query_row(
+                    "SELECT sku, name FROM products WHERE id = ?1",
+                    params![product.id],
+                    |row| {
+                        let sku: String = row.get(0)?;
+                        let name: String = row.get(1)?;
+                        Ok(is_placeholder_product(&sku, &name))
+                    },
+                )
+                .unwrap_or(true); // If row doesn't exist yet, treat as placeholder (will insert)
+
+            if !local_is_placeholder {
+                // Local product has a real name — do not overwrite it with the placeholder.
+                // Only update is_active and updated_at (structural/status fields).
+                conn.execute(
+                    "UPDATE products SET is_active = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        if product.is_active { 1 } else { 0 },
+                        product.updated_at,
+                        product.id,
+                    ],
+                )
+                .map_err(|e| format!("Failed to update product status: {}", e))?;
+                return Ok(product);
+            }
+            // Both are placeholders — fall through to normal upsert so at least the
+            // row exists with an ID the FK constraints need.
+        }
+
+        // Normal full upsert: server data is real, or both are placeholders (insert path).
         conn.execute(
             "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
@@ -2510,6 +2631,7 @@ pub fn run() {
             commands::move_stock_bucket,
             commands::adjust_stock,
             commands::get_transfers,
+            commands::get_local_transactions,
             commands::create_transfer,
             commands::dispatch_transfer,
             commands::receive_transfer,

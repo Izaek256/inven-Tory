@@ -8,6 +8,7 @@ import {
   RotateCcw,
   ShieldAlert,
   ClipboardList,
+  BookOpen,
   Settings,
 } from 'lucide-react';
 
@@ -21,6 +22,7 @@ export type NavView =
   | 'transfer_stock'
   | 'damage_quarantine'
   | 'physical_count'
+  | 'day_books'
   | 'settings';
 
 interface SidebarProps {
@@ -38,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
     { id: 'transfer_stock', label: 'Transfers', icon: <ArrowLeftRight size={18} /> },
     { id: 'damage_quarantine', label: 'Damage & Quarantine', icon: <ShieldAlert size={18} /> },
     { id: 'physical_count', label: 'Physical Count', icon: <ClipboardList size={18} /> },
+    { id: 'day_books', label: 'Day Books', icon: <BookOpen size={18} /> },
     { id: 'transactions', label: 'Transactions', icon: <ArrowLeftRight size={18} /> },
     { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
   ];

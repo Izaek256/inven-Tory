@@ -38,6 +38,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './tauriStoreService';
+import { Product } from '../types/product';
 import {
   ClientSyncState,
   OutboxEventRow,
@@ -61,12 +62,12 @@ export interface SyncConfig {
    * skipped but pending transactions are NOT discarded (Section 21 offline rule).
    */
   accessToken?: string;
-  /** Number of outbox events per push batch (default: 100, SYNC-010) */
+  /** Maximum number of outbox events per push request (default: 100). */
   batchSize?: number;
-  /** Abort signal for cancelling in-flight fetch calls */
-  signal?: AbortSignal;
-  /** Force sync attempt: reset retry backoffs and clear trapped SENDING events */
+  /** Force sync even if last attempt was recent or if events are in retry backoff. */
   force?: boolean;
+  /** AbortSignal for cancellation. */
+  signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,11 +123,20 @@ async function _updateOutboxEventStatus(
   errorMsg?: string | null,
 ): Promise<void> {
   if (isTauriEnvironment()) {
-    await invoke<void>('update_outbox_event_status', {
-      event_id: eventId,
-      target_status: targetStatus,
-      error_msg: errorMsg ?? null,
-    });
+    try {
+      await invoke<void>('update_outbox_event_status', {
+        eventId,
+        event_id: eventId,
+        targetStatus,
+        target_status: targetStatus,
+        errorMsg: errorMsg ?? null,
+        error_msg: errorMsg ?? null,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[SyncService] Failed to invoke update_outbox_event_status:', err);
+      throw err;
+    }
   }
 }
 
@@ -136,11 +146,20 @@ async function _updateTransactionSyncStatus(
   serverAcceptedAt?: string | null,
 ): Promise<void> {
   if (isTauriEnvironment()) {
-    await invoke<void>('update_transaction_sync_status', {
-      transaction_id: transactionId,
-      sync_status: syncStatus,
-      server_accepted_at: serverAcceptedAt ?? null,
-    });
+    try {
+      await invoke<void>('update_transaction_sync_status', {
+        transactionId,
+        transaction_id: transactionId,
+        syncStatus,
+        sync_status: syncStatus,
+        serverAcceptedAt: serverAcceptedAt ?? null,
+        server_accepted_at: serverAcceptedAt ?? null,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[SyncService] Failed to invoke update_transaction_sync_status:', err);
+      throw err;
+    }
   }
 }
 
@@ -263,6 +282,28 @@ const MOVEMENT_PUSH_PRIORITY: Record<string, number> = {
   DAMAGE: 2,
 };
 
+/**
+ * Validation errors returned by the server's _validate_payload are
+ * permanent — retrying them will never succeed.  All other rejections
+ * (domain errors like "Insufficient stock", server internal errors, etc.)
+ * are potentially stale and should be retried with backoff.
+ */
+const PERMANENT_REJECTION_PREFIXES = [
+  'transaction_id is required',
+  'store_id is required',
+  'product_id is required',
+  'user_id must be a positive integer',
+  'device_id is required',
+  'movement_type is required',
+  'quantity_delta must be non-zero',
+  'movement_type must be one of',
+];
+
+function _isPermanentRejection(reason: string): boolean {
+  const normalized = (reason ?? '').toLowerCase();
+  return PERMANENT_REJECTION_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
 function _sortPushItems<T extends { item: TransactionPushItem }>(arr: T[]): T[] {
   return [...arr].sort((a, b) => {
     const pa = MOVEMENT_PUSH_PRIORITY[a.item.movement_type] ?? 3;
@@ -277,21 +318,26 @@ function _sortPushItems<T extends { item: TransactionPushItem }>(arr: T[]): T[] 
 
 /**
  * POST a batch of events to /api/v1/sync/push.
- * Returns the PushResponse, or throws on network/HTTP error.
+ * Returns the PushResponse, or throws on network/HTTP error
  */
 async function _httpPush(
   apiBaseUrl: string,
   accessToken: string,
   items: TransactionPushItem[],
+  products?: Product[],
   signal?: AbortSignal,
 ): Promise<PushResponse> {
+  const payload: { events: TransactionPushItem[]; products?: Product[] } = { events: items };
+  if (products && products.length > 0) {
+    payload.products = products;
+  }
   const response = await fetch(`${apiBaseUrl}/sync/push`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
-    body: JSON.stringify({ events: items }),
+    body: JSON.stringify(payload),
     signal,
   });
 
@@ -324,6 +370,8 @@ async function _httpPull(
 
   if (!response.ok) {
     const text = await response.text().catch(() => response.statusText);
+    // eslint-disable-next-line no-console
+    console.error('[SyncService] Pull HTTP error:', response.status, text);
     throw new Error(`Pull HTTP ${response.status}: ${text}`);
   }
 
@@ -331,21 +379,22 @@ async function _httpPull(
 }
 
 // ---------------------------------------------------------------------------
-// Public API — triggerSync
+// Main sync runner (SYNC-007)
 // ---------------------------------------------------------------------------
 
 /**
- * Run one full push/pull sync cycle.
+ * Trigger an end-to-end sync cycle (Push then Pull).
  *
  * Push loop:
- *   1. Fetch up to batchSize pending outbox events.
- *   2. Mark each as SENDING.
- *   3. POST the batch to /api/v1/sync/push.
- *   4. For each receipt:
- *      - accepted=true  → set outbox SYNCED, update transaction sync_status
- *      - accepted=false → set outbox PERMANENT_REJECTION (server validation error)
- *   5. On network/5xx error → set all batch items to RETRYABLE_ERROR with backoff.
- *   6. Repeat until no pending events remain.
+ *   - Fetches pending outbox rows from SQLite up to batchSize.
+ *   - Optimistically marks them as SENDING.
+ *   - Reorders batch so baseline/increases precede decreases.
+ *   - POSTs to /api/v1/sync/push.
+ *   - Inspects per-item receipts:
+ *       accepted=true  -> marks event SYNCED in SQLite.
+ *       accepted=false -> marks event PERMANENT_REJECTION.
+ *   - On network / 5xx error: marks rows RETRYABLE_ERROR with backoff.
+ *   - Repeats until outbox queue is drained or an error occurs.
  *
  * Pull loop (runs once after all push batches complete):
  *   - Fetch /api/v1/sync/pull and log the snapshot count (full upsert
@@ -418,7 +467,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     while (keepGoing) {
       const rows = await _getPendingOutboxEvents(batchSize, config.force);
 
-      if (rows.length === 0) {
+      if (!rows || rows.length === 0) {
         keepGoing = false;
         break;
       }
@@ -453,11 +502,24 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
       // ingest_batch ordering and keeps the two sides consistent.
       const sortedItemsWithRows = _sortPushItems(itemsWithRows);
 
+      let localProducts: Product[] = [];
+      if (isTauriEnvironment()) {
+        try {
+          const prods = await invoke<Product[]>('get_products');
+          if (Array.isArray(prods)) {
+            localProducts = prods;
+          }
+        } catch {
+          // Non-fatal
+        }
+      }
+
       try {
         const pushResp = await _httpPush(
           config.apiBaseUrl,
           resolvedToken,
           sortedItemsWithRows.map((x) => x.item),
+          localProducts,
           config.signal,
         );
 
@@ -480,15 +542,20 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
           if (receipt.accepted) {
             await Promise.all([
-              _updateOutboxEventStatus(row.event_id, 'SYNCED').catch(() => undefined),
+              _updateOutboxEventStatus(row.event_id, 'SYNCED').catch((e) => {
+                // eslint-disable-next-line no-console
+                console.error('[SyncService] Failed to mark outbox event SYNCED:', e);
+              }),
               _updateTransactionSyncStatus(
                 item.transaction_id,
                 'SYNCED',
                 receipt.received_at,
-              ).catch(() => undefined),
+              ).catch((e) => {
+                // eslint-disable-next-line no-console
+                console.error('[SyncService] Failed to mark transaction SYNCED:', e);
+              }),
             ]);
           } else {
-            // Server permanently rejected the event (validation failure)
             const rejectionReason = receipt.rejection_reason ?? 'Server rejected transaction';
             // eslint-disable-next-line no-console
             console.error(
@@ -497,15 +564,23 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
               'Reason:',
               rejectionReason,
             );
+
+            // Distinguish permanent validation failures from stale domain errors
+            // (e.g. Insufficient stock) so offline-accumulated transactions are
+            // retried once the underlying data changes.
+            const isPermanent = _isPermanentRejection(rejectionReason);
+            const targetStatus = isPermanent ? 'PERMANENT_REJECTION' : 'RETRYABLE_ERROR';
+
+            totalRejected++;
+
             await Promise.all([
-              _updateOutboxEventStatus(row.event_id, 'PERMANENT_REJECTION', rejectionReason).catch(
+              _updateOutboxEventStatus(row.event_id, targetStatus, rejectionReason).catch(
                 () => undefined,
               ),
-              _updateTransactionSyncStatus(item.transaction_id, 'PERMANENT_REJECTION').catch(
+              _updateTransactionSyncStatus(item.transaction_id, targetStatus).catch(
                 () => undefined,
               ),
             ]);
-            totalRejected++;
           }
         }
 
@@ -577,6 +652,12 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
     _mockLastOutcome = outcome;
     _mockLastError = lastErrorMsg;
+
+    // Notify UI components that a sync cycle has completed so they can
+    // immediately refresh their pending-count and last-sync displays.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('inventory-sync-complete'));
+    }
   } finally {
     _syncInProgress = false;
   }

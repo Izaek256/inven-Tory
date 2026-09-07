@@ -21,7 +21,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Header } from './components/Header';
-import { Sidebar, NavView } from './components/Sidebar';
+import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './views/DashboardView';
 import { ProductsView } from './views/ProductsView';
 import { TransactionsView } from './views/TransactionsView';
@@ -31,12 +31,14 @@ import { ReturnStockView } from './views/ReturnStockView';
 import { TransferStockView } from './views/TransferStockView';
 import { DamageQuarantineView } from './views/DamageQuarantineView';
 import { PhysicalCountAdjustmentView } from './views/PhysicalCountAdjustmentView';
+import { DayBooksView } from './views/DayBooksView';
 import { SettingsView } from './views/SettingsView';
 import { LoginView } from './views/LoginView';
 import { OfflineAuthBanner } from './components/OfflineAuthBanner';
 import { getStores } from './services/tauriStoreService';
 import { getSession, isAuthenticated, logout } from './services/tauriAuthService';
 import { startBackgroundSync, stopBackgroundSync, triggerSync } from './services/tauriSyncService';
+import { useAppState } from './hooks/useAppState';
 import { Store } from './types/store';
 import type { AuthSession } from './types/auth';
 import './index.css';
@@ -119,9 +121,9 @@ export function App(): React.ReactElement {
   const [session, setSession] = useState<AuthSession | null>(null);
   const [deviceId, setDeviceId] = useState<string>('');
 
-  const [currentView, setCurrentView] = useState<NavView>('dashboard');
+  const { currentView, setCurrentView, activeStoreId, setActiveStoreId } = useAppState();
+
   const [stores, setStores] = useState<Store[]>([]);
-  const [activeStoreId, setActiveStoreId] = useState<string | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [interactiveTimeMs, setInteractiveTimeMs] = useState<number | null>(null);
@@ -158,11 +160,12 @@ export function App(): React.ReactElement {
     try {
       const data = await getStores();
       setStores(data);
-      setActiveStoreId((prevActive) => {
-        if (data.length > 0 && !prevActive) {
+      setActiveStoreId((prev) => {
+        const validIds = data.map((s) => s.id);
+        if (data.length > 0 && (prev === null || !validIds.includes(prev))) {
           return data[0].id;
         }
-        return prevActive;
+        return prev ?? (data.length > 0 ? data[0].id : null);
       });
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -171,7 +174,7 @@ export function App(): React.ReactElement {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setActiveStoreId]);
 
   useEffect(() => {
     if (authState === 'authenticated' || authState === 'expired_offline') {
@@ -332,6 +335,8 @@ export function App(): React.ReactElement {
         return <DamageQuarantineView />;
       case 'physical_count':
         return <PhysicalCountAdjustmentView userRole={currentUserRole} />;
+      case 'day_books':
+        return <DayBooksView />;
       case 'transactions':
         return <TransactionsView />;
       case 'settings':

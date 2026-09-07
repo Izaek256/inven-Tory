@@ -1,6 +1,7 @@
 """SQLAlchemy ORM models for the central PostgreSQL database."""
 
 from app.models.audit_event import AuditEvent
+from app.models.day_book import DayBook, DayBookEntry
 from app.models.device import Device
 from app.models.inventory_transaction import InventoryTransaction
 from app.models.product import Product
@@ -12,6 +13,8 @@ from app.models.user import User
 
 __all__ = [
     "AuditEvent",
+    "DayBook",
+    "DayBookEntry",
     "Device",
     "InventoryTransaction",
     "Product",

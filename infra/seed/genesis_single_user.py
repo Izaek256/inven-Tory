@@ -226,9 +226,7 @@ async def _seed_postgres(
             session.add(user)
             await session.flush()
             user_id_int = user.id
-            logger.info(
-                "[PG] Created user   username=%s role=%s id=%s", username, role, user_id_int
-            )
+            logger.info("[PG] Created user   username=%s role=%s id=%s", username, role, user_id_int)
         else:
             existing_user.email = email
             existing_user.full_name = full_name
@@ -236,7 +234,7 @@ async def _seed_postgres(
             existing_user.role = role
             existing_user.assigned_store_id = store_id
             existing_user.is_active = True
-            existing_user.is_superuser = role == "GLOBAL_ADMIN"
+            existing_user.is_superuser = (role == "GLOBAL_ADMIN")
             existing_user.is_verified = True
             existing_user.updated_at = now
             user_id_int = existing_user.id
@@ -417,9 +415,7 @@ def _collect_interactive(args: argparse.Namespace) -> dict[str, Any]:
     password = args.password or _prompt_password()
 
     store_id = args.store_id or _prompt("Store ID", default="STORE-MAIN")
-    store_code = args.store_code or _prompt(
-        "Store code (short)", default=store_id.split("-")[-1][:8] or "MAIN"
-    )
+    store_code = args.store_code or _prompt("Store code (short)", default=store_id.split("-")[-1][:8] or "MAIN")
     store_name = args.store_name or _prompt("Store name", default="My Store")
     store_address = (
         args.store_address
@@ -473,15 +469,7 @@ def main() -> int:
     vals: dict[str, Any]
 
     # If all required values are on the CLI → skip interactivity
-    required = (
-        args.username,
-        args.email,
-        args.password,
-        args.role,
-        args.store_id,
-        args.store_code,
-        args.store_name,
-    )
+    required = (args.username, args.email, args.password, args.role, args.store_id, args.store_code, args.store_name)
     if all(v for v in required):
         vals = {
             "username": args.username.strip(),

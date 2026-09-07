@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Package, RotateCcw, X, Check, AlertCircle } from 'lucide-react';
+import { Package, RotateCcw, X, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
 import { searchProducts } from '../services/tauriProductService';
 import { returnStock, getStockBalanceForBucket } from '../services/tauriTransactionService';
@@ -23,6 +23,19 @@ export const ReturnStockView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
   const [bucketQuantity, setBucketQuantity] = useState<number | null>(null);
+  const [showEntryLog, setShowEntryLog] = useState<boolean>(true);
+  const [entryLog, setEntryLog] = useState<
+    Array<{
+      productName: string;
+      quantity: number;
+      movementType: string;
+      returnType: string;
+      stockBucket: string;
+      referenceNumber: string | null;
+      reason: string | null;
+      timestamp: string;
+    }>
+  >([]);
 
   // Auth: resolve user/device from the active session instead of hardcoded values.
   const [sessionUserId, setSessionUserId] = useState<string>('');
@@ -165,6 +178,21 @@ export const ReturnStockView: React.FC = () => {
       await returnStock(input);
       setSuccess(true);
 
+      // Add to entry log
+      setEntryLog((prev) => [
+        ...prev,
+        {
+          productName: selectedProduct.name,
+          quantity: input.quantity,
+          movementType: 'RETURN',
+          returnType: input.return_type,
+          stockBucket: input.stock_bucket,
+          referenceNumber: input.reference_number || null,
+          reason: input.reason || null,
+          timestamp: new Date().toLocaleString(),
+        },
+      ]);
+
       if (selectedProduct && selectedStoreId) {
         await loadBucketQuantity(selectedStoreId, selectedProduct, stockBucket);
       }
@@ -183,289 +211,401 @@ export const ReturnStockView: React.FC = () => {
     <div
       className="return-stock-view"
       data-testid="return-stock-view"
-      style={{ maxWidth: '640px' }}
+      style={{ display: 'flex', gap: '24px' }}
     >
-      <div className="view-header">
-        <div>
-          <h2 className="view-title">Customer &amp; Supplier Returns</h2>
-          <p className="view-subtitle">
-            Process stock returns affecting Available, Damaged, or Quarantine buckets (FR-MOV-003,
-            Section 13.3)
-          </p>
-        </div>
-      </div>
-
-      {success && (
-        <div
-          className="it-toast it-toast--success"
-          data-testid="success-banner"
-          style={{ marginBottom: '16px' }}
-        >
-          <Check size={16} aria-hidden="true" />
-          <span>Return transaction recorded successfully and stock balance updated.</span>
-        </div>
-      )}
-
-      {error && (
-        <div
-          className="it-toast it-toast--error"
-          data-testid="error-banner"
-          style={{ marginBottom: '16px' }}
-        >
-          <AlertCircle size={16} aria-hidden="true" />
-          <span>{error}</span>
-        </div>
-      )}
-
-      <form
-        onSubmit={handleSubmit}
-        className="return-form"
-        style={{
-          backgroundColor: 'var(--it-card)',
-          border: '1px solid var(--it-border)',
-          borderRadius: 'var(--it-r-lg)',
-          padding: '24px',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '20px',
-        }}
-      >
-        {/* Return Type Segmented Toggle */}
-        <div>
-          <label className="it-label" style={{ display: 'block', marginBottom: '8px' }}>
-            Return Direction
-          </label>
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <Button
-              type="button"
-              data-testid="return-type-customer"
-              variant={returnType === 'CUSTOMER' ? 'primary' : 'secondary'}
-              onClick={(): void => setReturnType('CUSTOMER')}
-              style={{ flex: 1 }}
-            >
-              Customer Return (Stock In)
-            </Button>
-            <Button
-              type="button"
-              data-testid="return-type-supplier"
-              variant={returnType === 'SUPPLIER' ? 'primary' : 'secondary'}
-              onClick={(): void => setReturnType('SUPPLIER')}
-              style={{ flex: 1 }}
-            >
-              Supplier Return (Stock Out)
-            </Button>
+      <div style={{ flex: 1, maxWidth: '640px' }}>
+        <div className="view-header">
+          <div>
+            <h2 className="view-title">Customer &amp; Supplier Returns</h2>
+            <p className="view-subtitle">
+              Process stock returns affecting Available, Damaged, or Quarantine buckets (FR-MOV-003,
+              Section 13.3)
+            </p>
           </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setShowEntryLog(!showEntryLog)}
+            data-testid="toggle-entry-log"
+          >
+            {showEntryLog ? <EyeOff size={16} /> : <Eye size={16} />}
+            <span>{showEntryLog ? 'Hide Log' : 'Show Log'}</span>
+          </Button>
         </div>
 
-        {/* Store Selection */}
-        <Select
-          id="store-select"
-          data-testid="store-select"
-          label="Store Location"
-          required
-          value={selectedStoreId}
-          onChange={(e): void => setSelectedStoreId(e.target.value)}
-          options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-        />
+        {success && (
+          <div
+            className="it-toast it-toast--success"
+            data-testid="success-banner"
+            style={{ marginBottom: '16px' }}
+          >
+            <Check size={16} aria-hidden="true" />
+            <span>Return transaction recorded successfully and stock balance updated.</span>
+          </div>
+        )}
 
-        {/* Product Search / Selection */}
-        <div style={{ position: 'relative' }}>
-          <label className="it-label" style={{ display: 'block', marginBottom: '4px' }}>
-            Product *
-          </label>
-          {selectedProduct ? (
-            <div
-              data-testid="selected-product-card"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                padding: '10px 14px',
-                border: '1px solid var(--it-green-border)',
-                borderRadius: 'var(--it-r-md)',
-                backgroundColor: 'var(--it-green-surface)',
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <Package size={20} color="var(--it-green)" />
-                <div>
-                  <strong
-                    style={{ display: 'block', color: 'var(--it-green-text)', fontSize: '13px' }}
-                  >
-                    {selectedProduct.name}
-                  </strong>
-                  <span
-                    style={{
-                      fontSize: '12px',
-                      color: 'var(--it-text-secondary)',
-                      fontFamily: 'var(--it-font-mono)',
-                    }}
-                  >
-                    SKU: {selectedProduct.sku}
-                  </span>
-                </div>
-              </div>
-              <Button
-                type="button"
-                data-testid="clear-product-button"
-                variant="ghost"
-                size="sm"
-                iconOnly
-                onClick={clearProduct}
-              >
-                <X size={18} />
-              </Button>
-            </div>
-          ) : (
+        {error && (
+          <div
+            className="it-toast it-toast--error"
+            data-testid="error-banner"
+            style={{ marginBottom: '16px' }}
+          >
+            <AlertCircle size={16} aria-hidden="true" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {stores.length === 0 ? (
+          <div
+            style={{
+              backgroundColor: 'var(--it-card)',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-lg)',
+              padding: '48px 24px',
+              textAlign: 'center',
+            }}
+          >
+            <Package
+              size={48}
+              style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}
+            />
+            <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
+            <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
+              Create a store location first to record stock movements.
+            </p>
+          </div>
+        ) : (
+          <form
+            onSubmit={handleSubmit}
+            className="return-form"
+            style={{
+              backgroundColor: 'var(--it-card)',
+              border: '1px solid var(--it-border)',
+              borderRadius: 'var(--it-r-lg)',
+              padding: '24px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+            }}
+          >
+            {/* Return Type Segmented Toggle */}
             <div>
-              <input
-                id="product-search"
-                data-testid="product-search"
-                type="text"
-                className="it-input"
-                placeholder="Type to search SKU or name..."
-                value={productQuery}
-                onChange={(e): void => setProductQuery(e.target.value)}
-              />
-              {searchResults.length > 0 && (
-                <ul
-                  data-testid="product-search-results"
+              <label className="it-label" style={{ display: 'block', marginBottom: '8px' }}>
+                Return Direction
+              </label>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <Button
+                  type="button"
+                  data-testid="return-type-customer"
+                  variant={returnType === 'CUSTOMER' ? 'primary' : 'secondary'}
+                  onClick={(): void => setReturnType('CUSTOMER')}
+                  style={{ flex: 1 }}
+                >
+                  Customer Return (Stock In)
+                </Button>
+                <Button
+                  type="button"
+                  data-testid="return-type-supplier"
+                  variant={returnType === 'SUPPLIER' ? 'primary' : 'secondary'}
+                  onClick={(): void => setReturnType('SUPPLIER')}
+                  style={{ flex: 1 }}
+                >
+                  Supplier Return (Stock Out)
+                </Button>
+              </div>
+            </div>
+
+            {/* Store Selection */}
+            <Select
+              id="store-select"
+              data-testid="store-select"
+              label="Store Location"
+              required
+              value={selectedStoreId}
+              onChange={(e): void => setSelectedStoreId(e.target.value)}
+              options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
+            />
+
+            {/* Product Search / Selection */}
+            <div style={{ position: 'relative' }}>
+              <label className="it-label" style={{ display: 'block', marginBottom: '4px' }}>
+                Product *
+              </label>
+              {selectedProduct ? (
+                <div
+                  data-testid="selected-product-card"
                   style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    right: 0,
-                    zIndex: 10,
-                    margin: '4px 0 0 0',
-                    padding: 0,
-                    listStyle: 'none',
-                    backgroundColor: 'var(--it-card)',
-                    border: '1px solid var(--it-border)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    padding: '10px 14px',
+                    border: '1px solid var(--it-green-border)',
                     borderRadius: 'var(--it-r-md)',
-                    boxShadow: 'var(--it-shadow-md)',
-                    maxHeight: '200px',
-                    overflowY: 'auto',
+                    backgroundColor: 'var(--it-green-surface)',
                   }}
                 >
-                  {searchResults.map((product) => (
-                    <li
-                      key={product.id}
-                      data-testid={`product-option-${product.id}`}
-                      onClick={(): void => handleProductSelect(product)}
-                      style={{
-                        padding: '10px 14px',
-                        cursor: 'pointer',
-                        borderBottom: '1px solid var(--it-border)',
-                      }}
-                      onMouseEnter={(e) =>
-                        (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
-                      }
-                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                    >
-                      <div
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <Package size={20} color="var(--it-green)" />
+                    <div>
+                      <strong
                         style={{
-                          fontWeight: 600,
+                          display: 'block',
+                          color: 'var(--it-green-text)',
                           fontSize: '13px',
-                          color: 'var(--it-text-primary)',
                         }}
                       >
-                        {product.name}
-                      </div>
-                      <div
+                        {selectedProduct.name}
+                      </strong>
+                      <span
                         style={{
                           fontSize: '12px',
                           color: 'var(--it-text-secondary)',
                           fontFamily: 'var(--it-font-mono)',
                         }}
                       >
-                        SKU: {product.sku} | Category: {product.category}
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                        SKU: {selectedProduct.sku}
+                      </span>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    data-testid="clear-product-button"
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    onClick={clearProduct}
+                  >
+                    <X size={18} />
+                  </Button>
+                </div>
+              ) : (
+                <div>
+                  <input
+                    id="product-search"
+                    data-testid="product-search"
+                    type="text"
+                    className="it-input"
+                    placeholder="Type to search SKU or name..."
+                    value={productQuery}
+                    onChange={(e): void => setProductQuery(e.target.value)}
+                  />
+                  {searchResults.length > 0 && (
+                    <ul
+                      data-testid="product-search-results"
+                      style={{
+                        position: 'absolute',
+                        top: '100%',
+                        left: 0,
+                        right: 0,
+                        zIndex: 10,
+                        margin: '4px 0 0 0',
+                        padding: 0,
+                        listStyle: 'none',
+                        backgroundColor: 'var(--it-card)',
+                        border: '1px solid var(--it-border)',
+                        borderRadius: 'var(--it-r-md)',
+                        boxShadow: 'var(--it-shadow-md)',
+                        maxHeight: '200px',
+                        overflowY: 'auto',
+                      }}
+                    >
+                      {searchResults.map((product) => (
+                        <li
+                          key={product.id}
+                          data-testid={`product-option-${product.id}`}
+                          onClick={(): void => handleProductSelect(product)}
+                          style={{
+                            padding: '10px 14px',
+                            cursor: 'pointer',
+                            borderBottom: '1px solid var(--it-border)',
+                          }}
+                          onMouseEnter={(e) =>
+                            (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
+                          }
+                          onMouseLeave={(e) =>
+                            (e.currentTarget.style.backgroundColor = 'transparent')
+                          }
+                        >
+                          <div
+                            style={{
+                              fontWeight: 600,
+                              fontSize: '13px',
+                              color: 'var(--it-text-primary)',
+                            }}
+                          >
+                            {product.name}
+                          </div>
+                          <div
+                            style={{
+                              fontSize: '12px',
+                              color: 'var(--it-text-secondary)',
+                              fontFamily: 'var(--it-font-mono)',
+                            }}
+                          >
+                            SKU: {product.sku} | Category: {product.category}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               )}
+            </div>
+
+            {/* Condition / Stock Bucket Selection */}
+            <Select
+              id="bucket-select"
+              data-testid="bucket-select"
+              label="Stock Condition / Bucket"
+              required
+              value={stockBucket}
+              onChange={(e): void => setStockBucket(e.target.value as StockBucket)}
+              options={[
+                { value: 'AVAILABLE', label: 'AVAILABLE — Saleable / Good Condition' },
+                { value: 'DAMAGED', label: 'DAMAGED — Damaged / Defective Stock' },
+                { value: 'QUARANTINE', label: 'QUARANTINE — Under Inspection / Quarantine' },
+              ]}
+            />
+
+            {/* Bucket Stock Balance Info */}
+            {selectedProduct && bucketQuantity !== null && (
+              <div
+                data-testid="bucket-balance-info"
+                style={{
+                  padding: '10px 14px',
+                  backgroundColor: 'var(--it-surface)',
+                  border: '1px solid var(--it-border)',
+                  borderRadius: 'var(--it-r-md)',
+                  fontSize: '13px',
+                  color: 'var(--it-text-primary)',
+                }}
+              >
+                Current stock in <strong>{stockBucket}</strong> bucket:{' '}
+                <strong style={{ fontFamily: 'var(--it-font-mono)' }}>{bucketQuantity}</strong>{' '}
+                units
+              </div>
+            )}
+
+            {/* Quantity Input */}
+            <NumericInput
+              id="quantity-input"
+              data-testid="quantity-input"
+              label="Quantity"
+              required
+              value={quantity}
+              min={1}
+              onChange={(v) => setQuantity(Math.max(1, v))}
+            />
+
+            {/* Original Reference Number Input */}
+            <TextInput
+              id="reference-input"
+              data-testid="reference-input"
+              label="Original Transaction Reference (Optional)"
+              placeholder="e.g. TX-SALE-100234 or INV-9941"
+              value={referenceNumber}
+              onChange={(e): void => setReferenceNumber(e.target.value)}
+              hint="Links return to original sale receipt or purchase order"
+            />
+
+            {/* Reason / Notes Input */}
+            <TextInput
+              id="reason-input"
+              data-testid="reason-input"
+              label="Reason / Notes (Optional)"
+              placeholder="e.g. Defective screen upon opening box"
+              value={reason}
+              onChange={(e): void => setReason(e.target.value)}
+            />
+
+            {/* Submit Button */}
+            <Button
+              type="submit"
+              variant="primary"
+              loading={isSubmitting}
+              disabled={!selectedProduct}
+              data-testid="submit-return-button"
+              style={{ width: '100%' }}
+            >
+              <RotateCcw size={18} />
+              <span>{isSubmitting ? 'Processing Return...' : 'Process Return'}</span>
+            </Button>
+          </form>
+        )}
+      </div>
+
+      {/* Entry Log Side Panel */}
+      {showEntryLog && (
+        <div
+          style={{
+            width: '400px',
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            borderRadius: 'var(--it-r-lg)',
+            padding: '20px',
+            maxHeight: 'calc(100vh - 120px)',
+            overflowY: 'auto',
+          }}
+          data-testid="entry-log-panel"
+        >
+          <h3 style={{ marginBottom: '16px', fontSize: '16px', fontWeight: 600 }}>Entry Log</h3>
+          {entryLog.length === 0 ? (
+            <div
+              style={{
+                color: 'var(--it-text-secondary)',
+                fontSize: '13px',
+                textAlign: 'center',
+                padding: '40px 0',
+              }}
+            >
+              No entries yet
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {entryLog.map((entry, index) => (
+                <div
+                  key={index}
+                  style={{
+                    padding: '12px',
+                    backgroundColor: 'var(--it-surface)',
+                    border: '1px solid var(--it-border)',
+                    borderRadius: 'var(--it-r-md)',
+                    fontSize: '13px',
+                  }}
+                >
+                  <div
+                    style={{
+                      fontWeight: 600,
+                      marginBottom: '4px',
+                      color: 'var(--it-text-primary)',
+                    }}
+                  >
+                    {entry.productName}
+                  </div>
+                  <div style={{ color: 'var(--it-text-secondary)', lineHeight: '1.5' }}>
+                    <div>
+                      <strong>Qty:</strong> +{entry.quantity} ({entry.movementType} -{' '}
+                      {entry.returnType})
+                    </div>
+                    <div>
+                      <strong>Bucket:</strong> {entry.stockBucket}
+                    </div>
+                    <div>
+                      <strong>Ref:</strong> {entry.referenceNumber || '—'}
+                    </div>
+                    <div>
+                      <strong>Reason:</strong> {entry.reason || '—'}
+                    </div>
+                    <div>
+                      <strong>Time:</strong> {entry.timestamp}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
-
-        {/* Condition / Stock Bucket Selection */}
-        <Select
-          id="bucket-select"
-          data-testid="bucket-select"
-          label="Stock Condition / Bucket"
-          required
-          value={stockBucket}
-          onChange={(e): void => setStockBucket(e.target.value as StockBucket)}
-          options={[
-            { value: 'AVAILABLE', label: 'AVAILABLE — Saleable / Good Condition' },
-            { value: 'DAMAGED', label: 'DAMAGED — Damaged / Defective Stock' },
-            { value: 'QUARANTINE', label: 'QUARANTINE — Under Inspection / Quarantine' },
-          ]}
-        />
-
-        {/* Bucket Stock Balance Info */}
-        {selectedProduct && bucketQuantity !== null && (
-          <div
-            data-testid="bucket-balance-info"
-            style={{
-              padding: '10px 14px',
-              backgroundColor: 'var(--it-surface)',
-              border: '1px solid var(--it-border)',
-              borderRadius: 'var(--it-r-md)',
-              fontSize: '13px',
-              color: 'var(--it-text-primary)',
-            }}
-          >
-            Current stock in <strong>{stockBucket}</strong> bucket:{' '}
-            <strong style={{ fontFamily: 'var(--it-font-mono)' }}>{bucketQuantity}</strong> units
-          </div>
-        )}
-
-        {/* Quantity Input */}
-        <NumericInput
-          id="quantity-input"
-          data-testid="quantity-input"
-          label="Quantity"
-          required
-          value={quantity}
-          min={1}
-          onChange={(v) => setQuantity(Math.max(1, v))}
-        />
-
-        {/* Original Reference Number Input */}
-        <TextInput
-          id="reference-input"
-          data-testid="reference-input"
-          label="Original Transaction Reference (Optional)"
-          placeholder="e.g. TX-SALE-100234 or INV-9941"
-          value={referenceNumber}
-          onChange={(e): void => setReferenceNumber(e.target.value)}
-          hint="Links return to original sale receipt or purchase order"
-        />
-
-        {/* Reason / Notes Input */}
-        <TextInput
-          id="reason-input"
-          data-testid="reason-input"
-          label="Reason / Notes (Optional)"
-          placeholder="e.g. Defective screen upon opening box"
-          value={reason}
-          onChange={(e): void => setReason(e.target.value)}
-        />
-
-        {/* Submit Button */}
-        <Button
-          type="submit"
-          variant="primary"
-          loading={isSubmitting}
-          disabled={!selectedProduct}
-          data-testid="submit-return-button"
-          style={{ width: '100%' }}
-        >
-          <RotateCcw size={18} />
-          <span>{isSubmitting ? 'Processing Return...' : 'Process Return'}</span>
-        </Button>
-      </form>
+      )}
     </div>
   );
 };

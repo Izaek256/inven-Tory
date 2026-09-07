@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import (
 from app.db import Base, get_db
 from app.main import app
 from app.models.audit_event import AuditEvent  # noqa: F401 — registers with Base.metadata
+from app.models.day_book import DayBook, DayBookEntry  # noqa: F401
 from app.models.device import Device
 from app.models.inventory_transaction import InventoryTransaction  # noqa: F401
 from app.models.product import Product  # noqa: F401
@@ -87,7 +88,17 @@ def client(engine: AsyncEngine, db_session: AsyncSession) -> Generator[TestClien
     async def _override_get_db() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
 
+    # Build a session factory that uses the same in-memory SQLite engine so
+    # ingest_batch's per-item independent sessions can see committed test data.
+    test_factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+
+    def _override_get_ingest_session_factory() -> async_sessionmaker[AsyncSession]:
+        return test_factory
+
+    from app.api.v1.sync import get_ingest_session_factory
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_ingest_session_factory] = _override_get_ingest_session_factory
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

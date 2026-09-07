@@ -27,9 +27,13 @@ export const Header: React.FC<HeaderProps> = ({
   );
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncStatus, setSyncStatus] = useState<string>('');
 
   const triggerManualSync = async (): Promise<void> => {
     try {
+      setIsSyncing(true);
+      setSyncStatus('SYNCHING...');
       const envBaseUrl =
         typeof import.meta !== 'undefined'
           ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
@@ -40,8 +44,13 @@ export const Header: React.FC<HeaderProps> = ({
       setPendingSyncCount(count);
       const ts = await getLastSyncTimestamp();
       setLastSyncAt(ts);
+      setSyncStatus('SYNCHED');
+      setTimeout(() => setSyncStatus(''), 3000);
     } catch {
-      // Ignore manual sync errors
+      setSyncStatus('SYNC FAILED');
+      setTimeout(() => setSyncStatus(''), 3000);
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -68,7 +77,7 @@ export const Header: React.FC<HeaderProps> = ({
     };
 
     fetchPendingCount();
-    const interval = setInterval(fetchPendingCount, 10000);
+    const interval = setInterval(fetchPendingCount, 5000);
 
     // Fetch last sync timestamp on mount and every 5 s (SYNC-009)
     const fetchLastSync = async (): Promise<void> => {
@@ -84,12 +93,20 @@ export const Header: React.FC<HeaderProps> = ({
     fetchLastSync();
     const syncInterval = setInterval(fetchLastSync, 5000);
 
+    // Refresh pending count and last sync immediately after a sync cycle completes
+    const handleSyncComplete = (): void => {
+      void fetchPendingCount();
+      void fetchLastSync();
+    };
+    window.addEventListener('inventory-sync-complete', handleSyncComplete);
+
     return (): void => {
       isMounted = false;
       clearInterval(interval);
       clearInterval(syncInterval);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('inventory-sync-complete', handleSyncComplete);
     };
   }, []);
 
@@ -113,15 +130,29 @@ export const Header: React.FC<HeaderProps> = ({
           />
         </div>
 
-        {/* Pending Sync Count Badge */}
+        {/* Pending Sync Count Badge — clickable to trigger manual sync */}
         <div
           className="pending-sync-badge"
-          title={`Pending sync outbox events: ${pendingSyncCount}. Click to trigger manual sync.`}
+          title={
+            isSyncing
+              ? 'Sync in progress...'
+              : pendingSyncCount > 0
+                ? `Pending sync outbox events: ${pendingSyncCount}. Click to trigger manual sync.`
+                : 'All events synced. Click to force a sync.'
+          }
           data-testid="pending-sync-badge"
           onClick={triggerManualSync}
           style={{ cursor: 'pointer' }}
         >
-          <Badge status="PENDING" label={`Pending Sync: ${pendingSyncCount}`} />
+          {isSyncing ? (
+            <Badge status="PENDING" label={syncStatus || 'SYNCHING...'} />
+          ) : syncStatus ? (
+            <Badge status={syncStatus === 'SYNCHED' ? 'ACTIVE' : 'INACTIVE'} label={syncStatus} />
+          ) : pendingSyncCount > 0 ? (
+            <Badge status="PENDING" label={`Pending Sync: ${pendingSyncCount}`} />
+          ) : (
+            <Badge status="ACTIVE" label="SYNCHED" />
+          )}
           <span style={{ display: 'none' }} data-testid="pending-sync-count">
             {pendingSyncCount}
           </span>

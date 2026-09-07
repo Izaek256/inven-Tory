@@ -1,28 +1,26 @@
 /**
- * Web dashboard root — Issue 16.
+ * Web dashboard root — unified single-page interface.
  *
- * Layout mirrors the desktop app exactly:
+ * Layout mirrors the desktop app:
  *   - 48px header with brand, online/offline badge, theme toggle
- *   - 200px left sidebar with nav items (same active-state styling)
+ *   - 200px left sidebar with nav items
  *   - Scrollable main content area
  *
- * Views:
- *   search  — Global product search + inventory + history (FR-SRCH-001–005)
- *   stores  — Store inventory list with freshness badges (Section 14.1)
+ * Primary view: UnifiedDashboard combining recent activity + product catalog search.
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { Badge, ThemeToggle } from '@inven-tory/ui';
-import { LayoutDashboard, Package, Users, Warehouse } from 'lucide-react';
+import { LayoutDashboard, Users, Warehouse } from 'lucide-react';
 import { clearToken, getToken } from './services/apiClient';
 import { LoginView } from './views/LoginView';
-import { SearchView } from './views/SearchView';
+import { UnifiedDashboard } from './views/UnifiedDashboard';
 import { StoreView } from './views/StoreView';
 import { UsersView } from './views/UsersView';
-import { getStoreInventory, listStores } from './services/dashboardService';
+import { listStores } from './services/dashboardService';
 import './index.css';
 
-type NavView = 'dashboard' | 'search' | 'stores' | 'users';
+type NavView = 'dashboard' | 'stores' | 'users';
 
 interface NavItem {
   id: NavView;
@@ -32,112 +30,9 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
-  { id: 'search', label: 'Product Search', icon: <Package size={18} /> },
   { id: 'stores', label: 'Store Inventory', icon: <Warehouse size={18} /> },
   { id: 'users', label: 'Users', icon: <Users size={18} /> },
 ];
-
-// ---------------------------------------------------------------------------
-// Dashboard overview (landing page — summary of stores)
-// ---------------------------------------------------------------------------
-
-interface DashboardOverviewProps {
-  storeIds: string[];
-  onNavigate: (view: NavView) => void;
-}
-
-function DashboardOverview({ storeIds, onNavigate }: DashboardOverviewProps): React.ReactElement {
-  const [storeCount, setStoreCount] = useState(storeIds.length);
-  const [staleCount, setStaleCount] = useState(0);
-
-  useEffect(() => {
-    setStoreCount(storeIds.length);
-    if (storeIds.length === 0) return;
-
-    let cancelled = false;
-    let stale = 0;
-    let settled = 0;
-
-    storeIds.forEach((id) => {
-      getStoreInventory(id)
-        .then((data) => {
-          if (!cancelled && (data.freshness === 'STALE' || data.freshness === 'VERY_STALE')) {
-            stale++;
-          }
-        })
-        .catch(() => {
-          // ignore
-        })
-        .finally(() => {
-          settled++;
-          if (!cancelled && settled === storeIds.length) {
-            setStaleCount(stale);
-          }
-        });
-    });
-
-    return (): void => {
-      cancelled = true;
-    };
-  }, [storeIds]);
-
-  return (
-    <div className="web-view" data-testid="dashboard-overview">
-      <div className="web-view-header">
-        <div>
-          <h2 className="web-view-title">
-            <LayoutDashboard size={18} aria-hidden="true" /> Remote Dashboard
-          </h2>
-          <p className="web-view-subtitle">INVENTORY Tory — global visibility across all stores</p>
-        </div>
-      </div>
-
-      <div className="web-stat-row" style={{ marginBottom: '24px' }}>
-        <div className="it-card it-stat-card">
-          <div className="it-stat-card__label">Registered Stores</div>
-          <div className="it-stat-card__value">{storeCount}</div>
-        </div>
-        <div className="it-card it-stat-card">
-          <div className="it-stat-card__label">Stale / Very Stale</div>
-          <div
-            className={`it-stat-card__value ${staleCount > 0 ? 'it-stat-card__value--red' : 'it-stat-card__value--green'}`}
-          >
-            {staleCount}
-          </div>
-        </div>
-      </div>
-
-      <div className="web-quick-nav">
-        <button
-          className="web-quick-nav-card"
-          onClick={() => onNavigate('search')}
-          data-testid="nav-to-search"
-        >
-          <Package size={28} color="var(--it-green)" aria-hidden="true" />
-          <span className="web-quick-nav-card__title">Global Search</span>
-          <span className="web-quick-nav-card__desc">
-            Search products by name, SKU, barcode or brand across all stores.
-          </span>
-        </button>
-        <button
-          className="web-quick-nav-card"
-          onClick={() => onNavigate('stores')}
-          data-testid="nav-to-stores"
-        >
-          <Warehouse size={28} color="var(--it-accent)" aria-hidden="true" />
-          <span className="web-quick-nav-card__title">Store Inventory</span>
-          <span className="web-quick-nav-card__desc">
-            View per-store stock totals, freshness badges, and last-sync timestamps.
-          </span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Root App
-// ---------------------------------------------------------------------------
 
 interface MeData {
   id: number;
@@ -168,26 +63,11 @@ function App(): React.ReactElement {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (resp.ok) {
-        const data = (await resp.json()) as MeData;
-        setMe(data);
+        setMe(await resp.json());
       }
     } catch {
-      /* ignore; me stays null -> views degrade gracefully */
+      // non-fatal
     }
-  }, []);
-
-  const handleLoginSuccess = useCallback(
-    (_role: string): void => {
-      setIsAuthenticated(true);
-      void fetchMe();
-    },
-    [fetchMe],
-  );
-
-  const handleLogout = useCallback((): void => {
-    clearToken();
-    setMe(null);
-    setIsAuthenticated(false);
   }, []);
 
   const fetchStores = useCallback(async (): Promise<void> => {
@@ -215,13 +95,11 @@ function App(): React.ReactElement {
   }, [isAuthenticated, me, fetchMe, fetchStores]);
 
   if (!isAuthenticated) {
-    return <LoginView onLoginSuccess={handleLoginSuccess} />;
+    return <LoginView onLoginSuccess={() => setIsAuthenticated(true)} />;
   }
 
   const renderView = (): React.ReactElement => {
     switch (currentView) {
-      case 'search':
-        return <SearchView />;
       case 'stores':
         return (
           <StoreView storeIds={storeIds} loading={storeListLoading} onRefresh={handleRefresh} />
@@ -229,12 +107,18 @@ function App(): React.ReactElement {
       case 'users':
         return <UsersView currentUserRole={me?.role} />;
       default:
-        return <DashboardOverview storeIds={storeIds} onNavigate={setCurrentView} />;
+        return (
+          <UnifiedDashboard
+            onNavigateToStores={() => setCurrentView('stores')}
+            onNavigateToUsers={() => setCurrentView('users')}
+          />
+        );
     }
   };
+
   return (
     <div className="app-container" data-testid="web-app-container">
-      {/* ── Header ── */}
+      {/* Header */}
       <header className="app-header" data-testid="web-header">
         <div className="header-brand">
           <div className="brand-icon">IT</div>
@@ -250,7 +134,11 @@ function App(): React.ReactElement {
           </div>
           <button
             className="web-logout-btn"
-            onClick={handleLogout}
+            onClick={() => {
+              clearToken();
+              setMe(null);
+              setIsAuthenticated(false);
+            }}
             data-testid="logout-btn"
             title="Sign out"
           >
@@ -259,7 +147,7 @@ function App(): React.ReactElement {
         </div>
       </header>
 
-      {/* ── Body ── */}
+      {/* Body */}
       <div className="app-body">
         {/* Sidebar */}
         <aside className="app-sidebar" data-testid="web-sidebar">

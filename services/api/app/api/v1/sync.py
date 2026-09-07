@@ -32,14 +32,15 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, Self
 
 from fastapi import APIRouter, Depends, status
-from pydantic import BaseModel, BeforeValidator, Field
+from pydantic import BaseModel, BeforeValidator, Field, model_validator
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.deps import get_current_user, get_db
+from app.db import get_session_factory as _get_session_factory
 from app.models.product import Product
 from app.models.stock_balance import StockBalance
 from app.models.store import Store
@@ -50,6 +51,17 @@ from app.services.ingestion import TransactionPayload, ingest_batch
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sync", tags=["sync"])
+
+
+def get_ingest_session_factory() -> async_sessionmaker[AsyncSession]:
+    """
+    FastAPI dependency — returns the session factory used by ingest_batch.
+
+    Tests override this via app.dependency_overrides so ingest_batch uses the
+    same in-memory SQLite engine as the rest of the test fixtures, rather than
+    the production PostgreSQL engine.
+    """
+    return _get_session_factory()
 
 
 def _coerce_int(v: Any) -> int:
@@ -72,7 +84,7 @@ def _coerce_int(v: Any) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Push schemas
+# Push & Snapshot schemas
 # ---------------------------------------------------------------------------
 
 
@@ -95,6 +107,28 @@ class TransactionPushItem(BaseModel):
     batch_id: str | None = None
     client_sequence: int | None = None
     original_transaction_id: str | None = None
+    product_name: str | None = None
+    product_sku: str | None = None
+    product_category: str | None = None
+    product_unit: str | None = None
+
+
+class ProductSnapshot(BaseModel):
+    """Minimal product fields the device needs for its local catalogue."""
+
+    id: str
+    sku: str
+    name: str
+    brand: str | None = None
+    model: str | None = None
+    category: str = "General"
+    unit: str = "pcs"
+    barcode: str | None = None
+    alternate_names: str | None = None
+    serial_tracking_enabled: bool = False
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class TransactionReceiptItem(BaseModel):
@@ -110,7 +144,14 @@ class TransactionReceiptItem(BaseModel):
 class PushRequest(BaseModel):
     """Batch push payload."""
 
-    events: list[TransactionPushItem] = Field(..., min_length=1, max_length=500)
+    events: list[TransactionPushItem] = Field(default_factory=list, max_length=500)
+    products: list[ProductSnapshot] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def check_non_empty(self) -> Self:
+        if not self.events and not self.products:
+            raise ValueError("At least one event or product must be provided")
+        return self
 
 
 class PushResponse(BaseModel):
@@ -125,24 +166,6 @@ class PushResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Pull schemas
 # ---------------------------------------------------------------------------
-
-
-class ProductSnapshot(BaseModel):
-    """Minimal product fields the device needs for its local catalogue."""
-
-    id: str
-    sku: str
-    name: str
-    brand: str | None
-    model: str | None
-    category: str
-    unit: str
-    barcode: str | None
-    alternate_names: str | None
-    serial_tracking_enabled: bool
-    is_active: bool
-    created_at: datetime
-    updated_at: datetime
 
 
 class StoreSnapshot(BaseModel):
@@ -209,6 +232,9 @@ async def push_events(
     body: PushRequest,
     db: AsyncSession = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
+    session_factory: async_sessionmaker[AsyncSession] = Depends(  # noqa: B008
+        get_ingest_session_factory
+    ),
 ) -> PushResponse:
     """
     Idempotent batch push (SYNC-007, SYNC-010, AT-002, AT-003, AT-004).
@@ -224,13 +250,65 @@ async def push_events(
     Security: ingest payloads are assigned under the authenticated user.
     """
 
+    # Eagerly read current_user.id into a plain Python int before any DB
+    # operations that might rollback (and expire) the ORM object.
+    authenticated_user_id: int = int(current_user.id)
+
+    # Upsert any products pushed by the client to keep both DBs consistent
+    if body.products:
+        now_dt = datetime.now(UTC)
+        for p_snap in body.products:
+            prod = await db.scalar(select(Product).where(Product.id == p_snap.id).limit(1))
+            if prod is None:
+                sku_owner = await db.scalar(
+                    select(Product.id).where(Product.sku == p_snap.sku).limit(1)
+                )
+                final_sku = p_snap.sku
+                if sku_owner:
+                    final_sku = f"{p_snap.sku}-{p_snap.id[:8]}"
+
+                new_p = Product(
+                    id=p_snap.id,
+                    sku=final_sku,
+                    name=p_snap.name,
+                    brand=p_snap.brand,
+                    model=p_snap.model,
+                    category=p_snap.category or "General",
+                    unit=p_snap.unit or "pcs",
+                    barcode=p_snap.barcode,
+                    alternate_names=p_snap.alternate_names,
+                    serial_tracking_enabled=p_snap.serial_tracking_enabled,
+                    is_active=p_snap.is_active,
+                    created_at=p_snap.created_at or now_dt,
+                    updated_at=p_snap.updated_at or now_dt,
+                )
+                db.add(new_p)
+            else:
+                prod.name = p_snap.name
+                if not p_snap.sku.startswith("OFFLINE-"):
+                    sku_owner = await db.scalar(
+                        select(Product.id)
+                        .where(Product.sku == p_snap.sku, Product.id != p_snap.id)
+                        .limit(1)
+                    )
+                    if not sku_owner:
+                        prod.sku = p_snap.sku
+                prod.brand = p_snap.brand
+                prod.model = p_snap.model
+                prod.category = p_snap.category or prod.category
+                prod.unit = p_snap.unit or prod.unit
+                prod.barcode = p_snap.barcode
+                prod.alternate_names = p_snap.alternate_names
+                prod.serial_tracking_enabled = p_snap.serial_tracking_enabled
+                prod.is_active = p_snap.is_active
+                prod.updated_at = p_snap.updated_at or now_dt
+        await db.flush()
+        await db.commit()
+
     payloads: list[TransactionPayload] = []
 
     for item in body.events:
-        # Always use the authenticated user's integer ID — ignore any
-        # user_id carried in the payload (defence-in-depth).  current_user.id
-        # is already a PostgreSQL integer column.
-        effective_user_id: int = int(current_user.id)
+        effective_user_id: int = authenticated_user_id
 
         payloads.append(
             TransactionPayload(
@@ -253,7 +331,13 @@ async def push_events(
             )
         )
 
-    receipts: list[SyncReceipt] = await ingest_batch(payloads, db)
+    receipts: list[SyncReceipt] = []
+    if payloads:
+        receipts = await ingest_batch(
+            payloads,
+            db,
+            session_factory=session_factory,
+        )
     await db.commit()
 
     now = datetime.now(UTC)
@@ -261,12 +345,13 @@ async def push_events(
     rejected = len(receipts) - accepted
 
     logger.info(
-        "SYNC_PUSH device_id=%s events=%d accepted=%d rejected=%d user_id=%s",
+        "SYNC_PUSH device_id=%s events=%d products=%d accepted=%d rejected=%d user_id=%s",
         body.events[0].device_id if body.events else "unknown",
         len(body.events),
+        len(body.products),
         accepted,
         rejected,
-        current_user.id,
+        authenticated_user_id,
     )
 
     return PushResponse(
@@ -314,7 +399,17 @@ async def pull_data(
     so subsequent offline reads reflect the latest server state.
     """
     product_result = await db.execute(select(Product).order_by(Product.name))
-    products: list[Product] = list(product_result.scalars().all())
+    all_products: list[Product] = list(product_result.scalars().all())
+
+    # Exclude auto-provisioned placeholder products from the pull response so
+    # they never overwrite real product data on the desktop.  Placeholders are
+    # identified by their generated sku/name prefixes.
+    def _is_placeholder(p: Product) -> bool:
+        return (p.sku.startswith("OFFLINE-") or p.sku.startswith("AUTO-")) and (
+            p.name.startswith("OFFLINE-PROD-") or p.name.startswith("Offline Item (")
+        )
+
+    products: list[Product] = [p for p in all_products if not _is_placeholder(p)]
 
     store_result = await db.execute(
         select(Store).where(Store.is_active.is_(True)).order_by(Store.name)

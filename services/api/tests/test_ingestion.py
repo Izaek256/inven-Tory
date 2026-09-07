@@ -543,3 +543,28 @@ async def test_ingest_different_buckets_tracked_independently(
     by_bucket = {b.stock_bucket: b.quantity for b in balances}
     assert by_bucket.get("AVAILABLE") == 10
     assert by_bucket.get("DAMAGED") == 2
+
+
+async def test_ingest_unknown_product_auto_provisions_placeholder(
+    db_session: AsyncSession,
+) -> None:
+    """
+    When product_id does not exist in the DB, ingest_transaction must create
+    an OFFLINE- placeholder so the FK constraint is satisfied.
+    """
+    store, user, device, _ = await _seed_base(db_session)
+    unknown_id = _uid()
+
+    p = _payload(store.id, unknown_id, user.id, device.id, quantity_delta=5)
+    receipt = await ingest_transaction(p, db_session)
+
+    assert receipt.accepted is True
+
+    prod = await db_session.get(Product, unknown_id)
+    assert prod is not None
+    assert prod.sku == f"OFFLINE-{unknown_id[:80]}"
+    assert prod.name == f"OFFLINE-PROD-{unknown_id[:70]}"
+
+    tx = await db_session.get(InventoryTransaction, p.transaction_id)
+    assert tx is not None
+    assert tx.product_id == unknown_id

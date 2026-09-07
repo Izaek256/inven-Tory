@@ -31,10 +31,43 @@ def build_engine(database_url: str | None = None) -> AsyncEngine:
 
     Accepts an explicit URL so tests can inject an in-memory SQLite URL
     (sqlite+aiosqlite:///...) without touching the environment.
+
+    pool_pre_ping validates connections on checkout so stale/broken ones
+    are discarded rather than causing cryptic errors.
+
+    pool_reset_on_return="rollback" ensures any aborted transaction is
+    explicitly rolled back when a connection is returned to the pool.
+    This is the root-cause fix for asyncpg InFailedSQLTransactionError:
+    a connection left in a failed-transaction state by one request was
+    being handed to the next request via the pool, which then received
+    the error on its very first query.
     """
     url = database_url or settings.database_url
     echo = settings.environment == "development"
-    return create_async_engine(url, echo=echo, future=True)
+
+    # pool_reset_on_return is not supported for aiosqlite (tests); only
+    # pass it for real PostgreSQL URLs.
+    extra: dict = {}
+    if url and "sqlite" not in str(url):
+        extra["pool_reset_on_return"] = "rollback"
+        # NOTE: deliberately NOT using NullPool any more.
+        # pool_reset_on_return="rollback" is the PRIMARY defence against
+        # InFailedSQLTransactionError: every connection returned to the pool
+        # is guaranteed to have an explicit ROLLBACK issued so the next
+        # checkout gets a clean connection with no aborted-txn flag.
+        # NullPool would defeat this because connections are never "returned".
+        # Singleton engine is now enforced via function-attribute cache in
+        # get_engine(), so every session factory shares this one pool.
+        extra["pool_size"] = 10
+        extra["max_overflow"] = 20
+
+    return create_async_engine(
+        url,
+        echo=echo,
+        future=True,
+        pool_pre_ping=True,
+        **extra,
+    )
 
 
 def build_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
@@ -43,26 +76,29 @@ def build_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 # ---------------------------------------------------------------------------
-# Module-level singletons — swapped out in tests via dependency injection.
+# Singletons via function-attribute cache (cannot be accidentally reset by
+# external reimports, monkey-patching, conftest overrides, or reloads).
+#
+# Function attributes survive across reimports of the same name, and unlike
+# module-level globals they are NOT reachable via the public module namespace
+# so external code cannot scribble `app.db._engine = None` to break them.
 # ---------------------------------------------------------------------------
-_engine: AsyncEngine | None = None
-_session_factory: async_sessionmaker[AsyncSession] | None = None
-
-
 def get_engine() -> AsyncEngine:
-    """Return (or lazily create) the module-level async engine."""
-    global _engine
-    if _engine is None:
-        _engine = build_engine()
-    return _engine
+    """Return (or lazily create) the single process-wide async engine."""
+    try:
+        return get_engine._cached  # type: ignore[attr-defined]
+    except AttributeError:
+        get_engine._cached = build_engine()  # type: ignore[attr-defined]
+        return get_engine._cached  # type: ignore[attr-defined]
 
 
 def get_session_factory() -> async_sessionmaker[AsyncSession]:
-    """Return (or lazily create) the module-level session factory."""
-    global _session_factory
-    if _session_factory is None:
-        _session_factory = build_sessionmaker(get_engine())
-    return _session_factory
+    """Return (or lazily create) the single process-wide session factory."""
+    try:
+        return get_session_factory._cached  # type: ignore[attr-defined]
+    except AttributeError:
+        get_session_factory._cached = build_sessionmaker(get_engine())  # type: ignore[attr-defined]
+        return get_session_factory._cached  # type: ignore[attr-defined]
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

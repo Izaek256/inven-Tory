@@ -258,6 +258,12 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
       const tx = await adjustStock(input);
       setApprovedTransaction(tx);
+
+      // Refresh system quantity to show updated balance after adjustment
+      if (selectedProduct && selectedStoreId) {
+        await loadSystemQty(selectedStoreId, selectedProduct);
+      }
+
       setStep('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
