@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { Product } from '../types/product';
 import { searchProducts } from '../services/tauriProductService';
-import { Badge, Spinner } from '@inven-tory/ui';
+import { Badge, Spinner } from '@invenTory/ui';
 import { Search, Package, Check, Tag, Barcode } from 'lucide-react';
 
 interface ProductPickerProps {

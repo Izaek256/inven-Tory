@@ -7,7 +7,7 @@ import {
   toggleProductActive,
 } from '../services/tauriProductService';
 import { ProductModal } from '../components/ProductModal';
-import { Button, Badge, DataTable, EmptyState, SearchInput, ColumnDef } from '@inven-tory/ui';
+import { Button, Badge, DataTable, EmptyState, SearchInput, ColumnDef } from '@invenTory/ui';
 import { Package, Plus, Edit2, Power, AlertTriangle } from 'lucide-react';
 
 interface ProductsViewProps {

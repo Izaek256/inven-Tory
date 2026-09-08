@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Store } from '../types/store';
-import { Modal, TextInput, Button } from '@inven-tory/ui';
+import { Modal, TextInput, Button } from '@invenTory/ui';
 import { AlertCircle, CheckCircle2 } from 'lucide-react';
 
 interface DeviceRegistrationModalProps {

@@ -2,11 +2,10 @@
  * App-level tests — authentication gate and navigation.
  */
 
-import React from 'react';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ThemeProvider } from '@inven-tory/ui';
+import { ThemeProvider } from '@invenTory/ui';
 
 // Mock apiClient so no real tokens are needed
 vi.mock('../services/apiClient', () => ({

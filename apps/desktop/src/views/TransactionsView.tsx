@@ -4,7 +4,7 @@ import { getStores } from '../services/tauriStoreService';
 import { getAccessToken } from '../services/tauriAuthService';
 import { getLocalTransactions } from '../services/tauriTransactionService';
 import { Store } from '../types/store';
-import { Button, Badge, DataTable, EmptyState, Select, ColumnDef } from '@inven-tory/ui';
+import { Button, Badge, DataTable, EmptyState, Select, ColumnDef } from '@invenTory/ui';
 
 const TRANSACTIONS_CACHE_KEY = 'inven_tory_transactions_cache_v1';
 

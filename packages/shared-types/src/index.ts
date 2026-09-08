@@ -1,7 +1,7 @@
 /**
- * @inven-tory/shared-types
+ * @invenTory/shared-types
  *
- * Shared TypeScript type definitions for INVENTORY Tory v1.1.0.
+ * Shared TypeScript type definitions for invenTory v1.1.0.
  * Used by apps/desktop, apps/web, and apps/mobile.
  *
  * Types are added in later issues:

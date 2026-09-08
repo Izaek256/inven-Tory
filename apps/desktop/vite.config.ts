@@ -18,6 +18,9 @@ export default defineConfig({
       // Stub out Tauri-specific packages for web/dev builds
       // These only exist in the actual Tauri desktop app
       '@tauri-apps/plugin-store': path.resolve(__dirname, './src/__mocks__/tauri-plugin-store.ts'),
+      // Resolve workspace packages
+      '@invenTory/ui': path.resolve(__dirname, '../../packages/ui/src'),
+      '@invenTory/shared-types': path.resolve(__dirname, '../../packages/shared-types/src'),
     },
   },
   build: {

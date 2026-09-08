@@ -42,7 +42,7 @@ import {
   Select,
   ColumnDef,
   type BadgeStatus,
-} from '@inven-tory/ui';
+} from '@invenTory/ui';
 
 const DAYBOOKS_CACHE_PREFIX = 'inven_tory_daybooks_';
 const DAYBOOK_DETAIL_CACHE_PREFIX = 'inven_tory_daybook_detail_';
@@ -897,7 +897,7 @@ export const DayBooksView: React.FC = () => {
             />
           );
         }
-        return entry.reference_number || '—';
+        return <>{entry.reference_number || '—'}</>;
       },
       accessor: (entry) => entry.reference_number,
     },

@@ -21,7 +21,7 @@ import {
   Select,
   Spinner,
   TextInput,
-} from '@inven-tory/ui';
+} from '@invenTory/ui';
 import {
   createUser as apiCreateUser,
   deleteUser as apiDeleteUser,
@@ -152,7 +152,19 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
     }
   }, [confirmDelete]);
 
-  const columns: ColumnDef<UserRead>[] = useMemo(
+  type UserDisplayRow = {
+    id: number;
+    username: React.ReactNode;
+    full_name: React.ReactNode;
+    email: string;
+    role: React.ReactNode;
+    assigned_store_id: React.ReactNode;
+    is_active: React.ReactNode;
+    created_at: string;
+    actions: React.ReactNode | null;
+  };
+
+  const columns: ColumnDef<UserDisplayRow>[] = useMemo(
     () => [
       { key: 'id', header: 'ID', width: '60px' },
       { key: 'username', header: 'Username' },
@@ -167,7 +179,7 @@ export function UsersView({ currentUserRole }: UsersViewProps): React.ReactEleme
     [],
   );
 
-  const rows = useMemo(
+  const rows: UserDisplayRow[] = useMemo(
     () =>
       users.map((u) => ({
         id: u.id,

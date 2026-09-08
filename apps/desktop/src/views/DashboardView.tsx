@@ -8,7 +8,7 @@ import {
 } from '../services/tauriStoreService';
 import { StoreModal } from '../components/StoreModal';
 import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal';
-import { Button, Badge, StatCard, DataTable, EmptyState, ColumnDef } from '@inven-tory/ui';
+import { Button, Badge, StatCard, DataTable, EmptyState, ColumnDef } from '@invenTory/ui';
 import { Store as StoreIcon, Plus, Edit2, Power, Smartphone, AlertTriangle } from 'lucide-react';
 
 interface DashboardViewProps {

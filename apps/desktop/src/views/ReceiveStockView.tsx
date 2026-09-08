@@ -10,7 +10,7 @@ import {
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { CreateTransactionInput } from '../types/transaction';
-import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem, Button } from '@inven-tory/ui';
+import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem, Button } from '@invenTory/ui';
 
 // ─── Entry log ─────────────────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "inven-tory-api"
 version = "1.1.0"
-description = "INVENTORY Tory — FastAPI central API service"
+description = "invenTory — FastAPI central API service"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "See repository LICENSE" }

@@ -1,5 +1,5 @@
 """
-INVENTORY Tory API — application factory.
+invenTory API — application factory.
 
 Routers and middleware are registered here. Business logic
 lives in services; domain rules live in packages/domain.
@@ -73,7 +73,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="INVENTORY Tory API",
+    title="invenTory API",
     description=(
         "Offline-First, Multi-Store Inventory Management System — central API. "
         "All stock changes are recorded as immutable transaction events. "

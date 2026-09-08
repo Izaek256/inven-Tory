@@ -8,7 +8,7 @@
 
 import React, { useState } from 'react';
 import { LogIn, AlertCircle } from 'lucide-react';
-import { Button, TextInput } from '@inven-tory/ui';
+import { Button, TextInput } from '@invenTory/ui';
 
 interface LoginFormProps {
   onLoginSuccess: (session: {

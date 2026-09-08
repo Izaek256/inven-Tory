@@ -17,7 +17,7 @@ import {
   StatCard,
   SummaryCard,
   type ColumnDef,
-} from '@inven-tory/ui';
+} from '@invenTory/ui';
 import { ArrowLeft, Clock, Package, RefreshCw, Store, Warehouse } from 'lucide-react';
 import { getStoreInventory } from '../services/dashboardService';
 import type { FreshnessStatus, StoreInventoryResponse, StoreProductRow } from '../types/dashboard';

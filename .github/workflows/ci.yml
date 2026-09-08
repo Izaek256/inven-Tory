@@ -2,9 +2,11 @@ name: CI
 
 on:
   push:
-    branches: [ develop, main, 'feature/**' ]
+    branches:
+      - '**'
   pull_request:
     branches: [ develop, main ]
+  workflow_dispatch:
 
 jobs:
   lint-python:
@@ -48,10 +50,10 @@ jobs:
           pip install -e "services/api[dev]"
 
       - name: Run pytest
-        run: pytest
+        run: pytest packages/domain/tests packages/storage/tests services/api/tests -v --tb=short
 
   lint-typescript:
-    name: Lint TypeScript (ESLint + Prettier)
+    name: Lint + TypeCheck TypeScript (ESLint + Prettier + tsc)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -59,11 +61,14 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install Node dependencies
         run: npm ci
+
+      - name: Run TypeScript Type Check (tsc --noEmit)
+        run: npm run typecheck --workspaces --if-present
 
       - name: Run ESLint
         run: npm run lint --workspaces --if-present
@@ -80,7 +85,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install Node dependencies

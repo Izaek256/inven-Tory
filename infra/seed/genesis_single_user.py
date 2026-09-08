@@ -395,7 +395,7 @@ def _seed_sqlite(
 def _collect_interactive(args: argparse.Namespace) -> dict[str, Any]:
     print()
     print("=" * 64)
-    print("  INVENTORY Tory — SINGLE-USER GENESIS")
+    print("  invenTory — SINGLE-USER GENESIS")
     print("=" * 64)
     print("  Seeds YOUR credentials into:")
     print("    • PostgreSQL (central / web / API)")
@@ -484,7 +484,7 @@ def main() -> int:
         }
         print()
         print("=" * 64)
-        print("  INVENTORY Tory — SINGLE-USER GENESIS (non-interactive)")
+        print("  invenTory — SINGLE-USER GENESIS (non-interactive)")
         print("=" * 64)
     else:
         vals = _collect_interactive(args)
