@@ -568,3 +568,84 @@ async def test_ingest_unknown_product_auto_provisions_placeholder(
     tx = await db_session.get(InventoryTransaction, p.transaction_id)
     assert tx is not None
     assert tx.product_id == unknown_id
+
+
+# ---------------------------------------------------------------------------
+# UPDATE path — same transaction_id, different quantity_delta
+# ---------------------------------------------------------------------------
+
+
+async def test_ingest_update_existing_ledger_row_balances_delta(
+    db_session: AsyncSession,
+) -> None:
+    """
+    Re-ingesting an existing transaction_id with a different quantity_delta
+    must apply an in-place UPDATE to the ledger row and adjust the stock
+    balance by the delta difference (not insert a duplicate or no-op).
+    """
+    store, user, device, product = await _seed_base(db_session)
+    tid = _uid()
+
+    # First submission — delta of 5
+    p1 = _payload(
+        store.id,
+        product.id,
+        user.id,
+        device.id,
+        transaction_id=tid,
+        quantity_delta=5,
+    )
+    await ingest_transaction(p1, db_session)
+
+    balance = (
+        (
+            await db_session.execute(
+                select(StockBalance).where(
+                    StockBalance.store_id == store.id,
+                    StockBalance.product_id == product.id,
+                    StockBalance.stock_bucket == "AVAILABLE",
+                )
+            )
+        )
+        .scalars()
+        .first()
+    )
+    assert balance is not None
+    assert balance.quantity == 5
+
+    # Second submission — same transaction_id, delta changed from 5 to 8
+    p2 = _payload(
+        store.id,
+        product.id,
+        user.id,
+        device.id,
+        transaction_id=tid,
+        quantity_delta=8,
+    )
+    receipt2 = await ingest_transaction(p2, db_session)
+    assert receipt2.accepted is True
+
+    # Balance should reflect the UPDATE: 5 + (8 - 5) = 8
+    await db_session.refresh(balance)
+    assert balance.quantity == 8
+
+    # Exactly one ledger row with the updated delta
+    tx_rows = (
+        (
+            await db_session.execute(
+                select(InventoryTransaction).where(InventoryTransaction.transaction_id == tid)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(tx_rows) == 1
+    assert tx_rows[0].quantity_delta == 8
+
+    # Exactly one receipt
+    receipt_rows = (
+        (await db_session.execute(select(SyncReceipt).where(SyncReceipt.transaction_id == tid)))
+        .scalars()
+        .all()
+    )
+    assert len(receipt_rows) == 1

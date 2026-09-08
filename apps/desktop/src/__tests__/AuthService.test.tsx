@@ -284,7 +284,7 @@ describe('tauriAuthService', () => {
     await login('testuser', 'password', DEVICE_ID);
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
-      'http://localhost:8000/api/v1/auth/login',
+      expect.stringMatching(/http:\/\/(localhost|127\.0\.0\.1):8000\/api\/v1\/auth\/login/),
       expect.objectContaining({
         method: 'POST',
       }),

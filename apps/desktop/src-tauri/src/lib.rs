@@ -145,6 +145,14 @@ pub struct AdjustStockInput {
     pub device_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UpdateTransactionInput {
+    pub transaction_id: String,
+    pub quantity_delta: i32,
+    pub reference_number: Option<String>,
+    pub reason_code: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transfer {
     pub id: String,
@@ -643,6 +651,7 @@ pub mod commands {
 
         Ok(products)
     }
+
 
     #[tauri::command]
     pub fn create_product(input: NewProductInput) -> Result<Product, String> {
@@ -2174,6 +2183,287 @@ pub mod commands {
         })
     }
 
+    /// Update an existing inventory transaction (row-level edit from LinearGridEntry).
+    ///
+    /// Updates the quantity_delta and reference fields in inventory_transactions,
+    /// patches the stock_balances projection with the delta difference, and
+    /// resets the existing outbox event to PENDING so the next sync push
+    /// re-pushes the updated payload.  No new row is inserted.
+    ///
+    /// The server-side ingestion service handles the same transaction_id with
+    /// a different quantity_delta by applying an in-place UPDATE (see
+    /// ingestion.py _ingest_transaction_impl).
+    #[tauri::command]
+    pub fn update_transaction(input: UpdateTransactionInput) -> Result<InventoryTransaction, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let now = now_iso();
+
+        // Read the existing transaction to get context we won't let the UI override
+        let old: (i32, String, String, String, String, String, String, String) = conn
+            .query_row(
+                "SELECT quantity_delta, store_id, product_id, stock_bucket, \
+                 movement_type, user_id, device_id, sync_status \
+                 FROM inventory_transactions WHERE transaction_id = ?1",
+                params![input.transaction_id],
+                |row| {
+                    Ok((
+                        row.get::<_, i32>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, String>(5)?,
+                        row.get::<_, String>(6)?,
+                        row.get::<_, String>(7)?,
+                    ))
+                },
+            )
+            .map_err(|e| {
+                if matches!(e, rusqlite::Error::QueryReturnedNoRows) {
+                    format!("Transaction '{}' not found.", input.transaction_id)
+                } else {
+                    format!("Failed to query transaction: {}", e)
+                }
+            })?;
+
+        let (old_delta, store_id, product_id, stock_bucket, movement_type, user_id, device_id, _sync_status) = old;
+        let delta_diff = input.quantity_delta - old_delta;
+
+        // Update the transaction row (only mutable fields)
+        conn.execute(
+            "UPDATE inventory_transactions \
+             SET quantity_delta = ?1, reference_number = ?2, reason_code = ?3 \
+             WHERE transaction_id = ?4",
+            params![
+                input.quantity_delta,
+                input.reference_number,
+                input.reason_code,
+                input.transaction_id,
+            ],
+        )
+        .map_err(|e| format!("Failed to update transaction: {}", e))?;
+
+        // Patch stock_balances with the delta difference
+        if delta_diff != 0 {
+            conn.execute(
+                "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+                 ON CONFLICT(store_id, product_id, stock_bucket) \
+                 DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
+                params![
+                    format!("SB-{}-{}-{}", store_id, product_id, stock_bucket),
+                    store_id,
+                    product_id,
+                    stock_bucket,
+                    delta_diff,
+                    now,
+                ],
+            )
+            .map_err(|e| format!("Failed to update stock balance: {}", e))?;
+        }
+
+        // Reset the existing outbox event to PENDING and update its payload
+        // so the next sync push will re-push the updated payload.
+        let outbox_event_id = format!("EVT-{}", input.transaction_id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "transaction_id": input.transaction_id,
+            "store_id": store_id,
+            "product_id": product_id,
+            "movement_type": movement_type,
+            "stock_bucket": stock_bucket,
+            "quantity_delta": input.quantity_delta,
+            "occurred_at": now,
+            "user_id": user_id,
+            "device_id": device_id,
+            "reference_number": input.reference_number,
+            "reason_code": input.reason_code,
+        }))
+        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+
+        conn.execute(
+            "UPDATE outbox_events \
+             SET payload = ?1, status = 'PENDING', retry_count = 0, last_error = NULL \
+             WHERE event_id = ?2",
+            params![payload, outbox_event_id],
+        )
+        .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+
+        // Return the updated transaction
+        Ok(InventoryTransaction {
+            transaction_id: input.transaction_id.clone(),
+            store_id,
+            product_id,
+            movement_type,
+            stock_bucket,
+            quantity_delta: input.quantity_delta,
+            occurred_at: now.clone(),
+            recorded_at: now.clone(),
+            user_id,
+            device_id,
+            reference_number: input.reference_number,
+            reason_code: input.reason_code,
+            transfer_id: None,
+            purchase_order_id: None,
+            batch_id: None,
+            client_sequence: None,
+            sync_status: "PENDING".to_string(),
+            server_accepted_at: None,
+            original_transaction_id: None,
+        })
+    }
+
+    /// Delete an existing inventory transaction (row-level delete from LinearGridEntry).
+    ///
+    /// Reads the existing transaction, reverses the stock_balances delta, deletes
+    /// the inventory_transactions row, and handles the outbox event:
+    /// - If the transaction was NOT yet synced (PENDING): mark the outbox event
+    ///   as PERMANENT_REJECTION so it is never pushed.
+    /// - If the transaction was already SYNCED/ACCEPTED: insert a new tombstone
+    ///   outbox event with a compensating movement (opposite delta) so the
+    ///   server receives a reversal and zeroes the effect.
+    #[tauri::command]
+    pub fn delete_transaction(transaction_id: String) -> Result<(), String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let now = now_iso();
+
+        // Read the existing transaction
+        let tx = match conn.query_row(
+            "SELECT quantity_delta, store_id, product_id, stock_bucket, \
+             movement_type, sync_status, user_id, device_id \
+             FROM inventory_transactions WHERE transaction_id = ?1",
+            params![transaction_id],
+            |row| {
+                Ok((
+                    row.get::<_, i32>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                ))
+            },
+        ) {
+            Ok(val) => val,
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                // Transaction already removed from local SQLite — idempotent success
+                return Ok(());
+            }
+            Err(e) => return Err(format!("Failed to query transaction: {}", e)),
+        };
+
+        let (quantity_delta, store_id, product_id, stock_bucket, movement_type, sync_status, user_id, device_id) = tx;
+        let outbox_event_id = format!("EVT-{}", transaction_id);
+
+        // Reverse the stock_balances delta (add the negative of the original delta)
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(store_id, product_id, stock_bucket) \
+             DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
+            params![
+                format!("SB-{}-{}-{}", store_id, product_id, stock_bucket),
+                store_id,
+                product_id,
+                stock_bucket,
+                -quantity_delta,
+                now,
+            ],
+        )
+        .map_err(|e| format!("Failed to reverse stock balance: {}", e))?;
+
+        // Delete the transaction row
+        conn.execute(
+            "DELETE FROM inventory_transactions WHERE transaction_id = ?1",
+            params![transaction_id],
+        )
+        .map_err(|e| format!("Failed to delete transaction: {}", e))?;
+
+        // Handle the outbox event based on sync status
+        let is_synced = sync_status == "SYNCED" || sync_status == "ACCEPTED";
+        if is_synced {
+            // Transaction was already on the server — push a compensating reversal.
+            // movement_type: SALE delta < 0 → reverse with RECEIPT; RECEIPT delta > 0 → reverse with SALE.
+            let void_movement_type = if quantity_delta < 0 { "RECEIPT" } else { "SALE" };
+            let void_delta = -quantity_delta;
+            let void_event_id = format!("EVT-VOID-{}", transaction_id);
+            let payload = serde_json::to_string(&serde_json::json!({
+                "transaction_id": transaction_id,
+                "store_id": store_id,
+                "product_id": product_id,
+                "movement_type": void_movement_type,
+                "stock_bucket": stock_bucket,
+                "quantity_delta": void_delta,
+                "occurred_at": now,
+                "user_id": user_id,
+                "device_id": device_id,
+                "reference_number": null,
+                "reason_code": format!("Reversal of deleted transaction {} ({})", transaction_id, movement_type),
+            }))
+            .map_err(|e| format!("Failed to serialize void payload: {}", e))?;
+
+            conn.execute(
+                "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) \
+                 VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
+                params![generate_id("OB"), void_event_id, payload, now],
+            )
+            .map_err(|e| format!("Failed to create tombstone outbox event: {}", e))?;
+        } else {
+            // Transaction not yet synced — permanently reject so it is never pushed.
+            conn.execute(
+                "UPDATE outbox_events \
+                 SET status = 'PERMANENT_REJECTION', \
+                     last_error = 'Transaction deleted locally before sync' \
+                 WHERE event_id = ?1",
+                params![outbox_event_id],
+            )
+            .map_err(|e| format!("Failed to update outbox event status: {}", e))?;
+        }
+
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn save_pdf_file(filename: String, bytes: Vec<u8>) -> Result<String, String> {
+        use std::fs;
+        use std::path::PathBuf;
+
+        let base_dir = std::env::var("USERPROFILE")
+            .or_else(|_| std::env::var("HOME"))
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from("."));
+
+        let downloads_dir = base_dir.join("Downloads");
+        let target_dir = if downloads_dir.exists() {
+            downloads_dir
+        } else {
+            base_dir
+        };
+
+        let target_path = target_dir.join(&filename);
+
+        fs::write(&target_path, &bytes)
+            .map_err(|e| format!("Failed to write file to {}: {}", target_path.display(), e))?;
+
+        let path_str = target_path.to_string_lossy().to_string();
+
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("explorer.exe")
+                .args(["/select,", &path_str])
+                .spawn();
+        }
+
+        Ok(path_str)
+    }
+
     #[tauri::command]
     pub fn get_pending_outbox_count() -> Result<i32, String> {
         println!("[TAURI-SYNC] get_pending_outbox_count called");
@@ -2581,6 +2871,155 @@ pub mod commands {
         Ok(())
     }
 
+    /// Ensure the products_fts FTS5 virtual table and its sync triggers exist.
+    /// Lazily creates them on first search if the Python Alembic migration hasn't
+    /// run in this database yet (Tauri/desktop context).
+    fn ensure_products_fts(conn: &Connection) -> Result<(), String> {
+        // Check if the FTS5 table already exists
+        let exists: bool = conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='products_fts'",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .unwrap_or(0)
+            == 1;
+
+        if exists {
+            let fts_count: i64 = conn
+                .query_row("SELECT count(*) FROM products_fts", [], |r| r.get(0))
+                .unwrap_or(0);
+            let prod_count: i64 = conn
+                .query_row("SELECT count(*) FROM products", [], |r| r.get(0))
+                .unwrap_or(0);
+            if fts_count == 0 && prod_count > 0 {
+                let _ = conn.execute_batch("INSERT INTO products_fts(products_fts) VALUES ('rebuild');");
+            }
+            return Ok(());
+        }
+
+        conn.execute_batch(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+                sku,
+                name,
+                brand,
+                model,
+                category,
+                barcode,
+                alternate_names,
+                content='products',
+                content_rowid='rowid',
+                tokenize='porter unicode61'
+            );
+
+            CREATE TRIGGER IF NOT EXISTS products_ai AFTER INSERT ON products BEGIN
+                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS products_ad AFTER DELETE ON products BEGIN
+                DELETE FROM products_fts WHERE rowid = old.rowid;
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS products_au AFTER UPDATE ON products BEGIN
+                DELETE FROM products_fts WHERE rowid = old.rowid;
+                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
+            END;
+
+            INSERT INTO products_fts(products_fts) VALUES ('rebuild');",
+        )
+        .map_err(|e| format!("Failed to create products_fts table: {}", e))?;
+
+        Ok(())
+    }
+
+    #[tauri::command]
+    pub fn search_products_fts5(query: String) -> Result<Vec<Product>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
+
+        let term = query.trim();
+        if term.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Lazily create/verify the FTS5 table
+        let _ = ensure_products_fts(&conn);
+
+        // Build tokenized prefix query for FTS5 (e.g. "His"* "260"*)
+        let tokens: Vec<String> = term
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|s| !s.is_empty())
+            .map(|s| format!("\"{}\"*", s))
+            .collect();
+
+        if !tokens.is_empty() {
+            let fts_query = tokens.join(" ");
+            let fts_result = (|| -> Result<Vec<Product>, String> {
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
+                         p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                         COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
+                         FROM ( \
+                            SELECT rowid, bm25(products_fts) AS rank \
+                            FROM products_fts \
+                            WHERE products_fts MATCH ?1 \
+                            ORDER BY rank ASC \
+                            LIMIT 50 \
+                         ) fts \
+                         JOIN products p ON p.rowid = fts.rowid \
+                         LEFT JOIN stock_balances sb ON sb.product_id = p.id AND sb.stock_bucket = 'AVAILABLE' \
+                         GROUP BY p.id \
+                         ORDER BY fts.rank ASC"
+                    )
+                    .map_err(|e| format!("Failed to prepare FTS5 search query: {}", e))?;
+
+                let prod_iter = stmt
+                    .query_map(params![fts_query], |row| {
+                        let st_int: i32 = row.get(9)?;
+                        let active_int: i32 = row.get(10)?;
+                        let stock_qty: i32 = row.get(13)?;
+                        Ok(Product {
+                            id: row.get(0)?,
+                            sku: row.get(1)?,
+                            name: row.get(2)?,
+                            brand: row.get(3)?,
+                            model: row.get(4)?,
+                            category: row.get(5)?,
+                            unit: row.get(6)?,
+                            barcode: row.get(7)?,
+                            alternate_names: row.get(8)?,
+                            serial_tracking_enabled: st_int != 0,
+                            is_active: active_int != 0,
+                            created_at: row.get(11)?,
+                            updated_at: row.get(12)?,
+                            stock_quantity: Some(stock_qty),
+                        })
+                    })
+                    .map_err(|e| format!("Failed to execute FTS5 product search: {}", e))?;
+
+                let mut products = Vec::new();
+                for prod in prod_iter {
+                    let p = prod.map_err(|e| format!("Failed to read FTS5 product record: {}", e))?;
+                    products.push(p);
+                }
+                Ok(products)
+            })();
+
+            if let Ok(products) = fts_result {
+                if !products.is_empty() {
+                    return Ok(products);
+                }
+            }
+        }
+
+        // Fallback to substring LIKE query if FTS5 returned 0 results or encountered an issue
+        search_products(query)
+    }
+
     /// Persist the last-successful-sync timestamp (SYNC-009).
     #[tauri::command]
     pub fn set_last_sync_timestamp(timestamp: String) -> Result<(), String> {
@@ -2620,6 +3059,7 @@ pub fn run() {
             commands::register_device,
             commands::get_products,
             commands::search_products,
+            commands::search_products_fts5,
             commands::create_product,
             commands::update_product,
             commands::toggle_product_active,
@@ -2630,6 +3070,8 @@ pub fn run() {
             commands::return_stock,
             commands::move_stock_bucket,
             commands::adjust_stock,
+            commands::update_transaction,
+            commands::delete_transaction,
             commands::get_transfers,
             commands::get_local_transactions,
             commands::create_transfer,
@@ -2638,6 +3080,7 @@ pub fn run() {
             commands::cancel_transfer,
             commands::mark_transfer_exception,
             commands::get_pending_outbox_count,
+            commands::save_pdf_file,
             // Issue 15: sync commands
             commands::get_pending_outbox_events,
             commands::update_outbox_event_status,

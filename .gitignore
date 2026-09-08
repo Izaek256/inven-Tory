@@ -65,6 +65,8 @@ desktop.ini
 *.swo
 *~
 .kiro/
+.kilo/
+.ci_test_venv/
 # ─── Logs ──────────────────────────────────────────────────────────────────────
 logs/
 *.log
@@ -97,3 +99,4 @@ apps/desktop/.agents/skills/frontend-design/LICENSE.txt
 .agents/skills/frontend-design/SKILL.md
 .agents/skills/frontend-design/LICENSE.txt
 skills-lock.json
+nul

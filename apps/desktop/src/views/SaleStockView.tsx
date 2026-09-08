@@ -1,39 +1,81 @@
-import React, { useState, useEffect } from 'react';
-import { Package, ArrowUpCircle, X, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Package, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { getStores } from '../services/tauriStoreService';
-import { searchProducts } from '../services/tauriProductService';
-import { sellStock, getStockBalance } from '../services/tauriTransactionService';
+import { searchProductsFts5, getProducts } from '../services/tauriProductService';
+import {
+  sellStock,
+  updateTransaction,
+  deleteTransaction,
+} from '../services/tauriTransactionService';
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { CreateTransactionInput } from '../types/transaction';
-import { Button, TextInput, NumericInput, Select } from '@inven-tory/ui';
+import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem, Button } from '@inven-tory/ui';
+
+// ─── Entry log (session-level committed rows) ─────────────────────────────────
+
+interface EntryLogItem {
+  id: string;
+  productName: string;
+  sku: string;
+  quantity: number;
+  referenceNumber: string | null;
+  timestamp: string;
+}
+
+// ─── Grid field definitions ───────────────────────────────────────────────────
+
+const FIELDS: GridFieldDef[] = [
+  {
+    id: 'product',
+    type: 'text',
+    label: 'Product',
+    placeholder: 'Scan or type product…',
+    required: true,
+  },
+  {
+    id: 'quantity',
+    type: 'number',
+    label: 'Qty',
+    defaultValue: 1,
+    min: 1,
+    required: true,
+  },
+  {
+    id: 'reference_number',
+    type: 'text',
+    label: 'Receipt No.',
+    placeholder: 'Optional',
+  },
+];
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export const SaleStockView: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState<string>('');
-  const [productQuery, setProductQuery] = useState<string>('');
-  const [searchResults, setSearchResults] = useState<Product[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
-  const [quantity, setQuantity] = useState<number>(1);
-  const [referenceNumber, setReferenceNumber] = useState<string>('');
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
-  const [availableQuantity, setAvailableQuantity] = useState<number | null>(null);
   const [showEntryLog, setShowEntryLog] = useState<boolean>(true);
-  const [entryLog, setEntryLog] = useState<
-    Array<{
-      productName: string;
-      quantity: number;
-      movementType: string;
-      referenceNumber: string | null;
-      timestamp: string;
-    }>
-  >([]);
+  const [entryLog, setEntryLog] = useState<EntryLogItem[]>([]);
 
-  // Auth: resolve user/device from the active session instead of hardcoded values.
+  // Right-panel state: all products (shown by default) + live search results
+  const [allProducts, setAllProducts] = useState<SearchResultItem[]>([]);
+  const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+
+  // Product lookup map: id → Product
+  const [productMap, setProductMap] = useState<Map<string, Product>>(new Map());
+  // Name → id map for resolving the product when a row is committed
+  const [nameToId, setNameToId] = useState<Map<string, string>>(new Map());
+
   const [sessionUserId, setSessionUserId] = useState<string>('');
   const [sessionDeviceId, setSessionDeviceId] = useState<string>('');
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Grid row ID → committed transaction_id (for edit/delete lookup)
+  const [committedTxnIds, setCommittedTxnIds] = useState<Map<string, string>>(new Map());
+
+  // ── Session ──────────────────────────────────────────────────────────────
 
   useEffect(() => {
     const loadSession = async (): Promise<void> => {
@@ -47,7 +89,6 @@ export const SaleStockView: React.FC = () => {
         } else {
           setSessionUserId('USER-LOCAL');
         }
-        // device_id is stored separately in the secure store
         if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
           const { load } = await import('@tauri-apps/plugin-store');
           const store = await load('auth.dat', { autoSave: false });
@@ -64,6 +105,8 @@ export const SaleStockView: React.FC = () => {
     void loadSession();
   }, []);
 
+  // ── Stores ───────────────────────────────────────────────────────────────
+
   useEffect(() => {
     const loadStores = async (): Promise<void> => {
       try {
@@ -72,142 +115,309 @@ export const SaleStockView: React.FC = () => {
         if (data.length > 0) {
           setSelectedStoreId(data[0].id);
         }
-      } catch (err) {
+      } catch (_err) {
         setError('Failed to load stores');
       }
     };
-    loadStores();
+    void loadStores();
   }, []);
 
+  // ── All products (right-panel default) ───────────────────────────────────
+
   useEffect(() => {
-    const searchProductsDebounced = setTimeout(async () => {
-      if (productQuery.trim()) {
-        try {
-          const results = await searchProducts(productQuery);
-          setSearchResults(results.filter((p) => p.is_active));
-        } catch (err) {
-          // Silently fail - search errors shouldn't block the UI
-        }
-      } else {
-        setSearchResults([]);
+    const loadAllProducts = async (): Promise<void> => {
+      try {
+        const products = await getProducts();
+        const active = products.filter((p) => p.is_active);
+
+        const items: SearchResultItem[] = active.map((p) => ({
+          id: p.id,
+          label: p.name,
+          subtitle: p.model ?? undefined,
+          detail:
+            p.stock_quantity !== null && p.stock_quantity !== undefined
+              ? `Qty: ${p.stock_quantity}`
+              : undefined,
+        }));
+        setAllProducts(items);
+
+        const pMap = new Map<string, Product>();
+        const nMap = new Map<string, string>();
+        active.forEach((p) => {
+          pMap.set(p.id, p);
+          nMap.set(p.name, p.id);
+        });
+        setProductMap(pMap);
+        setNameToId(nMap);
+      } catch {
+        // Silently fail — FTS5 search will still work
       }
-    }, 300);
+    };
+    void loadAllProducts();
+  }, []);
 
-    return (): void => clearTimeout(searchProductsDebounced);
-  }, [productQuery]);
+  // ── Live search (instant local filter + 100 ms debounced backend FTS5) ─────
 
-  const handleSubmit = async (e: React.FormEvent): Promise<void> => {
-    e.preventDefault();
-    setError(null);
-    setSuccess(false);
+  const handleProductSearch = useCallback(
+    (query: string, _rowIndex: number): void => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
 
-    if (!selectedStoreId) {
-      setError('Please select a store');
-      return;
-    }
-    if (!selectedProduct) {
-      setError('Please select a product');
-      return;
-    }
-    if (quantity <= 0) {
-      setError('Quantity must be greater than zero');
-      return;
-    }
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        setSearchResults([]);
+        return;
+      }
 
-    setIsSubmitting(true);
+      // 1. Instant local filter on every keystroke
+      const localMatches = allProducts.filter(
+        (p) =>
+          p.label.toLowerCase().includes(q) ||
+          (p.subtitle && p.subtitle.toLowerCase().includes(q)) ||
+          (p.detail && p.detail.toLowerCase().includes(q)),
+      );
+      setSearchResults(localMatches);
 
-    try {
-      const userId = sessionUserId || 'USER-LOCAL';
-      const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
+      // 2. Debounced backend search for authoritative SQLite DB results
+      searchTimerRef.current = setTimeout(async () => {
+        try {
+          const results = await searchProductsFts5(query);
+          setSearchResults(
+            results.map((p) => ({
+              id: p.id,
+              label: p.name,
+              subtitle: p.model ?? undefined,
+              detail:
+                p.stock_quantity !== null && p.stock_quantity !== undefined
+                  ? `Qty: ${p.stock_quantity}`
+                  : undefined,
+            })),
+          );
+
+          setProductMap((prev) => {
+            const next = new Map(prev);
+            results.forEach((p) => next.set(p.id, p));
+            return next;
+          });
+          setNameToId((prev) => {
+            const next = new Map(prev);
+            results.forEach((p) => next.set(p.name, p.id));
+            return next;
+          });
+        } catch {
+          // If backend fails, localMatches is already rendered
+        }
+      }, 100);
+    },
+    [allProducts],
+  );
+
+  // ── Barcode scan (exact match → product auto-selected) ───────────────────
+
+  const handleBarcodeScan = useCallback(
+    async (barcode: string, _rowIndex: number): Promise<void> => {
+      if (!barcode.trim()) return;
+      try {
+        const results = await searchProductsFts5(barcode);
+        const exact = results.find((p) => p.barcode === barcode || p.sku === barcode);
+        if (exact) {
+          setSearchResults([
+            {
+              id: exact.id,
+              label: exact.name,
+              subtitle: exact.model ?? undefined,
+              detail:
+                exact.stock_quantity !== null && exact.stock_quantity !== undefined
+                  ? `Qty: ${exact.stock_quantity}`
+                  : undefined,
+            },
+          ]);
+        }
+      } catch {
+        // Ignore scan errors
+      }
+    },
+    [],
+  );
+
+  // ── Row commit (individual, synchronous write to outbox) ─────────────────
+
+  const handleCommitRow = useCallback(
+    async (row: GridRow, _rowIndex: number): Promise<void> => {
+      setError(null);
+      setSuccess(false);
+
+      if (!selectedStoreId) {
+        setError('Please select a store');
+        return;
+      }
+
+      const productName = String(row.values.product ?? '').trim();
+      if (!productName) {
+        setError('Please select a product');
+        return;
+      }
+
+      // Resolve product: try name→id map first (populated from getProducts),
+      // then fall back to the search-result id stored in the row.
+      const productId = nameToId.get(productName) ?? String(row.values.product_id ?? '');
+      const product = productMap.get(productId);
+      if (!product) {
+        setError(`Product "${productName}" not found — please search and select from the panel`);
+        return;
+      }
+
+      const qty = Number(row.values.quantity ?? 1);
+      if (qty <= 0) {
+        setError('Quantity must be greater than 0');
+        return;
+      }
 
       const input: CreateTransactionInput = {
         store_id: selectedStoreId,
-        product_id: selectedProduct.id,
+        product_id: product.id,
         movement_type: 'SALE',
-        quantity,
-        reference_number: referenceNumber || undefined,
-        user_id: userId,
-        device_id: deviceId,
+        quantity: qty,
+        reference_number: String(row.values.reference_number ?? '').trim() || undefined,
+        user_id: sessionUserId,
+        device_id: sessionDeviceId,
       };
 
-      await sellStock(input);
-      setSuccess(true);
+      try {
+        const result = await sellStock(input);
+        setSuccess(true);
 
-      // Add to entry log
-      setEntryLog((prev) => [
-        ...prev,
-        {
-          productName: selectedProduct.name,
-          quantity: input.quantity,
-          movementType: 'SALE',
-          referenceNumber: input.reference_number || null,
-          timestamp: new Date().toLocaleString(),
-        },
-      ]);
+        setCommittedTxnIds((prev) => new Map(prev).set(row.id, result.transaction_id));
 
-      // Refresh available quantity if product is still selected
-      if (selectedProduct && selectedStoreId) {
-        await loadAvailableQuantity(selectedStoreId, selectedProduct);
+        // Add to session entry log
+        setEntryLog((prev) => [
+          {
+            id: row.id,
+            productName: product.name,
+            sku: product.sku,
+            quantity: qty,
+            referenceNumber: input.reference_number ?? null,
+            timestamp: new Date().toLocaleTimeString(),
+          },
+          ...prev,
+        ]);
+
+        // Optimistically update qty in allProducts panel
+        setAllProducts((prev) =>
+          prev.map((p) =>
+            p.id === product.id
+              ? {
+                  ...p,
+                  detail: `Qty: ${Math.max(0, (product.stock_quantity ?? qty) - qty)}`,
+                }
+              : p,
+          ),
+        );
+      } catch (err) {
+        setError(String(err instanceof Error ? err.message : err));
+        setSuccess(false);
+      }
+    },
+    [selectedStoreId, productMap, nameToId, sessionUserId, sessionDeviceId, setCommittedTxnIds],
+  );
+
+  // ── Edit / Delete handlers (row-level) ───────────────────────────────────
+
+  const handleEditRow = useCallback(
+    async (rowId: string, newValues: Record<string, string | number>): Promise<void> => {
+      const transactionId = committedTxnIds.get(rowId);
+      if (!transactionId) {
+        setError('Transaction not found for this row');
+        return;
       }
 
-      // Reset form
-      setProductQuery('');
-      setSelectedProduct(null);
-      setQuantity(1);
-      setReferenceNumber('');
-      setSearchResults([]);
-      setAvailableQuantity(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+      setError(null);
+      setSuccess(false);
 
-  const loadAvailableQuantity = async (storeId: string, product: Product): Promise<void> => {
-    try {
-      const balance = await getStockBalance(storeId, product.id);
-      setAvailableQuantity(balance.quantity);
-    } catch (_err) {
-      setAvailableQuantity(null);
-    }
-  };
+      try {
+        const qty = Number(newValues.quantity ?? 1);
+        await updateTransaction({
+          transaction_id: transactionId,
+          quantity_delta: -qty, // SALE: negative delta
+          reference_number: String(newValues.reference_number ?? '').trim() || null,
+          reason_code: null,
+        });
+        setSuccess(true);
 
-  const handleProductSelect = (product: Product): void => {
-    setSelectedProduct(product);
-    setProductQuery(product.name);
-    setSearchResults([]);
-    loadAvailableQuantity(selectedStoreId, product);
-  };
+        // Optimistically update entry log
+        setEntryLog((prev) =>
+          prev.map((item) =>
+            item.id === rowId
+              ? {
+                  ...item,
+                  quantity: qty,
+                  referenceNumber: String(newValues.reference_number ?? '').trim() || null,
+                  timestamp: new Date().toLocaleTimeString(),
+                }
+              : item,
+          ),
+        );
+      } catch (err) {
+        setError(String(err instanceof Error ? err.message : err));
+      }
+    },
+    [committedTxnIds],
+  );
 
-  useEffect(() => {
-    if (selectedProduct && selectedStoreId) {
-      loadAvailableQuantity(selectedStoreId, selectedProduct);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStoreId]);
+  const handleDeleteRow = useCallback(
+    async (rowId: string): Promise<void> => {
+      const transactionId = committedTxnIds.get(rowId);
+      if (!transactionId) {
+        setError('Transaction not found for this row');
+        return;
+      }
 
-  const clearProduct = (): void => {
-    setSelectedProduct(null);
-    setProductQuery('');
-    setSearchResults([]);
-    setAvailableQuantity(null);
-  };
+      try {
+        await deleteTransaction(transactionId);
+        setEntryLog((prev) => prev.filter((item) => item.id !== rowId));
+        setCommittedTxnIds((prev) => {
+          const next = new Map(prev);
+          next.delete(rowId);
+          return next;
+        });
+      } catch (err) {
+        setError(String(err instanceof Error ? err.message : err));
+      }
+    },
+    [committedTxnIds],
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div
-      className="sale-stock-view"
-      data-testid="sale-stock-view"
-      style={{ display: 'flex', gap: '24px' }}
-    >
-      <div style={{ flex: 1, maxWidth: '640px' }}>
-        <div className="view-header">
-          <div>
-            <h2 className="view-title">Sale / Issue Stock</h2>
-            <p className="view-subtitle">
-              Record sales and stock removals (FR-MOV-002, Section 13.2)
-            </p>
-          </div>
+    <div className="sale-stock-view" data-testid="sale-stock-view">
+      {/* Header */}
+      <div className="view-header">
+        <div>
+          <h2 className="view-title">Sale / Issue Stock</h2>
+          <p className="view-subtitle">Record outgoing inventory (FR-MOV-002, Section 13.2)</p>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <select
+            data-testid="store-select"
+            value={selectedStoreId}
+            onChange={(e) => setSelectedStoreId(e.target.value)}
+            style={{
+              padding: '6px 10px',
+              borderRadius: 'var(--it-r-md)',
+              border: '1px solid var(--it-border)',
+              backgroundColor: 'var(--it-card)',
+              color: 'var(--it-text-primary)',
+              fontSize: '13px',
+            }}
+          >
+            {stores.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
           <Button
             variant="secondary"
             size="sm"
@@ -218,313 +428,150 @@ export const SaleStockView: React.FC = () => {
             <span>{showEntryLog ? 'Hide Log' : 'Show Log'}</span>
           </Button>
         </div>
-
-        {success && (
-          <div
-            className="it-toast it-toast--success"
-            data-testid="sale-success-banner"
-            style={{ marginBottom: '16px' }}
-          >
-            <Check size={16} aria-hidden="true" />
-            <span>Stock sold successfully. Transaction recorded and balance updated.</span>
-          </div>
-        )}
-
-        {error && (
-          <div
-            className="it-toast it-toast--error"
-            data-testid="sale-error-banner"
-            style={{ marginBottom: '16px' }}
-          >
-            <AlertCircle size={16} aria-hidden="true" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        {stores.length === 0 ? (
-          <div
-            style={{
-              backgroundColor: 'var(--it-card)',
-              border: '1px solid var(--it-border)',
-              borderRadius: 'var(--it-r-lg)',
-              padding: '48px 24px',
-              textAlign: 'center',
-            }}
-          >
-            <Package
-              size={48}
-              style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}
-            />
-            <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
-            <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
-              Create a store location first to record stock movements.
-            </p>
-          </div>
-        ) : (
-          <form
-            onSubmit={handleSubmit}
-            className="transaction-form"
-            style={{
-              backgroundColor: 'var(--it-card)',
-              border: '1px solid var(--it-border)',
-              borderRadius: 'var(--it-r-lg)',
-              padding: '24px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '20px',
-            }}
-          >
-            {/* Store Selection */}
-            <Select
-              id="store-select"
-              data-testid="store-select"
-              label="Store"
-              required
-              value={selectedStoreId}
-              onChange={(e) => setSelectedStoreId(e.target.value)}
-              options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-            />
-
-            {/* Product Search */}
-            <div style={{ position: 'relative' }}>
-              <TextInput
-                id="product-search"
-                data-testid="product-search-input"
-                label="Product"
-                required
-                value={productQuery}
-                onChange={(e) => setProductQuery(e.target.value)}
-                placeholder="Search by name, SKU, barcode..."
-              />
-              {selectedProduct && (
-                <button
-                  type="button"
-                  onClick={clearProduct}
-                  style={{
-                    position: 'absolute',
-                    right: '8px',
-                    top: '34px',
-                    background: 'none',
-                    border: 'none',
-                    cursor: 'pointer',
-                    color: 'var(--it-text-secondary)',
-                  }}
-                >
-                  <X size={16} />
-                </button>
-              )}
-
-              {/* Search Results Dropdown */}
-              {searchResults.length > 0 && !selectedProduct && (
-                <div
-                  style={{
-                    position: 'absolute',
-                    top: '100%',
-                    left: 0,
-                    right: 0,
-                    backgroundColor: 'var(--it-card)',
-                    border: '1px solid var(--it-border)',
-                    borderRadius: 'var(--it-r-md)',
-                    marginTop: '4px',
-                    maxHeight: '240px',
-                    overflowY: 'auto',
-                    zIndex: 10,
-                    boxShadow: 'var(--it-shadow-md)',
-                  }}
-                >
-                  {searchResults.map((product) => (
-                    <div
-                      key={product.id}
-                      data-testid={`product-result-${product.id}`}
-                      onClick={() => handleProductSelect(product)}
-                      style={{
-                        padding: '10px 14px',
-                        cursor: 'pointer',
-                        borderBottom: '1px solid var(--it-border)',
-                      }}
-                      onMouseEnter={(e) =>
-                        (e.currentTarget.style.backgroundColor = 'var(--it-surface)')
-                      }
-                      onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                    >
-                      <div
-                        style={{
-                          fontWeight: 600,
-                          fontSize: '13px',
-                          color: 'var(--it-text-primary)',
-                        }}
-                      >
-                        {product.name}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          color: 'var(--it-text-secondary)',
-                          fontFamily: 'var(--it-font-mono)',
-                        }}
-                      >
-                        SKU: {product.sku} {product.barcode && `• Barcode: ${product.barcode}`}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Selected Product Display with Available Quantity */}
-              {selectedProduct && (
-                <div
-                  style={{
-                    marginTop: '8px',
-                    padding: '8px 12px',
-                    backgroundColor: 'var(--it-green-surface)',
-                    border: '1px solid var(--it-green-border)',
-                    borderRadius: 'var(--it-r-md)',
-                    fontSize: '13px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    color: 'var(--it-green-text)',
-                  }}
-                >
-                  <Package size={16} />
-                  <span data-testid="selected-product-name">
-                    {selectedProduct.name} ({selectedProduct.sku})
-                  </span>
-                  {availableQuantity !== null && (
-                    <span
-                      data-testid="available-quantity-display"
-                      style={{
-                        marginLeft: 'auto',
-                        fontWeight: 600,
-                        fontFamily: 'var(--it-font-mono)',
-                      }}
-                    >
-                      Available: {availableQuantity}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Quantity */}
-            <div>
-              <NumericInput
-                id="quantity"
-                data-testid="quantity-input"
-                label="Quantity"
-                required
-                value={quantity}
-                min={1}
-                onChange={(v) => setQuantity(Math.max(1, v))}
-              />
-              {availableQuantity !== null && quantity > availableQuantity && (
-                <div
-                  style={{
-                    marginTop: '4px',
-                    fontSize: '12px',
-                    color: 'var(--it-red-text)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px',
-                  }}
-                >
-                  <AlertCircle size={12} />
-                  <span>Warning: Quantity exceeds available stock ({availableQuantity})</span>
-                </div>
-              )}
-            </div>
-
-            {/* Reference Number */}
-            <TextInput
-              id="reference-number"
-              label="Receipt / Reference Number"
-              value={referenceNumber}
-              onChange={(e) => setReferenceNumber(e.target.value)}
-              placeholder="e.g., S-1002, INV-2024-001"
-            />
-
-            {/* Submit Button */}
-            <div style={{ marginTop: '8px' }}>
-              <Button
-                type="submit"
-                variant="primary"
-                loading={isSubmitting}
-                data-testid="submit-sale-btn"
-                style={{ width: '100%' }}
-              >
-                <ArrowUpCircle size={18} />
-                Sell Stock
-              </Button>
-            </div>
-          </form>
-        )}
       </div>
 
-      {/* Entry Log Side Panel */}
-      {showEntryLog && (
+      {/* Toasts */}
+      {success && (
+        <div
+          className="it-toast it-toast--success"
+          data-testid="sale-success-banner"
+          style={{ marginBottom: '16px' }}
+        >
+          <Check size={16} aria-hidden="true" />
+          <span>Stock sold successfully. Transaction recorded and balance updated.</span>
+        </div>
+      )}
+
+      {error && (
+        <div
+          className="it-toast it-toast--error"
+          data-testid="sale-error-banner"
+          style={{ marginBottom: '16px' }}
+        >
+          <AlertCircle size={16} aria-hidden="true" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {/* No stores configured */}
+      {stores.length === 0 ? (
         <div
           style={{
-            width: '400px',
             backgroundColor: 'var(--it-card)',
             border: '1px solid var(--it-border)',
             borderRadius: 'var(--it-r-lg)',
-            padding: '20px',
-            maxHeight: 'calc(100vh - 120px)',
-            overflowY: 'auto',
+            padding: '48px 24px',
+            textAlign: 'center',
           }}
-          data-testid="entry-log-panel"
         >
-          <h3 style={{ marginBottom: '16px', fontSize: '16px', fontWeight: 600 }}>Entry Log</h3>
-          {entryLog.length === 0 ? (
-            <div
-              style={{
-                color: 'var(--it-text-secondary)',
-                fontSize: '13px',
-                textAlign: 'center',
-                padding: '40px 0',
-              }}
-            >
-              No entries yet
-            </div>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-              {entryLog.map((entry, index) => (
-                <div
-                  key={index}
-                  style={{
-                    padding: '12px',
-                    backgroundColor: 'var(--it-surface)',
-                    border: '1px solid var(--it-border)',
-                    borderRadius: 'var(--it-r-md)',
-                    fontSize: '13px',
-                  }}
-                >
-                  <div
-                    style={{
-                      fontWeight: 600,
-                      marginBottom: '4px',
-                      color: 'var(--it-text-primary)',
-                    }}
-                  >
-                    {entry.productName}
-                  </div>
-                  <div style={{ color: 'var(--it-text-secondary)', lineHeight: '1.5' }}>
-                    <div>
-                      <strong>Qty:</strong> {entry.quantity > 0 ? '+' : ''}
-                      {entry.quantity} ({entry.movementType})
-                    </div>
-                    <div>
-                      <strong>Ref:</strong> {entry.referenceNumber || '—'}
-                    </div>
-                    <div>
-                      <strong>Time:</strong> {entry.timestamp}
-                    </div>
-                  </div>
-                </div>
-              ))}
+          <Package size={48} style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }} />
+          <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
+          <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
+            Create a store location first to record stock movements.
+          </p>
+        </div>
+      ) : (
+        <>
+          {/* ── Linear grid entry ──────────────────────────────────────── */}
+          <LinearGridEntry
+            fields={FIELDS}
+            onCommitRow={handleCommitRow}
+            onSearch={handleProductSearch}
+            onBarcodeScan={handleBarcodeScan}
+            searchResults={searchResults}
+            allItems={allProducts}
+            initialRowCount={9}
+            dataTestid="sale-grid"
+            onEditRow={handleEditRow}
+            onDeleteRow={handleDeleteRow}
+          />
+
+          {/* ── Session entry log ──────────────────────────────────────── */}
+          {showEntryLog && entryLog.length > 0 && (
+            <div style={{ marginTop: '24px' }}>
+              <h3
+                style={{
+                  marginBottom: '12px',
+                  fontSize: '16px',
+                  fontWeight: 600,
+                  color: 'var(--it-text-primary)',
+                }}
+              >
+                Entry Log
+              </h3>
+              <div
+                style={{
+                  border: '1px solid var(--it-border)',
+                  borderRadius: 'var(--it-r-md)',
+                  overflow: 'hidden',
+                }}
+              >
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr
+                      style={{
+                        backgroundColor: 'var(--it-surface)',
+                        borderBottom: '1px solid var(--it-border)',
+                      }}
+                    >
+                      {['Product', 'SKU', 'Qty', 'Receipt No.', 'Time'].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            padding: '8px 12px',
+                            textAlign: 'left',
+                            fontSize: '11px',
+                            fontWeight: 600,
+                            textTransform: 'uppercase',
+                            letterSpacing: 'var(--it-tracking-label)',
+                            color: 'var(--it-text-secondary)',
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entryLog.map((item) => (
+                      <tr key={item.id} style={{ borderBottom: '1px solid var(--it-border)' }}>
+                        <td style={{ padding: '8px 12px', fontWeight: 500 }}>{item.productName}</td>
+                        <td
+                          style={{
+                            padding: '8px 12px',
+                            fontFamily: 'var(--it-font-mono)',
+                            fontSize: '12px',
+                          }}
+                        >
+                          {item.sku}
+                        </td>
+                        <td
+                          style={{
+                            padding: '8px 12px',
+                            fontFamily: 'var(--it-font-mono)',
+                            textAlign: 'right',
+                          }}
+                        >
+                          {item.quantity}
+                        </td>
+                        <td style={{ padding: '8px 12px' }}>{item.referenceNumber ?? '—'}</td>
+                        <td
+                          style={{
+                            padding: '8px 12px',
+                            color: 'var(--it-text-secondary)',
+                            fontSize: '12px',
+                          }}
+                        >
+                          {item.timestamp}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
-        </div>
+        </>
       )}
     </div>
   );

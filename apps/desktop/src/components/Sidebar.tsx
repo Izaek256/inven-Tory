@@ -10,6 +10,7 @@ import {
   ClipboardList,
   BookOpen,
   Settings,
+  Plus,
 } from 'lucide-react';
 
 export type NavView =
@@ -22,6 +23,7 @@ export type NavView =
   | 'transfer_stock'
   | 'damage_quarantine'
   | 'physical_count'
+  | 'create_product'
   | 'day_books'
   | 'settings';
 
@@ -34,6 +36,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
   const navItems: { id: NavView; label: string; icon: React.ReactNode }[] = [
     { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
     { id: 'products', label: 'Products', icon: <Package size={18} /> },
+    { id: 'create_product', label: 'Create Product', icon: <Plus size={18} /> },
     { id: 'receive_stock', label: 'Receive Stock', icon: <ArrowDownCircle size={18} /> },
     { id: 'sale_stock', label: 'Sale / Issue', icon: <ArrowUpCircle size={18} /> },
     { id: 'return_stock', label: 'Returns', icon: <RotateCcw size={18} /> },

@@ -91,3 +91,14 @@ export interface AdjustStockInput {
   device_id: string;
   count_reference?: string;
 }
+
+/**
+ * Input for updating an existing transaction (row-level edit from LinearGridEntry).
+ * quantity_delta must be the signed delta (positive for RECEIPT, negative for SALE).
+ */
+export interface UpdateTransactionInput {
+  transaction_id: string;
+  quantity_delta: number;
+  reference_number?: string | null;
+  reason_code?: string | null;
+}

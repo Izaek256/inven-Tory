@@ -6,6 +6,7 @@ import {
   ReturnStockInput,
   MoveStockBucketInput,
   AdjustStockInput,
+  UpdateTransactionInput as UpdateTransactionInputType,
   StockBucket,
 } from '../types/transaction';
 import { isTauriEnvironment } from './tauriStoreService';
@@ -316,5 +317,59 @@ export async function getLocalTransactions(): Promise<InventoryTransaction[]> {
 
   throw new Error(
     '[TauriTransactionService] getLocalTransactions() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
+}
+
+/**
+ * Update an existing inventory transaction (row-level edit from LinearGridEntry).
+ *
+ * Updates quantity_delta and reference fields in local SQLite, patches the
+ * stock_balances projection with the delta difference, and resets the existing
+ * outbox event to PENDING so the next sync push re-pushes the updated payload.
+ * The server-side ingestion handles the same transaction_id with a different
+ * quantity_delta via an in-place UPDATE.
+ */
+export async function updateTransaction(
+  input: UpdateTransactionInputType,
+): Promise<InventoryTransaction> {
+  if (isTauriEnvironment()) {
+    try {
+      const res = await invoke<InventoryTransaction>('update_transaction', { input });
+      _triggerAutoSync();
+      return res;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking update_transaction:', err);
+      throw new Error(`Failed to update transaction: ${String(err)}`);
+    }
+  }
+
+  throw new Error(
+    '[TauriTransactionService] updateTransaction() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+  );
+}
+
+/**
+ * Delete an existing inventory transaction (row-level delete from LinearGridEntry).
+ *
+ * Reverses the stock_balances delta, deletes the inventory_transactions row,
+ * and handles the outbox event: PERMANENT_REJECTION if not yet synced, or a
+ * compensating reversal tombstone event if already synced.
+ */
+export async function deleteTransaction(transactionId: string): Promise<void> {
+  if (isTauriEnvironment()) {
+    try {
+      await invoke<void>('delete_transaction', { transactionId });
+      _triggerAutoSync();
+      return;
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking delete_transaction:', err);
+      throw new Error(`Failed to delete transaction: ${String(err)}`);
+    }
+  }
+
+  throw new Error(
+    '[TauriTransactionService] deleteTransaction() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
   );
 }
