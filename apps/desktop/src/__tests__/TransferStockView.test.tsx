@@ -147,6 +147,11 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
       expect(screen.getByTestId('tab-create')).toBeInTheDocument();
     });
 
+    // Wait for the button to be enabled (stores loaded)
+    await waitFor((): void => {
+      expect(screen.getByTestId('tab-create')).not.toBeDisabled();
+    });
+
     // Switch to create tab
     fireEvent.click(screen.getByTestId('tab-create'));
 
