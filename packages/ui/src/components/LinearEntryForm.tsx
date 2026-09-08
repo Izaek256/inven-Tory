@@ -4,17 +4,17 @@ import { LiveSearchPanel, SearchResultItem } from './LiveSearchPanel';
 import { useKeyboardEntryFlow, FieldDef } from '../hooks/useKeyboardEntryFlow';
 import type { ColumnDef } from './Table';
 
-export interface LinearEntryFormProps {
+export interface LinearEntryFormProps<TRow extends object = Record<string, unknown>> {
   fields: FieldDef[];
   onCommit: (values: Record<string, string | number>) => void | Promise<void>;
   searchResults?: SearchResultItem[];
   onSearch?: (query: string) => void;
   onSearchSelect?: (item: SearchResultItem) => void;
-  sessionTableRows?: Array<Record<string, unknown>>;
-  sessionTableColumns?: ColumnDef<Record<string, unknown>>[];
+  sessionTableRows?: TRow[];
+  sessionTableColumns?: ColumnDef<TRow>[];
   sessionTableEmptyState?: React.ReactNode;
   sessionTableTitle?: string;
-  renderSessionRowActions?: (row: Record<string, unknown>, index: number) => React.ReactNode;
+  renderSessionRowActions?: (row: TRow, index: number) => React.ReactNode;
   title?: string;
   subtitle?: string;
   dataTestid?: string;
@@ -23,7 +23,7 @@ export interface LinearEntryFormProps {
   submitLabel?: string;
 }
 
-export function LinearEntryForm({
+export function LinearEntryForm<TRow extends object = Record<string, unknown>>({
   fields,
   onCommit,
   searchResults = [],
@@ -39,7 +39,7 @@ export function LinearEntryForm({
   fieldTestIds = {},
   submitTestId = 'linear-entry-submit',
   submitLabel = 'Commit',
-}: LinearEntryFormProps): React.ReactElement {
+}: LinearEntryFormProps<TRow>): React.ReactElement {
   const searchFieldId = useMemo(
     () =>
       fields.find(
@@ -290,7 +290,7 @@ export function LinearEntryForm({
         )}
 
         {sessionTableColumns.length > 0 && (
-          <DataTable
+          <DataTable<TRow>
             columns={sessionTableColumns}
             rows={sessionTableRows}
             rowKey={(row) => String((row as Record<string, unknown>).id ?? Math.random())}

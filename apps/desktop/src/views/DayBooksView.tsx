@@ -897,7 +897,7 @@ export const DayBooksView: React.FC = () => {
             />
           );
         }
-        return entry.reference_number || '—';
+        return <>{entry.reference_number || '—'}</>;
       },
       accessor: (entry) => entry.reference_number,
     },

@@ -6,7 +6,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
     "lint": "eslint src --ext .ts --report-unused-disable-directives --max-warnings 0",
     "format": "prettier --write src",
     "format:check": "prettier --check src",

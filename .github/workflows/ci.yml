@@ -53,7 +53,7 @@ jobs:
         run: pytest packages/domain/tests packages/storage/tests services/api/tests -v --tb=short
 
   lint-typescript:
-    name: Lint TypeScript (ESLint + Prettier)
+    name: Lint + TypeCheck TypeScript (ESLint + Prettier + tsc)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +66,9 @@ jobs:
 
       - name: Install Node dependencies
         run: npm ci
+
+      - name: Run TypeScript Type Check (tsc --noEmit)
+        run: npm run typecheck --workspaces --if-present
 
       - name: Run ESLint
         run: npm run lint --workspaces --if-present

@@ -71,6 +71,7 @@ function makeAdjustmentTx(delta: number, reason: string): InventoryTransaction {
     reference_number: 'COUNT-STORE-001-PROD-TV-55-001',
     reason_code: reason,
     transfer_id: null,
+    purchase_order_id: null,
     batch_id: null,
     client_sequence: null,
     sync_status: 'PENDING',
