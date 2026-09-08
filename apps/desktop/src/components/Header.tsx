@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
-import { Badge, ThemeToggle, Select, Button } from '@inven-tory/ui';
+import { Badge, ThemeToggle, Select, Button } from '@invenTory/ui';
 import { LogOut, User } from 'lucide-react';
 import type { AuthSession } from '../types/auth';
 
@@ -114,7 +114,7 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="app-header" data-testid="app-header">
       <div className="header-brand">
         <div className="brand-icon">IT</div>
-        <h1 className="brand-title">INVENTORY Tory</h1>
+        <h1 className="brand-title">invenTory</h1>
         <span className="brand-version">v1.1.0</span>
       </div>
 

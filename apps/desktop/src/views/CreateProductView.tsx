@@ -2,9 +2,9 @@ import React, { useState, useCallback } from 'react';
 import { Trash2, Check, AlertCircle } from 'lucide-react';
 import { createProduct } from '../services/tauriProductService';
 import { CreateProductInput } from '../types/product';
-import { LinearEntryForm, FieldDef } from '@inven-tory/ui';
-import type { ColumnDef } from '@inven-tory/ui';
-import { Button } from '@inven-tory/ui';
+import { LinearEntryForm, FieldDef } from '@invenTory/ui';
+import type { ColumnDef } from '@invenTory/ui';
+import { Button } from '@invenTory/ui';
 
 interface SessionRow {
   id: string;

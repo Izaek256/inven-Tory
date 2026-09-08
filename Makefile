@@ -1,5 +1,5 @@
 # ============================================================
-# inven-Tory — Makefile
+# invenTory â€” Makefile
 # Works on Linux, macOS, and Windows (via Git Bash or WSL).
 # ============================================================
 
@@ -32,7 +32,7 @@ lint: ## Auto-fix imports (ruff) then format (black), then verify both clean
 	$(PYTHON) -m black --check services/ packages/
 	@echo "All lint checks passed"
 
-# Read-only gate — same checks that CI and the pre-push hook run.
+# Read-only gate â€” same checks that CI and the pre-push hook run.
 lint-check: ## Check only (no auto-fix). Fails if anything needs fixing.
 	@echo "==> ruff check ..."
 	$(PYTHON) -m ruff check services/ packages/

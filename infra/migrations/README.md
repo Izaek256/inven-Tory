@@ -1,6 +1,6 @@
 # infra/migrations — Alembic database migrations
 
-Alembic migrations for the INVENTORY Tory central PostgreSQL database live here.
+Alembic migrations for the invenTory central PostgreSQL database live here.
 
 **Schema is implemented in Issue 03.** This directory is empty until then — only the Alembic configuration stub is present.
 

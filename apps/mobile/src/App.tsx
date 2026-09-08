@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ThemeToggle, EmptyState } from '@inven-tory/ui';
+import { ThemeToggle, EmptyState } from '@invenTory/ui';
 import { Smartphone, LogOut } from 'lucide-react';
 import { MobileLoginForm } from './components/MobileLoginForm';
 
@@ -84,7 +84,7 @@ function App(): React.ReactElement {
                   lineHeight: 1.2,
                 }}
               >
-                INVENTORY Tory
+                invenTory
               </h1>
               <p style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>
                 Mobile Companion
@@ -147,7 +147,7 @@ function App(): React.ReactElement {
           >
             IT
           </div>
-          <h1 style={{ fontSize: '16px', fontWeight: 700 }}>INVENTORY Tory Companion</h1>
+          <h1 style={{ fontSize: '16px', fontWeight: 700 }}>invenTory Companion</h1>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <span style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>

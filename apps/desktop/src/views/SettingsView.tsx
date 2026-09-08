@@ -8,7 +8,7 @@
 
 import React, { useState } from 'react';
 import { Settings, LogOut, User } from 'lucide-react';
-import { Card, ThemeToggle, Badge, Button } from '@inven-tory/ui';
+import { Card, ThemeToggle, Badge, Button } from '@invenTory/ui';
 import type { AuthSession } from '../types/auth';
 
 interface SettingsViewProps {
@@ -122,7 +122,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
                 System Information
               </h3>
               <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                INVENTORY Tory v1.1.0 — Desktop Tauri client. SQLite local engine. Authentication:
+                invenTory v1.1.0 — Desktop Tauri client. SQLite local engine. Authentication:
                 FastAPI JWT (Bearer transport).
               </p>
             </div>

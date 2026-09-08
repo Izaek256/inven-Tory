@@ -2,8 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 
-import { ThemeProvider, ToastProvider } from '@inven-tory/ui';
-import '@inven-tory/ui/src/tokens.css';
+import { ThemeProvider, ToastProvider } from '@invenTory/ui';
+import '@invenTory/ui/src/tokens.css';
 
 // Mark application startup start time for performance tracking (NFR-PERF-001)
 if (typeof performance !== 'undefined' && performance.mark) {

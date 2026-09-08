@@ -31,7 +31,7 @@ import {
   NumericInput,
   Select,
   ColumnDef,
-} from '@inven-tory/ui';
+} from '@invenTory/ui';
 
 export const TransferStockView: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('list');

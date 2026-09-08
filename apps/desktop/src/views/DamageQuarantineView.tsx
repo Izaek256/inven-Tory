@@ -6,7 +6,7 @@ import { moveStockBucket, getStockBalanceForBucket } from '../services/tauriTran
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { MoveStockBucketInput, StockBucket } from '../types/transaction';
-import { Button, TextInput, NumericInput, Select } from '@inven-tory/ui';
+import { Button, TextInput, NumericInput, Select } from '@invenTory/ui';
 
 export const DamageQuarantineView: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);

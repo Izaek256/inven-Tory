@@ -1,4 +1,4 @@
-# Contributing to INVENTORY Tory
+# Contributing to invenTory
 
 Thank you for contributing. Please read this document before opening a branch or pull request.
 
@@ -151,7 +151,7 @@ Key rules:
 - `strict: true` in all `tsconfig.json` files.
 - No `any` types without an explanatory comment.
 - React components use functional style with hooks — no class components.
-- Use `@inven-tory/shared-types` for types shared between desktop, web and mobile.
+- Use `@invenTory/shared-types` for types shared between desktop, web and mobile.
 
 Run locally:
 

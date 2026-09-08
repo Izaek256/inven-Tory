@@ -1,7 +1,7 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ThemeProvider, ToastProvider } from '@inven-tory/ui';
+import { ThemeProvider, ToastProvider } from '@invenTory/ui';
 import App from '../App';
 import * as tauriStoreService from '../services/tauriStoreService';
 
@@ -44,7 +44,7 @@ describe('Desktop Shell Application', () => {
     renderWithProviders(<App />);
 
     expect(screen.getByTestId('app-header')).toBeInTheDocument();
-    expect(screen.getByText('INVENTORY Tory')).toBeInTheDocument();
+    expect(screen.getByText('invenTory')).toBeInTheDocument();
     expect(screen.getByTestId('status-indicator')).toBeInTheDocument();
     expect(screen.getByTestId('pending-sync-badge')).toBeInTheDocument();
     expect(screen.getByTestId('pending-sync-count')).toHaveTextContent('0');

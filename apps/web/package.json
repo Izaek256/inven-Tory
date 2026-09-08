@@ -1,8 +1,8 @@
 {
-  "name": "@inven-tory/web",
+  "name": "@invenTory/web",
   "version": "1.1.0",
   "private": true,
-  "description": "INVENTORY Tory remote management dashboard — React + TypeScript",
+  "description": "invenTory remote management dashboard — React + TypeScript",
   "scripts": {
     "dev": "vite --port 3000",
     "build": "tsc && vite build",
@@ -13,8 +13,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@inven-tory/shared-types": "*",
-    "@inven-tory/ui": "*",
+    "@invenTory/shared-types": "*",
+    "@invenTory/ui": "*",
     "lucide-react": "^0.400.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"

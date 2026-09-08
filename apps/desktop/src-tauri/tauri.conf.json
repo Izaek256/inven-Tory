@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "INVENTORY Tory",
+  "productName": "invenTory",
   "version": "1.1.0",
   "identifier": "com.inventorytory.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "INVENTORY Tory",
+        "title": "invenTory",
         "width": 1280,
         "height": 800,
         "minWidth": 1024,
@@ -32,6 +32,7 @@
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
     ]

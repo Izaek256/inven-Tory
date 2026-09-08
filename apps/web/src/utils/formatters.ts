@@ -2,7 +2,7 @@
  * Shared formatting utilities for the web dashboard.
  */
 
-import type { BadgeStatus } from '@inven-tory/ui';
+import type { BadgeStatus } from '@invenTory/ui';
 
 /**
  * Format an ISO-8601 timestamp as a human-readable relative time string.

@@ -21,7 +21,7 @@ import {
   Select,
   Spinner,
   TextInput,
-} from '@inven-tory/ui';
+} from '@invenTory/ui';
 import {
   createUser as apiCreateUser,
   deleteUser as apiDeleteUser,

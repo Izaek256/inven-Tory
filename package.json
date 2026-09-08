@@ -2,7 +2,7 @@
   "name": "inven-tory",
   "version": "1.1.0",
   "private": true,
-  "description": "INVENTORY Tory v1.1.0 — Offline-First, Multi-Store Inventory Management System",
+  "description": "invenTory v1.1.0 — Offline-First, Multi-Store Inventory Management System",
   "workspaces": [
     "apps/desktop",
     "apps/web",

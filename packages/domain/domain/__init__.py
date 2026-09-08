@@ -1,5 +1,5 @@
 """
-INVENTORY Tory — domain package.
+invenTory — domain package.
 
 This package contains pure-Python domain entities and business rules.
 

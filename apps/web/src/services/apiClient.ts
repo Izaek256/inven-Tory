@@ -1,5 +1,5 @@
 /**
- * Thin API client for the INVENTORY Tory central API.
+ * Thin API client for the invenTory central API.
  *
  * All requests include the Bearer token stored in sessionStorage.
  * Unauthorized responses (401) clear the token and reload so the login

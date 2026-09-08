@@ -10,7 +10,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Badge, ThemeToggle } from '@inven-tory/ui';
+import { Badge, ThemeToggle } from '@invenTory/ui';
 import { LayoutDashboard, Users, Warehouse } from 'lucide-react';
 import { clearToken, getToken } from './services/apiClient';
 import { LoginView } from './views/LoginView';
@@ -122,7 +122,7 @@ function App(): React.ReactElement {
       <header className="app-header" data-testid="web-header">
         <div className="header-brand">
           <div className="brand-icon">IT</div>
-          <h1 className="brand-title">INVENTORY Tory</h1>
+          <h1 className="brand-title">invenTory</h1>
           <span className="brand-version">v1.1.0</span>
           <span className="brand-tag">Web Dashboard</span>
         </div>

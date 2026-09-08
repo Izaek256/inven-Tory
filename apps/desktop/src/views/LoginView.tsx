@@ -17,7 +17,7 @@
 
 import React, { useState } from 'react';
 import { LogIn, AlertCircle, Wifi } from 'lucide-react';
-import { Button, TextInput } from '@inven-tory/ui';
+import { Button, TextInput } from '@invenTory/ui';
 import type { AuthSession } from '../types/auth';
 
 interface LoginViewProps {
@@ -129,7 +129,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 lineHeight: 1.2,
               }}
             >
-              INVENTORY Tory
+              invenTory
             </h1>
             <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>Desktop Client</p>
           </div>

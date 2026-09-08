@@ -6,7 +6,7 @@ import { returnStock, getStockBalanceForBucket } from '../services/tauriTransact
 import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { ReturnStockInput, StockBucket } from '../types/transaction';
-import { Button, TextInput, NumericInput, Select } from '@inven-tory/ui';
+import { Button, TextInput, NumericInput, Select } from '@invenTory/ui';
 
 export const ReturnStockView: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);

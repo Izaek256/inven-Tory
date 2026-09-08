@@ -1,8 +1,8 @@
 {
-  "name": "@inven-tory/desktop",
+  "name": "@invenTory/desktop",
   "version": "1.1.0",
   "private": true,
-  "description": "INVENTORY Tory desktop app — Tauri + React + TypeScript",
+  "description": "invenTory desktop app — Tauri + React + TypeScript",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
@@ -14,8 +14,8 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "@inven-tory/shared-types": "*",
-    "@inven-tory/ui": "*",
+    "@invenTory/shared-types": "*",
+    "@invenTory/ui": "*",
     "@react-pdf/renderer": "^4.1.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-store": "^2.4.4",

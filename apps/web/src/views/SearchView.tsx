@@ -23,7 +23,7 @@ import {
   Spinner,
   SummaryCard,
   type ColumnDef,
-} from '@inven-tory/ui';
+} from '@invenTory/ui';
 import {
   ArrowLeft,
   BarChart2,

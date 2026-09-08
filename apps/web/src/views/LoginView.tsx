@@ -10,7 +10,7 @@
  */
 
 import React, { useState } from 'react';
-import { Button, TextInput } from '@inven-tory/ui';
+import { Button, TextInput } from '@invenTory/ui';
 import { LogIn } from 'lucide-react';
 import { login } from '../services/dashboardService';
 import { setToken } from '../services/apiClient';
@@ -59,7 +59,7 @@ export function LoginView({ onLoginSuccess }: LoginViewProps): React.ReactElemen
         <div className="web-login-brand">
           <div className="brand-icon">IT</div>
           <div>
-            <h1 className="web-login-title">INVENTORY Tory</h1>
+            <h1 className="web-login-title">invenTory</h1>
             <p className="web-login-subtitle">Remote Management Dashboard</p>
           </div>
         </div>

@@ -15,7 +15,7 @@
 
 import React, { useState } from 'react';
 import { AlertTriangle, RefreshCw, CheckCircle2 } from 'lucide-react';
-import { Button, TextInput } from '@inven-tory/ui';
+import { Button, TextInput } from '@invenTory/ui';
 
 interface OfflineAuthBannerProps {
   username: string;

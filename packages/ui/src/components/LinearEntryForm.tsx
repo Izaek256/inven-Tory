@@ -1,5 +1,5 @@
 import React, { useMemo, useCallback } from 'react';
-import { Button, TextInput, NumericInput, Select, DataTable } from '@inven-tory/ui';
+import { Button, TextInput, NumericInput, Select, DataTable } from '@invenTory/ui';
 import { LiveSearchPanel, SearchResultItem } from './LiveSearchPanel';
 import { useKeyboardEntryFlow, FieldDef } from '../hooks/useKeyboardEntryFlow';
 import type { ColumnDef } from './Table';

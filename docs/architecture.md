@@ -1,4 +1,4 @@
-# INVENTORY Tory v1.1.0 — Architecture Overview
+# invenTory v1.1.0 — Architecture Overview
 
 > Source of truth: [Inventory_Tory_v1_1_0_SRS.md](../Inventory_Tory_v1_1_0_SRS.md) Section 7.
 

@@ -23,8 +23,8 @@ import {
   LinearEntryForm,
   FieldDef,
   SearchResultItem,
-} from '@inven-tory/ui';
-import type { ColumnDef } from '@inven-tory/ui';
+} from '@invenTory/ui';
+import type { ColumnDef } from '@invenTory/ui';
 
 type Step = 'count' | 'approve' | 'done';
 

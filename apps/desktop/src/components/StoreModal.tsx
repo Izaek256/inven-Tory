@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Store, CreateStoreInput, UpdateStoreInput } from '../types/store';
-import { Modal, TextInput, Button } from '@inven-tory/ui';
+import { Modal, TextInput, Button } from '@invenTory/ui';
 import { AlertCircle } from 'lucide-react';
 
 interface StoreModalProps {
