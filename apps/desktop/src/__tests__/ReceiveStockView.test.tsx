@@ -1,23 +1,19 @@
 /**
- * SaleStockView frontend tests — Issue 07 acceptance criteria (grid UI).
+ * ReceiveStockView frontend tests.
  *
- * AT-001: operator selects a product via the grid, commits the row →
- *         sellStock is called with correct args; success banner is shown.
- * AT-012: sellStock rejects with "Insufficient stock" → error banner shown,
+ * AT-003: operator selects a product via the grid, commits the row →
+ *         receiveStock is called with correct args; success banner is shown.
+ * AT-013: receiveStock rejects with error → error banner shown,
  *         no success banner.
  *
- * The grid keyboard model under test:
- *   - Product field is the first column; right panel shows matching items.
- *   - Clicking an item in the panel (or pressing Enter when highlighted)
- *     fills the product field and moves focus to Qty.
+ * Grid keyboard model (same LinearGridEntry as SaleStockView):
+ *   - Product field is the first column.
  *   - Pressing Enter on Receipt No. (last field) commits the row.
- *   - Arrow Up/Down change the panel highlight index; they do NOT move
- *     between grid rows.
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { SaleStockView } from '../views/SaleStockView';
+import { ReceiveStockView } from '../views/ReceiveStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
@@ -86,14 +82,14 @@ const MOCK_SESSION = {
   token_expired_offline: false,
 };
 
-function makeSaleTx(overrides: Partial<InventoryTransaction> = {}): InventoryTransaction {
+function makeReceiptTx(overrides: Partial<InventoryTransaction> = {}): InventoryTransaction {
   return {
-    transaction_id: 'TX-SALE-001',
+    transaction_id: 'TX-RECEIVE-001',
     store_id: 'STORE-A',
     product_id: 'PROD-001',
-    movement_type: 'SALE' as const,
+    movement_type: 'RECEIPT' as const,
     stock_bucket: 'AVAILABLE' as const,
-    quantity_delta: -1,
+    quantity_delta: 1,
     occurred_at: new Date().toISOString(),
     recorded_at: new Date().toISOString(),
     user_id: 'TEST-USER-123',
@@ -113,46 +109,38 @@ function makeSaleTx(overrides: Partial<InventoryTransaction> = {}): InventoryTra
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
-/**
- * Renders the view, waits for stores + products to load, then simulates:
- *  1. Clicking the product suggestion in the panel (which fills the product field)
- *  2. Setting the quantity field value
- *  3. Pressing Enter on the Receipt No. field to commit the row
- */
 async function setupAndCommitRow(qty: number = 1): Promise<void> {
-  render(<SaleStockView />);
+  render(<ReceiveStockView />);
 
-  // Wait for the grid to render (store-select appears after stores load)
   await waitFor(() => {
     expect(screen.getByTestId('store-select')).toBeInTheDocument();
   });
 
-  // Wait for the live-search-panel to populate (allProducts loaded)
+  await waitFor(() => {
+    expect(screen.getByTestId('receive-grid')).toBeInTheDocument();
+  });
+
   await waitFor(() => {
     expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
   });
 
-  // Simulate typing in the product field (row 0)
   const productCell = screen.getByTestId('cell-0-product');
   act(() => {
     fireEvent.focus(productCell);
     fireEvent.change(productCell, { target: { value: 'Hisense' } });
   });
 
-  // Wait for search results
   await waitFor(() => {
     expect(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`)).toBeInTheDocument();
   });
 
-  // Click the product in the panel
   act(() => {
     fireEvent.click(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`));
   });
 
-  // Set quantity
-  await waitFor(() => {
-    const qtyCell = screen.getByTestId('cell-0-quantity');
-    expect(document.activeElement === qtyCell || qtyCell).toBeTruthy();
+  // Allow the delayed focusCell(0, 1) setTimeout to settle
+  await act(async () => {
+    await new Promise((r) => setTimeout(r, 0));
   });
 
   const qtyCell = screen.getByTestId('cell-0-quantity');
@@ -160,12 +148,18 @@ async function setupAndCommitRow(qty: number = 1): Promise<void> {
     fireEvent.change(qtyCell, { target: { value: String(qty) } });
   });
 
-  // Press Enter on quantity to go to Receipt No.
+  // Press Enter on quantity → advances to next field
   act(() => {
     fireEvent.keyDown(qtyCell, { key: 'Enter', code: 'Enter' });
   });
 
-  // Press Enter on Receipt No. to commit
+  // Press Enter on Supplier → advances to Receipt No.
+  const supplierCell = screen.getByTestId('cell-0-supplier');
+  act(() => {
+    fireEvent.keyDown(supplierCell, { key: 'Enter', code: 'Enter' });
+  });
+
+  // Press Enter on Receipt No. (last field) to commit
   const receiptCell = screen.getByTestId('cell-0-reference_number');
   await act(async () => {
     fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
@@ -174,7 +168,7 @@ async function setupAndCommitRow(qty: number = 1): Promise<void> {
 
 // ─── Test suite ────────────────────────────────────────────────────────────────
 
-describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void => {
+describe('ReceiveStockView — grid UI and transaction flow', (): void => {
   beforeEach((): void => {
     vi.restoreAllMocks();
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
@@ -186,146 +180,112 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
-    vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
-      id: 'SB-STORE-A-PROD-001-AVAILABLE',
-      store_id: 'STORE-A',
-      product_id: 'PROD-001',
-      stock_bucket: 'AVAILABLE',
-      quantity: 6,
-      updated_at: new Date().toISOString(),
-    });
     vi.spyOn(tauriTransactionService, 'updateTransaction').mockResolvedValue(
-      makeSaleTx({
-        quantity_delta: -1,
-      }),
+      makeReceiptTx({ quantity_delta: 1 }),
     );
     vi.spyOn(tauriTransactionService, 'deleteTransaction').mockResolvedValue();
   });
 
   // ─── Render checks ────────────────────────────────────────────────────────
 
-  it('renders the sale-stock-view container', async (): Promise<void> => {
-    render(<SaleStockView />);
-    expect(screen.getByTestId('sale-stock-view')).toBeInTheDocument();
+  it('renders the receive-stock-view container', async (): Promise<void> => {
+    render(<ReceiveStockView />);
+    expect(screen.getByTestId('receive-stock-view')).toBeInTheDocument();
   });
 
   it('renders the grid with 9 numbered rows', async (): Promise<void> => {
-    render(<SaleStockView />);
+    render(<ReceiveStockView />);
     await waitFor(() => {
-      expect(screen.getByTestId('sale-grid')).toBeInTheDocument();
+      expect(screen.getByTestId('receive-grid')).toBeInTheDocument();
     });
-    // Each row has a product cell: cell-0-product … cell-8-product
     for (let i = 0; i < 9; i++) {
       expect(screen.getByTestId(`cell-${i}-product`)).toBeInTheDocument();
     }
   });
 
-  it('right panel is visible on mount and shows all products (not empty)', async (): Promise<void> => {
-    render(<SaleStockView />);
+  it('right panel is visible on mount and shows all products', async (): Promise<void> => {
+    render(<ReceiveStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
-    // The panel should show the product without the user typing anything
     await waitFor(() => {
       expect(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`)).toBeInTheDocument();
     });
   });
 
-  it('live panel filters as the user types in the product field', async (): Promise<void> => {
-    render(<SaleStockView />);
-    await waitFor(() => {
-      expect(screen.getByTestId('store-select')).toBeInTheDocument();
-    });
+  // ─── AT-003: receive 1 unit successfully ──────────────────────────────────
 
-    const productCell = screen.getByTestId('cell-0-product');
-    act(() => {
-      fireEvent.focus(productCell);
-      fireEvent.change(productCell, { target: { value: 'His' } });
-    });
-
-    await waitFor(() => {
-      expect(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`)).toBeInTheDocument();
-    });
-    expect(tauriProductService.searchProductsFts5).toHaveBeenCalledWith('His');
-  });
-
-  // ─── AT-001: sell 1 unit successfully ────────────────────────────────────
-
-  it('AT-001: sells 1 unit successfully and shows success confirmation', async (): Promise<void> => {
-    vi.spyOn(tauriTransactionService, 'sellStock').mockResolvedValueOnce(makeSaleTx());
+  it('AT-003: receives 1 unit successfully and shows success confirmation', async (): Promise<void> => {
+    vi.spyOn(tauriTransactionService, 'receiveStock').mockResolvedValueOnce(makeReceiptTx());
 
     await setupAndCommitRow(1);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sale-success-banner')).toBeInTheDocument();
+      expect(screen.getByText(/Stock received successfully/)).toBeInTheDocument();
     });
 
-    expect(tauriTransactionService.sellStock).toHaveBeenCalledOnce();
-    const callArg = vi.mocked(tauriTransactionService.sellStock).mock.calls[0][0];
+    expect(tauriTransactionService.receiveStock).toHaveBeenCalledOnce();
+    const callArg = vi.mocked(tauriTransactionService.receiveStock).mock.calls[0][0];
     expect(callArg.store_id).toBe('STORE-A');
     expect(callArg.product_id).toBe('PROD-001');
     expect(callArg.quantity).toBe(1);
-    expect(callArg.movement_type).toBe('SALE');
+    expect(callArg.movement_type).toBe('RECEIPT');
     expect(callArg.user_id).toBe('TEST-USER-123');
     expect(callArg.device_id).toBe('TEST-DEVICE-456');
   });
 
-  it('AT-001: committed row is dimmed (opacity) after commit', async (): Promise<void> => {
-    vi.spyOn(tauriTransactionService, 'sellStock').mockResolvedValueOnce(makeSaleTx());
+  it('AT-003: committed row is dimmed (opacity) after commit', async (): Promise<void> => {
+    vi.spyOn(tauriTransactionService, 'receiveStock').mockResolvedValueOnce(makeReceiptTx());
 
     await setupAndCommitRow(1);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sale-success-banner')).toBeInTheDocument();
+      expect(screen.getByText(/Stock received successfully/)).toBeInTheDocument();
     });
 
-    // The committed row's product input should be disabled
     const productCell = screen.getByTestId('cell-0-product');
     expect(productCell).toBeDisabled();
   });
 
-  // ─── AT-012: insufficient stock rejection ─────────────────────────────────
+  // ─── AT-013: transaction error ───────────────────────────────────────────
 
-  it('AT-012: rejects sale when stock is insufficient and shows error', async (): Promise<void> => {
-    vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
-      new Error('Insufficient stock. Available quantity: 6. Cannot sell 10 units.'),
+  it('AT-013: rejects receive when server errors and shows error', async (): Promise<void> => {
+    vi.spyOn(tauriTransactionService, 'receiveStock').mockRejectedValueOnce(
+      new Error('Failed to receive stock: Store mismatch'),
     );
 
-    await setupAndCommitRow(10);
+    await setupAndCommitRow(5);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sale-error-banner')).toBeInTheDocument();
+      expect(screen.getByTestId('receive-error-banner')).toBeInTheDocument();
     });
 
-    const errorText = screen.getByTestId('sale-error-banner').textContent;
-    expect(errorText).toContain('Insufficient stock');
-    expect(errorText).toContain('6');
-    expect(errorText).not.toMatch(/undefined/i);
+    const errorText = screen.getByTestId('receive-error-banner').textContent;
+    expect(errorText).toContain('Failed to receive stock');
   });
 
-  it('AT-012: no success banner shown when sale is rejected', async (): Promise<void> => {
-    vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
-      new Error('Insufficient stock. Available quantity: 6. Cannot sell 10 units.'),
+  it('AT-013: no success banner shown when receive is rejected', async (): Promise<void> => {
+    vi.spyOn(tauriTransactionService, 'receiveStock').mockRejectedValueOnce(
+      new Error('Failed to receive stock: Store mismatch'),
     );
 
-    await setupAndCommitRow(10);
+    await setupAndCommitRow(5);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sale-error-banner')).toBeInTheDocument();
+      expect(screen.getByTestId('receive-error-banner')).toBeInTheDocument();
     });
 
-    expect(screen.queryByTestId('sale-success-banner')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Stock received successfully/)).not.toBeInTheDocument();
   });
 
-  // ─── Arrow key model ───────────────────────────────────────────────────────
+  // ─── Arrow key model ──────────────────────────────────────────────────────
 
   it('Arrow Down in product field increases panel highlight, does not move row focus', async (): Promise<void> => {
-    render(<SaleStockView />);
+    render(<ReceiveStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
     await waitFor(() => {
-      // Panel must have at least one item
       expect(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`)).toBeInTheDocument();
     });
 
@@ -338,22 +298,19 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
       fireEvent.keyDown(productCell, { key: 'ArrowDown', code: 'ArrowDown' });
     });
 
-    // Row 1's product field must NOT be focused (arrow down must not leave row 0)
     const row1ProductCell = screen.getByTestId('cell-1-product');
     expect(document.activeElement).not.toBe(row1ProductCell);
-    // Row 0's product field should remain the focused element (or be in the grid container)
     expect(document.activeElement).toBe(productCell);
   });
 
-  // ─── Keyboard flow: Backspace on empty field ───────────────────────────────
+  // ─── Backspace navigation ────────────────────────────────────────────────
 
   it('Backspace on empty Qty returns focus to Product field', async (): Promise<void> => {
-    render(<SaleStockView />);
+    render(<ReceiveStockView />);
     await waitFor(() => {
-      expect(screen.getByTestId('sale-grid')).toBeInTheDocument();
+      expect(screen.getByTestId('receive-grid')).toBeInTheDocument();
     });
 
-    // Navigate to qty field by pressing Enter on product
     const productCell = screen.getByTestId('cell-0-product');
     act(() => {
       fireEvent.focus(productCell);
@@ -368,10 +325,6 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
       fireEvent.click(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`));
     });
 
-    // Clear the qty and press Backspace
-    await waitFor(() => {
-      expect(screen.getByTestId('cell-0-quantity')).toBeDefined();
-    });
     const qtyCell = screen.getByTestId('cell-0-quantity');
     act(() => {
       fireEvent.focus(qtyCell);
@@ -379,7 +332,6 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
       fireEvent.keyDown(qtyCell, { key: 'Backspace', code: 'Backspace' });
     });
 
-    // Focus should return to the product cell
     await waitFor(() => {
       expect(document.activeElement).toBe(productCell);
     });

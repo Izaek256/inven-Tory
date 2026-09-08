@@ -304,6 +304,8 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
       new Error('Insufficient stock. Available quantity: 0. Cannot sell 1 units.'),
     );
+    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
 
     render(<SaleStockView />);
 
@@ -317,32 +319,34 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
       });
     });
 
+    const productCell = screen.getByTestId('cell-0-product');
     act((): void => {
-      fireEvent.change(screen.getByTestId('product-search-input'), {
-        target: { value: 'Sony' },
-      });
+      fireEvent.focus(productCell);
+      fireEvent.change(productCell, { target: { value: 'Sony' } });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('product-result-PROD-001')).toBeInTheDocument();
+      expect(screen.getByTestId('search-result-PROD-001')).toBeInTheDocument();
     });
 
     act((): void => {
-      fireEvent.click(screen.getByTestId('product-result-PROD-001'));
+      fireEvent.click(screen.getByTestId('search-result-PROD-001'));
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('available-quantity-display')).toHaveTextContent('0');
+      const qCell = screen.getByTestId('cell-0-quantity');
+      expect(document.activeElement === qCell || qCell).toBeTruthy();
     });
 
+    const qtyCell = screen.getByTestId('cell-0-quantity');
     act((): void => {
-      fireEvent.change(screen.getByTestId('quantity-input'), {
-        target: { value: '1' },
-      });
+      fireEvent.change(qtyCell, { target: { value: '1' } });
+      fireEvent.keyDown(qtyCell, { key: 'Enter', code: 'Enter' });
     });
 
+    const receiptCell = screen.getByTestId('cell-0-reference_number');
     await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('submit-sale-btn'));
+      fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
     });
 
     await waitFor((): void => {

@@ -338,6 +338,32 @@ async def _ingest_transaction_impl(
         raise RuntimeError(f"_ingest_transaction_impl step 1a SELECT failed: {_step1a_error}")
     if ledger_row is not None:
         # There is a ledger row — this is definitively accepted.
+        # If the payload's quantity_delta differs from the stored value,
+        # apply an in-place UPDATE to the ledger row and adjust the
+        # stock_balance by the delta difference.
+        if ledger_row.quantity_delta != payload.quantity_delta:
+            balance_diff = payload.quantity_delta - ledger_row.quantity_delta
+            ledger_row.quantity_delta = payload.quantity_delta
+            if payload.reference_number is not None:
+                ledger_row.reference_number = payload.reference_number
+            if payload.reason_code is not None:
+                ledger_row.reason_code = payload.reason_code
+            if payload.movement_type is not None:
+                ledger_row.movement_type = payload.movement_type
+            try:
+                with db.no_autoflush:
+                    await _upsert_stock_balance(
+                        db,
+                        ledger_row.store_id,
+                        ledger_row.product_id,
+                        ledger_row.stock_bucket,
+                        balance_diff,
+                    )
+                    await db.flush()
+            except Exception:
+                await _rb()
+                raise
+
         existing_receipt: SyncReceipt | None = None
         try:
             existing_receipt = await db.get(SyncReceipt, payload.transaction_id)

@@ -16,6 +16,7 @@
   "dependencies": {
     "@inven-tory/shared-types": "*",
     "@inven-tory/ui": "*",
+    "@react-pdf/renderer": "^4.1.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-store": "^2.4.4",
     "lucide-react": "^0.400.0",

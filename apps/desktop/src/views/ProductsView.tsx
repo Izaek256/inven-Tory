@@ -56,9 +56,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     fetchProductsList();
   }, [fetchProductsList]);
 
-  // Derived category list
-  const categories = Array.from(new Set(products.map((p) => p.category))).sort();
-
   // Filtered products list
   const filteredProducts = products.filter((p) => {
     const term = searchQuery.toLowerCase().trim();

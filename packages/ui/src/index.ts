@@ -3,6 +3,7 @@ export * from './ThemeContext';
 
 // Hooks
 export * from './hooks/useKeyboardEntryFlow';
+export * from './hooks/useGridKeyboardFlow';
 
 // Components
 export * from './components/Button';
@@ -19,3 +20,4 @@ export * from './components/Spinner';
 export * from './components/StepIndicator';
 export * from './components/LiveSearchPanel';
 export * from './components/LinearEntryForm';
+export * from './components/LinearGridEntry';

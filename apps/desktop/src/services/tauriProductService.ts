@@ -85,13 +85,24 @@ export async function searchProducts(query: string): Promise<Product[]> {
 export async function searchProductsFts5(query: string): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product[]>('search_products_fts5', { query });
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[TauriProductService] searchProductsFts5 failed:', err);
-      throw new Error(`Failed to search products (FTS5): ${String(err)}`);
+      const results = await invoke<Product[]>('search_products_fts5', { query });
+      if (results && results.length > 0) {
+        return results;
+      }
+      return await invoke<Product[]>('search_products', { query });
+    } catch {
+      try {
+        return await invoke<Product[]>('search_products', { query });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[TauriProductService] searchProductsFts5 failed:', err);
+        throw new Error(`Failed to search products (FTS5): ${String(err)}`);
+      }
     }
   }
+
+  const apiResults = await _fetchApi<Product[]>(`/products?search=${encodeURIComponent(query)}`);
+  if (apiResults) return apiResults;
 
   throw new Error(
     '[TauriProductService] searchProductsFts5() requires the Tauri runtime. Non-Tauri environments are not supported in production.',

@@ -17,6 +17,7 @@ export interface LiveSearchPanelProps {
   onHighlightedIndexChange: (index: number) => void;
   emptyState?: React.ReactNode;
   recentItems?: SearchResultItem[];
+  allItems?: SearchResultItem[];
   dataTestid?: string;
 }
 
@@ -29,17 +30,51 @@ export function LiveSearchPanel({
   onHighlightedIndexChange,
   emptyState,
   recentItems = [],
+  allItems = [],
   dataTestid,
 }: LiveSearchPanelProps): React.ReactElement {
   const [localHighlightedIndex, setLocalHighlightedIndex] = React.useState(highlightedIndex);
+  const itemRefs = React.useRef<(HTMLDivElement | null)[]>([]);
 
   React.useEffect(() => {
     setLocalHighlightedIndex(highlightedIndex);
+    if (highlightedIndex >= 0) {
+      const el = itemRefs.current[highlightedIndex];
+      if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({
+          block: 'nearest',
+          behavior: 'auto',
+        });
+      }
+    }
   }, [highlightedIndex]);
 
   const showResults = query.trim().length > 0;
-  const displayItems = showResults ? results : recentItems;
+
+  // Immediate client-side filtering on allItems on every keystroke
+  const filteredAllItems = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || allItems.length === 0) return [];
+    return allItems.filter(
+      (item) =>
+        item.label.toLowerCase().includes(q) ||
+        (item.subtitle && item.subtitle.toLowerCase().includes(q)) ||
+        (item.detail && item.detail.toLowerCase().includes(q)),
+    );
+  }, [allItems, query]);
+
+  // If backend results are ready, display them; otherwise display the instantly filtered list
+  const displayItems = showResults
+    ? results.length > 0
+      ? results
+      : filteredAllItems
+    : allItems.length > 0
+      ? allItems
+      : recentItems;
+
   const isEmpty = !isLoading && displayItems.length === 0;
+  const showAllItemsLabel = !showResults && allItems.length > 0;
+  const showRecentLabel = !showResults && allItems.length === 0 && recentItems.length > 0;
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'ArrowDown') {
@@ -73,7 +108,7 @@ export function LiveSearchPanel({
       data-testid={dataTestid}
       style={{
         width: '100%',
-        maxHeight: '320px',
+        maxHeight: '400px',
         overflowY: 'auto',
         border: '1px solid var(--it-border)',
         borderRadius: 'var(--it-r-md)',
@@ -107,13 +142,28 @@ export function LiveSearchPanel({
             fontSize: '13px',
           }}
         >
-          {showResults ? 'No results found' : (emptyState ?? 'No recent items')}
+          {showResults ? 'No results found' : (emptyState ?? 'No products available')}
         </div>
       )}
 
       {!isLoading && !isEmpty && (
         <div>
-          {!showResults && recentItems.length > 0 && (
+          {showAllItemsLabel && (
+            <div
+              style={{
+                padding: '8px 14px',
+                fontSize: '11px',
+                color: 'var(--it-text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: 'var(--it-tracking-label)',
+                fontWeight: 600,
+                borderBottom: '1px solid var(--it-border)',
+              }}
+            >
+              All Products
+            </div>
+          )}
+          {showRecentLabel && (
             <div
               style={{
                 padding: '8px 14px',
@@ -131,46 +181,69 @@ export function LiveSearchPanel({
           {displayItems.map((item, idx) => (
             <div
               key={item.id}
+              ref={(el) => {
+                itemRefs.current[idx] = el;
+              }}
               role="option"
               aria-selected={idx === highlightedIndex}
               data-testid={`search-result-${item.id}`}
               onClick={() => onSelect(item)}
               onMouseEnter={() => onHighlightedIndexChange(idx)}
               style={{
-                padding: '10px 14px',
+                padding: '6px 12px',
                 cursor: 'pointer',
                 borderBottom: '1px solid var(--it-border)',
                 backgroundColor: idx === highlightedIndex ? 'var(--it-surface)' : 'transparent',
                 display: 'flex',
-                flexDirection: 'column',
-                gap: '2px',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: '8px',
               }}
             >
-              <span
-                style={{
-                  fontWeight: 600,
-                  fontSize: '13px',
-                  color: 'var(--it-text-primary)',
-                }}
-              >
-                {item.label}
-              </span>
-              {item.subtitle && (
-                <span
+              {/* Left: name + model subtext */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
                   style={{
-                    fontSize: '12px',
-                    color: 'var(--it-text-secondary)',
-                    fontFamily: 'var(--it-font-mono)',
+                    fontWeight: 600,
+                    fontSize: '13px',
+                    color: 'var(--it-text-primary)',
+                    whiteSpace: 'nowrap',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
                   }}
                 >
-                  {item.subtitle}
-                </span>
-              )}
+                  {item.label}
+                </div>
+                {item.subtitle && (
+                  <div
+                    style={{
+                      fontSize: '11px',
+                      color: 'var(--it-text-secondary)',
+                      fontStyle: 'italic',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {item.subtitle}
+                  </div>
+                )}
+              </div>
+
+              {/* Right: qty badge */}
               {item.detail && (
                 <span
                   style={{
-                    fontSize: '12px',
+                    flexShrink: 0,
+                    fontSize: '11px',
+                    fontWeight: 600,
                     color: 'var(--it-text-secondary)',
+                    backgroundColor: 'var(--it-surface)',
+                    border: '1px solid var(--it-border)',
+                    borderRadius: '10px',
+                    padding: '1px 7px',
+                    fontFamily: 'var(--it-font-mono)',
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   {item.detail}
