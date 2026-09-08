@@ -246,7 +246,14 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
     await waitFor(() => {
       expect(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`)).toBeInTheDocument();
     });
-    expect(tauriProductService.searchProductsFts5).toHaveBeenCalledWith('His');
+
+    // Wait for the debounced backend search to fire (100ms debounce in SaleStockView.tsx)
+    await waitFor(
+      () => {
+        expect(tauriProductService.searchProductsFts5).toHaveBeenCalledWith('His');
+      },
+      { timeout: 1000 },
+    );
   });
 
   // ─── AT-001: sell 1 unit successfully ────────────────────────────────────
