@@ -2,7 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { Trash2, Check, AlertCircle } from 'lucide-react';
 import { createProduct } from '../services/tauriProductService';
 import { CreateProductInput } from '../types/product';
-import { LinearEntryForm, FieldDef } from '@invenTory/ui';
+import { LinearGridEntry, GridFieldDef, DataTable } from '@invenTory/ui';
 import type { ColumnDef } from '@invenTory/ui';
 import { Button } from '@invenTory/ui';
 
@@ -26,53 +26,43 @@ const DEFAULT_CATEGORIES = [
 ];
 const DEFAULT_UNITS = ['pcs', 'ctn', 'set', 'box', 'kg', 'm'];
 
-function generateSkuFromCategory(cat: string): string {
-  const clean = cat
-    .replace(/[^A-Za-z0-9]/g, '')
-    .slice(0, 4)
-    .toUpperCase();
-  const prefix = clean || 'PROD';
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `${prefix}-${rand}`;
-}
-
 export const CreateProductView: React.FC = () => {
-  const [category] = useState(DEFAULT_CATEGORIES[0]);
-  const [sku, setSku] = useState(() => generateSkuFromCategory(DEFAULT_CATEGORIES[0]));
-  const [name, setName] = useState('');
-  const [unit, setUnit] = useState('pcs');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [sessionRows, setSessionRows] = useState<SessionRow[]>([]);
 
   const handleCommit = useCallback(
-    async (values: Record<string, string | number>) => {
+    async (row: { id: string; values: Record<string, string | number> }, _rowIndex: number) => {
       setError(null);
       setSuccess(false);
 
-      const finalSku = (values.sku as string) || sku;
-      const finalName = (values.name as string) || name;
-      const finalCategory = (values.category as string) || category;
+      const finalSku = String(row.values.sku ?? '').trim();
+      const finalName = String(row.values.name ?? '').trim();
+      const finalCategory = String(row.values.category ?? '').trim();
 
-      if (!finalName.trim()) {
+      if (!finalName) {
         setError('Product name is required.');
         return;
       }
-      if (!finalCategory.trim()) {
+      if (!finalCategory) {
         setError('Category is required.');
+        return;
+      }
+      if (!finalSku) {
+        setError('SKU is required.');
         return;
       }
 
       try {
         const input: CreateProductInput = {
-          sku: finalSku.trim().toUpperCase(),
-          name: finalName.trim(),
-          brand: (values.brand as string) || undefined,
-          model: (values.model as string) || undefined,
-          category: finalCategory.trim(),
-          unit: (values.unit as string) || 'pcs',
-          barcode: (values.barcode as string) || undefined,
-          alternate_names: (values.alternate_names as string) || undefined,
+          sku: finalSku.toUpperCase(),
+          name: finalName,
+          brand: String(row.values.brand ?? '').trim() || undefined,
+          model: String(row.values.model ?? '').trim() || undefined,
+          category: finalCategory,
+          unit: String(row.values.unit ?? 'pcs').trim(),
+          barcode: String(row.values.barcode ?? '').trim() || undefined,
+          alternate_names: String(row.values.alternate_names ?? '').trim() || undefined,
           serial_tracking_enabled: false,
           is_active: true,
         };
@@ -93,35 +83,30 @@ export const CreateProductView: React.FC = () => {
         ]);
 
         setSuccess(true);
-        setSku(generateSkuFromCategory(finalCategory));
-        setName('');
-        setUnit('pcs');
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       }
     },
-    [category, name, sku],
+    [],
   );
 
-  const removeSessionRow = useCallback((id: string) => {
-    setSessionRows((prev) => prev.filter((r) => r.id !== id));
+  const removeSessionRow = useCallback((rowId: string, _rowIndex: number) => {
+    setSessionRows((prev) => prev.filter((r) => r.id !== rowId));
   }, []);
 
-  const fields: FieldDef[] = [
+  const fields: GridFieldDef[] = [
     {
       id: 'sku',
       type: 'text',
       label: 'SKU',
       required: true,
-      defaultValue: sku,
-      placeholder: 'Auto-generated from category',
+      placeholder: 'e.g. PROD-1234',
     },
     {
       id: 'name',
       type: 'text',
       label: 'Product Name',
       required: true,
-      defaultValue: '',
       placeholder: 'e.g. Apple iPhone 15 Pro 256GB',
     },
     {
@@ -129,7 +114,6 @@ export const CreateProductView: React.FC = () => {
       type: 'text',
       label: 'Brand',
       required: false,
-      defaultValue: '',
       placeholder: 'e.g. Apple, Samsung',
     },
     {
@@ -137,7 +121,6 @@ export const CreateProductView: React.FC = () => {
       type: 'text',
       label: 'Model',
       required: false,
-      defaultValue: '',
       placeholder: 'e.g. A3102',
     },
     {
@@ -145,7 +128,6 @@ export const CreateProductView: React.FC = () => {
       type: 'select',
       label: 'Category',
       required: true,
-      defaultValue: category,
       options: DEFAULT_CATEGORIES.map((c) => ({ value: c, label: c })),
     },
     {
@@ -153,7 +135,7 @@ export const CreateProductView: React.FC = () => {
       type: 'select',
       label: 'Unit',
       required: true,
-      defaultValue: unit,
+      defaultValue: 'pcs',
       options: DEFAULT_UNITS.map((u) => ({ value: u, label: u })),
     },
     {
@@ -161,7 +143,6 @@ export const CreateProductView: React.FC = () => {
       type: 'text',
       label: 'Barcode',
       required: false,
-      defaultValue: '',
       placeholder: 'EAN / UPC / Internal',
     },
     {
@@ -169,7 +150,6 @@ export const CreateProductView: React.FC = () => {
       type: 'text',
       label: 'Alternate Names',
       required: false,
-      defaultValue: '',
       placeholder: 'Comma-separated aliases',
     },
   ];
@@ -228,7 +208,7 @@ export const CreateProductView: React.FC = () => {
             size="sm"
             iconOnly
             title="Remove entry"
-            onClick={() => removeSessionRow(row.id)}
+            onClick={() => removeSessionRow(row.id, 0)}
             data-testid={`void-product-${row.id}`}
           >
             <Trash2 size={14} />
@@ -273,14 +253,45 @@ export const CreateProductView: React.FC = () => {
           </div>
         )}
 
-        <LinearEntryForm
-          dataTestid="create-product-form"
+        <LinearGridEntry
+          dataTestid="create-product-grid"
           fields={fields}
-          onCommit={handleCommit}
-          sessionTableTitle="Recently Created"
-          sessionTableColumns={columns}
-          sessionTableRows={sessionRows}
-          sessionTableEmptyState={
+          onCommitRow={handleCommit}
+          onSearch={() => {}}
+          onBarcodeScan={() => {}}
+          searchResults={[]}
+          allItems={[]}
+          initialRowCount={5}
+          fieldTestIds={{
+            sku: 'field-sku',
+            name: 'field-name',
+            brand: 'field-brand',
+            model: 'field-model',
+            category: 'field-category',
+            unit: 'field-unit',
+            barcode: 'field-barcode',
+            alternate_names: 'field-alternate_names',
+          }}
+          onVoidRow={removeSessionRow}
+        />
+
+        <h3
+          style={{
+            marginTop: '24px',
+            marginBottom: '12px',
+            fontSize: '16px',
+            fontWeight: 600,
+            color: 'var(--it-text-primary)',
+          }}
+        >
+          Recently Created
+        </h3>
+
+        <DataTable<SessionRow>
+          columns={columns}
+          rows={sessionRows}
+          rowKey={(row) => row.id}
+          emptySlot={
             <div
               style={{
                 color: 'var(--it-text-secondary)',
@@ -292,6 +303,7 @@ export const CreateProductView: React.FC = () => {
               No products created yet
             </div>
           }
+          data-testid="recently-created-table"
         />
       </div>
     </div>

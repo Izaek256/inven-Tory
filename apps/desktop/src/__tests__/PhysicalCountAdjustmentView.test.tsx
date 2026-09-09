@@ -7,7 +7,7 @@
  *     with reason, responsible user, and audit trail.
  *
  * Additional coverage:
- *   - Step 1: renders count session with linear entry form and count sheet.
+ *   - Step 1: renders count session with linear grid entry and count sheet.
  *   - Step 2: requires reason + elevated-permission flag; rejects on either missing.
  *   - Step 3: done panel shows the confirmed ADJUSTMENT transaction details.
  *   - Negative-stock guard: adjustment that would go below 0 is rejected cleanly.
@@ -94,9 +94,10 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     });
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
   });
 
-  /** Renders the view and walks through Step 1 to select store + product. */
+  /** Renders the view and walks through Step 1 to select product. */
   async function selectProductWithBalance(systemQty: number): Promise<void> {
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
       id: 'SB-STORE-001-PROD-TV-55-AVAILABLE',
@@ -110,11 +111,13 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     render(<PhysicalCountAdjustmentView />);
 
     await waitFor((): void => {
-      expect(screen.getByTestId('field-store')).toBeInTheDocument();
+      expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
     });
 
+    // Target the first product field - there are multiple rows, so get the first one
+    const productFields = screen.getAllByTestId('field-product');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-product'), {
+      fireEvent.change(productFields[0], {
         target: { value: 'Sony' },
       });
     });
@@ -125,6 +128,12 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     act((): void => {
       fireEvent.click(screen.getByTestId('search-result-PROD-TV-55'));
+    });
+
+    // Wait for the setTimeout inside handleSearchSelect to fire,
+    // which advances focus from the product field to countedQty (field index 1).
+    await act(async (): Promise<void> => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
     });
   }
 
@@ -144,7 +153,7 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     render(<PhysicalCountAdjustmentView />);
     expect(screen.getByTestId('physical-count-view')).toBeInTheDocument();
     expect(screen.getByTestId('step-indicator')).toBeInTheDocument();
-    expect(screen.getByTestId('count-session-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
   });
 
   // -------------------------------------------------------------------------
@@ -154,18 +163,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
   it('Step 1: adds a count line to the sheet when product and counted qty are entered', async (): Promise<void> => {
     await selectProductWithBalance(18);
 
+    const countedQtyFields = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFields[0], {
         target: { value: '17' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFields[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
   });
 
@@ -180,18 +193,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     await selectProductWithBalance(18);
 
+    const countedQtyFields = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFields[0], {
         target: { value: '17' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFields[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -249,18 +266,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     await selectProductWithBalance(18);
 
+    const countedQtyFields = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFields[0], {
         target: { value: '17' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFields[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -296,18 +317,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     await selectProductWithBalance(18);
 
+    const countedQtyFields = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFields[0], {
         target: { value: '17' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFields[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -349,18 +374,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     await selectProductWithBalance(5);
 
+    const countedQtyFieldsPos = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFieldsPos[0], {
         target: { value: '8' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFieldsPos[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -401,18 +430,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
   it('back button on Step 2 returns user to Step 1', async (): Promise<void> => {
     await selectProductWithBalance(18);
 
+    const countedQtyFields = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFields[0], {
         target: { value: '17' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFields[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -428,7 +461,7 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('count-session-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
     });
   });
 
@@ -443,18 +476,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     await selectProductWithBalance(18);
 
+    const countedQtyFields = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFields[0], {
         target: { value: '17' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFields[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {
@@ -488,7 +525,7 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('count-session-panel')).toBeInTheDocument();
+      expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
     });
   });
 
@@ -505,18 +542,22 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
 
     await selectProductWithBalance(0);
 
+    const countedQtyFieldsNeg = screen.getAllByTestId('field-countedQty');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
+      fireEvent.change(countedQtyFieldsNeg[0], {
         target: { value: '0' },
       });
     });
 
+    // Press Enter to commit the row
     act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
+      fireEvent.keyDown(countedQtyFieldsNeg[0], {
+        key: 'Enter',
+      });
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
     await act(async (): Promise<void> => {

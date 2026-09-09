@@ -20,9 +20,10 @@ import {
   StepIndicator as SharedStepIndicator,
   Badge,
   BadgeStatus,
-  LinearEntryForm,
-  FieldDef,
+  LinearGridEntry,
+  GridFieldDef,
   SearchResultItem,
+  DataTable,
 } from '@invenTory/ui';
 import type { ColumnDef } from '@invenTory/ui';
 
@@ -103,7 +104,6 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   const [step, setStep] = useState<Step>('count');
   const [stores, setStores] = useState<Store[]>([]);
   const [selectedStoreId, setSelectedStoreId] = useState('');
-  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [countEntries, setCountEntries] = useState<CountEntry[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +115,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [productMap, setProductMap] = useState<Map<string, Product>>(new Map());
 
   useEffect(() => {
     const loadStores = async (): Promise<void> => {
@@ -132,7 +133,26 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleSearch = useCallback(async (query: string) => {
+  useEffect(() => {
+    const loadAllProducts = async (): Promise<void> => {
+      try {
+        const { getProducts } = await import('../services/tauriProductService');
+        const products = await getProducts();
+        const active = products.filter((p) => p.is_active);
+
+        const pMap = new Map<string, Product>();
+        active.forEach((p) => {
+          pMap.set(p.id, p);
+        });
+        setProductMap(pMap);
+      } catch {
+        // Silently fail — FTS5 search will still work
+      }
+    };
+    void loadAllProducts();
+  }, []);
+
+  const handleSearch = useCallback(async (query: string, _rowIndex: number) => {
     if (!query.trim()) {
       setSearchResults([]);
       return;
@@ -145,80 +165,92 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
           id: p.id,
           label: p.name,
           subtitle: `SKU: ${p.sku}${p.barcode ? ` • Barcode: ${p.barcode}` : ''}`,
-          name: p.name,
-          sku: p.sku,
-          category: p.category,
-          unit: p.unit,
-          barcode: p.barcode,
-          brand: p.brand,
-          model: p.model,
-          is_active: p.is_active,
+          detail: undefined,
         })) as SearchResultItem[];
       setSearchResults(mapped);
+
+      // Update product map with search results
+      setProductMap((prev) => {
+        const next = new Map(prev);
+        results.forEach((p) => next.set(p.id, p));
+        return next;
+      });
     } catch {
       setSearchResults([]);
     }
   }, []);
 
-  const handleSearchSelect = useCallback(
-    (item: SearchResultItem) => {
-      const product = item as unknown as Product;
-      if (selectedStoreId) {
-        setSelectedProduct(product);
-        void getStockBalance(selectedStoreId, product.id).catch(() => {
-          // silently fail
-        });
-      } else {
-        setSelectedProduct(product);
+  const handleBarcodeScan = useCallback((barcode: string, _rowIndex: number): void => {
+    if (!barcode.trim()) return;
+    void (async (): Promise<void> => {
+      try {
+        const results = await searchProductsFts5(barcode);
+        const exact = results.find((p) => p.barcode === barcode || p.sku === barcode);
+        if (exact) {
+          setSearchResults([
+            {
+              id: exact.id,
+              label: exact.name,
+              subtitle: exact.model ?? undefined,
+              detail: undefined,
+            },
+          ]);
+        }
+      } catch {
+        // Ignore scan errors
       }
-    },
-    [selectedStoreId],
-  );
+    })();
+  }, []);
 
   const handleCountCommit = useCallback(
-    async (values: Record<string, string | number>) => {
-      const storeId = values.store as string;
-      const countedQty = typeof values.countedQty === 'number' ? values.countedQty : 0;
-
-      if (!storeId) {
+    async (row: { id: string; values: Record<string, string | number> }, _rowIndex: number) => {
+      if (!selectedStoreId) {
         setError('Please select a store');
         return;
       }
 
-      const product = selectedProduct;
-      if (!product) {
+      const productName = String(row.values.product ?? '').trim();
+      if (!productName) {
         setError('Please select a product');
         return;
       }
 
-      let sysQty = 0;
+      // Resolve product from search results
+      const productId = String(row.values.product_id ?? '');
+      const product = productMap.get(productId);
+      if (!product) {
+        setError(`Product "${productName}" not found — please search and select from the panel`);
+        return;
+      }
+
+      const countedQty = Number(row.values.countedQty ?? 0);
+
+      let systemQty = 0;
       try {
-        const bal = await getStockBalance(storeId, product.id);
-        sysQty = bal.quantity;
+        const bal = await getStockBalance(selectedStoreId, product.id);
+        systemQty = bal.quantity;
       } catch {
-        sysQty = 0;
+        systemQty = 0;
       }
 
       const entry: CountEntry = {
-        id: `${Date.now()}-${Math.random()}`,
+        id: row.id,
         productId: product.id,
         productName: product.name,
         sku: product.sku,
-        systemQty: sysQty,
+        systemQty,
         countedQty,
-        variance: countedQty - sysQty,
+        variance: countedQty - systemQty,
         timestamp: new Date().toLocaleString(),
       };
 
       setCountEntries((prev) => [...prev, entry]);
-      setSelectedProduct(null);
-      setSearchResults([]);
     },
-    [selectedProduct],
+    [selectedStoreId, productMap],
   );
 
-  const handleVoidCount = useCallback((id: string) => {
-    setCountEntries((prev) => prev.filter((entry) => entry.id !== id));
+  const handleVoidCount = useCallback((rowId: string, _rowIndex: number) => {
+    setCountEntries((prev) => prev.filter((entry) => entry.id !== rowId));
   }, []);
 
   const handleProceedToApproval = (): void => {
@@ -297,7 +329,6 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   const handleReset = (): void => {
     setStep('count');
     setCountEntries([]);
-    setSelectedProduct(null);
     setSearchResults([]);
     setError(null);
     setApprovedTransaction(null);
@@ -371,7 +402,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
             size="sm"
             iconOnly
             title="Remove entry"
-            onClick={() => handleVoidCount(row.id)}
+            onClick={() => handleVoidCount(row.id, 0)}
             data-testid={`void-count-${row.id}`}
           >
             <Trash2 size={14} />
@@ -381,27 +412,18 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     },
   ];
 
-  const countFields: FieldDef[] = [
-    {
-      id: 'store',
-      type: 'select',
-      label: 'Store',
-      required: true,
-      defaultValue: selectedStoreId,
-      options: stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` })),
-    },
+  const countFields: GridFieldDef[] = [
     {
       id: 'product',
       type: 'text',
       label: 'Product',
       required: true,
-      placeholder: selectedProduct ? selectedProduct.name : 'Search by name or SKU...',
-      defaultValue: selectedProduct ? selectedProduct.name : '',
+      placeholder: 'Search by name or SKU...',
     },
     {
       id: 'countedQty',
       type: 'number',
-      label: 'Counted Quantity',
+      label: 'Counted Qty',
       required: true,
       defaultValue: 0,
       min: 0,
@@ -444,24 +466,47 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
           style={{ display: 'flex', gap: '24px', flexWrap: 'wrap' }}
         >
           <div style={{ flex: '1 1 60%', minWidth: '320px' }}>
-            <LinearEntryForm
-              dataTestid="count-session-linear"
-              title="Step 1 — Enter Physical Count"
-              subtitle="Scan or type products, enter counted quantity, press Enter to add to sheet"
+            <div className="view-header" style={{ marginBottom: '16px' }}>
+              <div>
+                <h2 className="view-title">Step 1 — Enter Physical Count</h2>
+                <p className="view-subtitle">
+                  Scan or type products, enter counted quantity, press Enter to add to sheet
+                </p>
+              </div>
+            </div>
+
+            <LinearGridEntry
+              dataTestid="count-session-grid"
               fields={countFields}
+              onCommitRow={handleCountCommit}
+              onSearch={handleSearch}
+              onBarcodeScan={handleBarcodeScan}
+              searchResults={searchResults}
+              allItems={[]}
+              initialRowCount={5}
               fieldTestIds={{
-                store: 'field-store',
                 product: 'field-product',
                 countedQty: 'field-countedQty',
               }}
-              onCommit={handleCountCommit}
-              searchResults={searchResults}
-              onSearch={handleSearch}
-              onSearchSelect={handleSearchSelect}
-              sessionTableTitle="Count Sheet"
-              sessionTableColumns={countColumns}
-              sessionTableRows={countEntries}
-              sessionTableEmptyState={
+            />
+
+            <h3
+              style={{
+                marginTop: '24px',
+                marginBottom: '12px',
+                fontSize: '16px',
+                fontWeight: 600,
+                color: 'var(--it-text-primary)',
+              }}
+            >
+              Count Sheet
+            </h3>
+
+            <DataTable<CountEntry>
+              columns={countColumns}
+              rows={countEntries}
+              rowKey={(row) => row.id}
+              emptySlot={
                 <div
                   style={{
                     color: 'var(--it-text-secondary)',
@@ -473,7 +518,9 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
                   No entries yet
                 </div>
               }
+              data-testid="count-sheet-table"
             />
+
             <div style={{ marginTop: '16px' }}>
               <Button
                 type="button"

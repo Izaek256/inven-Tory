@@ -10,6 +10,7 @@ export interface GridFieldDef {
   min?: number;
   max?: number;
   options?: { value: string; label: string }[];
+  readOnly?: boolean;
 }
 
 export interface GridRow {

@@ -407,8 +407,8 @@ export function LinearGridEntry({
                       const cellValue = isEditing
                         ? (editValues[field.id] ?? '')
                         : (row.values[field.id] ?? '');
-                      // disabled: committed rows that are NOT being edited
-                      const isDisabled = row.committed && !isEditing;
+                      // disabled: committed rows that are NOT being edited, OR field is readOnly
+                      const isDisabled = (row.committed && !isEditing) || field.readOnly;
 
                       return (
                         <td key={field.id} style={{ padding: '3px 4px' }}>
