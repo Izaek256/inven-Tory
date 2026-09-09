@@ -5,6 +5,11 @@
   "description": "Shared design-system components and tokens for invenTory",
   "main": "src/index.ts",
   "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./tokens.css": "./src/tokens.css",
+    "./src/tokens.css": "./src/tokens.css"
+  },
   "scripts": {
     "lint": "eslint src --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
