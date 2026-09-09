@@ -225,7 +225,7 @@ export function LinearGridEntry({
   // is highlighted. We intercept Enter at the input level to do this:
   const handleInputKeyDown = useCallback(
     (rowIndex: number, fieldIndex: number) =>
-      (e: React.KeyboardEvent<HTMLInputElement>): void => {
+      (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>): void => {
         const row = rows[rowIndex];
         if (row?.committed) {
           if (e.key === 'Enter') {
@@ -237,7 +237,7 @@ export function LinearGridEntry({
               setTimeout(() => {
                 const el = document.querySelector(
                   `[data-cell-id="${cellId}"]`,
-                ) as HTMLInputElement | null;
+                ) as HTMLElement | null;
                 el?.focus();
               }, 0);
             }
@@ -261,17 +261,19 @@ export function LinearGridEntry({
 
         if (e.key === 'Backspace') {
           const el = e.currentTarget;
-          if (el.value === '' && fieldIndex > 0) {
+          if ((el as HTMLInputElement | HTMLSelectElement).value === '' && fieldIndex > 0) {
             e.preventDefault();
             handleFieldFocus(rowIndex, fieldIndex - 1);
             const prevCellId = getCellId(rowIndex, fields[fieldIndex - 1]?.id ?? '');
             setTimeout(() => {
               const prevEl = document.querySelector(
                 `[data-cell-id="${prevCellId}"]`,
-              ) as HTMLInputElement | null;
+              ) as HTMLElement | null;
               if (prevEl) {
                 prevEl.focus();
-                prevEl.select();
+                if (typeof (prevEl as HTMLInputElement).select === 'function') {
+                  (prevEl as HTMLInputElement).select();
+                }
               }
             }, 0);
           }
@@ -407,74 +409,129 @@ export function LinearGridEntry({
                       const cellValue = isEditing
                         ? (editValues[field.id] ?? '')
                         : (row.values[field.id] ?? '');
-                      // disabled: committed rows that are NOT being edited
-                      const isDisabled = row.committed && !isEditing;
+                      // disabled: committed rows that are NOT being edited, OR field is readOnly
+                      const isDisabled = (row.committed && !isEditing) || field.readOnly;
 
                       return (
                         <td key={field.id} style={{ padding: '3px 4px' }}>
-                          <input
-                            data-cell-id={cellId}
-                            data-testid={testId}
-                            type={field.type === 'number' ? 'number' : 'text'}
-                            value={cellValue}
-                            placeholder={isDisabled ? '' : field.placeholder}
-                            disabled={isDisabled}
-                            onChange={
-                              isEditing
-                                ? (e): void =>
-                                    setEditValues((prev) => ({
-                                      ...prev,
-                                      [field.id]: e.target.value,
-                                    }))
-                                : handleInputChange(rowIndex, field.id)
-                            }
-                            onFocus={handleInputFocus(rowIndex, fieldIndex)}
-                            onKeyDown={
-                              isEditing
-                                ? (e): void => {
-                                    if (e.key === 'Enter') {
-                                      e.preventDefault();
-                                      void commitEdit(row.id);
+                          {field.type === 'select' && field.options ? (
+                            <select
+                              data-cell-id={cellId}
+                              data-testid={testId}
+                              value={String(cellValue)}
+                              disabled={isDisabled}
+                              onChange={
+                                isEditing
+                                  ? (e): void =>
+                                      setEditValues((prev) => ({
+                                        ...prev,
+                                        [field.id]: e.target.value,
+                                      }))
+                                  : (e): void =>
+                                      handleFieldChange(rowIndex, field.id, e.target.value)
+                              }
+                              onFocus={handleInputFocus(rowIndex, fieldIndex)}
+                              onKeyDown={handleInputKeyDown(rowIndex, fieldIndex)}
+                              ref={(el) => registerFieldRef(cellId, el)}
+                              style={{
+                                width: '100%',
+                                padding: '5px 7px',
+                                border:
+                                  isActive && !isEditing
+                                    ? '2px solid var(--it-accent)'
+                                    : isEditing
+                                      ? '1px solid var(--it-accent)'
+                                      : '1px solid transparent',
+                                borderRadius: 'var(--it-r-sm)',
+                                backgroundColor: isEditing
+                                  ? 'var(--it-card)'
+                                  : isDisabled
+                                    ? 'transparent'
+                                    : isActive
+                                      ? 'var(--it-card)'
+                                      : 'transparent',
+                                color: isDisabled
+                                  ? 'var(--it-text-secondary)'
+                                  : 'var(--it-text-primary)',
+                                fontSize: '13px',
+                                fontFamily: 'var(--it-font-ui)',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                                cursor: isDisabled ? 'default' : 'pointer',
+                              }}
+                            >
+                              {!field.required && <option value="">—</option>}
+                              {field.options.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <input
+                              data-cell-id={cellId}
+                              data-testid={testId}
+                              type={field.type === 'number' ? 'number' : 'text'}
+                              value={cellValue}
+                              placeholder={isDisabled ? '' : field.placeholder}
+                              disabled={isDisabled}
+                              onChange={
+                                isEditing
+                                  ? (e): void =>
+                                      setEditValues((prev) => ({
+                                        ...prev,
+                                        [field.id]: e.target.value,
+                                      }))
+                                  : handleInputChange(rowIndex, field.id)
+                              }
+                              onFocus={handleInputFocus(rowIndex, fieldIndex)}
+                              onKeyDown={
+                                isEditing
+                                  ? (e): void => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        void commitEdit(row.id);
+                                      }
+                                      if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        setEditingRowId(null);
+                                      }
                                     }
-                                    if (e.key === 'Escape') {
-                                      e.preventDefault();
-                                      setEditingRowId(null);
-                                    }
-                                  }
-                                : handleInputKeyDown(rowIndex, fieldIndex)
-                            }
-                            ref={(el) => registerFieldRef(cellId, el)}
-                            min={field.min}
-                            max={field.max}
-                            style={{
-                              width: '100%',
-                              padding: '5px 7px',
-                              border:
-                                isActive && !isEditing
-                                  ? '2px solid var(--it-accent)'
-                                  : isEditing
-                                    ? '1px solid var(--it-accent)'
-                                    : '1px solid transparent',
-                              borderRadius: 'var(--it-r-sm)',
-                              backgroundColor: isEditing
-                                ? 'var(--it-card)'
-                                : isDisabled
-                                  ? 'transparent'
-                                  : isActive
-                                    ? 'var(--it-card)'
-                                    : 'transparent',
-                              color: isDisabled
-                                ? 'var(--it-text-secondary)'
-                                : 'var(--it-text-primary)',
-                              fontSize: '13px',
-                              fontFamily:
-                                field.type === 'number'
-                                  ? 'var(--it-font-mono)'
-                                  : 'var(--it-font-ui)',
-                              outline: 'none',
-                              boxSizing: 'border-box',
-                            }}
-                          />
+                                  : handleInputKeyDown(rowIndex, fieldIndex)
+                              }
+                              ref={(el) => registerFieldRef(cellId, el)}
+                              min={field.min}
+                              max={field.max}
+                              style={{
+                                width: '100%',
+                                padding: '5px 7px',
+                                border:
+                                  isActive && !isEditing
+                                    ? '2px solid var(--it-accent)'
+                                    : isEditing
+                                      ? '1px solid var(--it-accent)'
+                                      : '1px solid transparent',
+                                borderRadius: 'var(--it-r-sm)',
+                                backgroundColor: isEditing
+                                  ? 'var(--it-card)'
+                                  : isDisabled
+                                    ? 'transparent'
+                                    : isActive
+                                      ? 'var(--it-card)'
+                                      : 'transparent',
+                                color: isDisabled
+                                  ? 'var(--it-text-secondary)'
+                                  : 'var(--it-text-primary)',
+                                fontSize: '13px',
+                                fontFamily:
+                                  field.type === 'number'
+                                    ? 'var(--it-font-mono)'
+                                    : 'var(--it-font-ui)',
+                                outline: 'none',
+                                boxSizing: 'border-box',
+                              }}
+                            />
+                          )}
                         </td>
                       );
                     })}

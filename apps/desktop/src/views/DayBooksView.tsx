@@ -179,13 +179,28 @@ function _buildLocalDayBooks(
   const dayBooks: DayBook[] = [];
   const detailMap = new Map<string, DayBookDetail>();
 
-  for (const [date, txns] of byDate) {
+  // Carry per-product running totals across days so opening balances are correct.
+  // Key: productId → cumulative quantity_delta from all prior days.
+  const carryOver = new Map<string, number>();
+
+  // Process dates in chronological order so carry-over accumulates correctly.
+  const sortedDates = [...byDate.keys()].sort();
+
+  for (const date of sortedDates) {
+    const txns = byDate.get(date)!;
     const id = `local-${storeId}-${date}`;
-    const entries: DayBookEntry[] = txns.map((t, idx) => {
-      let balance = 0;
-      for (let i = 0; i <= idx; i++) {
-        balance += txns[i].quantity_delta;
-      }
+
+    // Opening balance for this day = sum of all deltas for each product up to (but not including) today.
+    // We compute a single aggregate opening balance across all products for the DayBook header row.
+    const openingBalanceAggregate = [...carryOver.values()].reduce((s, v) => s + v, 0);
+
+    // Per-product running balance starting from carry-over
+    const productRunning = new Map<string, number>(carryOver);
+
+    const entries: DayBookEntry[] = txns.map((t) => {
+      const before = productRunning.get(t.product_id) ?? 0;
+      const after = before + t.quantity_delta;
+      productRunning.set(t.product_id, after);
       return {
         id: t.transaction_id,
         transaction_id: t.transaction_id,
@@ -196,20 +211,19 @@ function _buildLocalDayBooks(
         reference_number: t.reference_number,
         reason_code: t.reason_code,
         occurred_at: t.occurred_at,
-        running_balance: balance,
+        // running_balance is per-product: shows that product's stock level after this entry
+        running_balance: after,
       };
     });
 
-    const openingBalance =
-      entries.length > 0 ? entries[0].running_balance - entries[0].quantity_delta : 0;
-    const closingBalance = entries.length > 0 ? entries[entries.length - 1].running_balance : 0;
+    const closingBalanceAggregate = [...productRunning.values()].reduce((s, v) => s + v, 0);
 
     dayBooks.push({
       id,
       store_id: storeId,
       book_date: date,
-      opening_balance: openingBalance,
-      closing_balance: closingBalance,
+      opening_balance: openingBalanceAggregate,
+      closing_balance: closingBalanceAggregate,
       balance_sheet_generated: false,
       balance_sheet_generated_at: null,
       created_at: txns[0]?.occurred_at ?? date,
@@ -220,12 +234,17 @@ function _buildLocalDayBooks(
       id,
       store_id: storeId,
       book_date: date,
-      opening_balance: openingBalance,
-      closing_balance: closingBalance,
+      opening_balance: openingBalanceAggregate,
+      closing_balance: closingBalanceAggregate,
       balance_sheet_generated: false,
       balance_sheet_generated_at: null,
       entries,
     });
+
+    // Advance carry-over for the next day
+    for (const [pid, qty] of productRunning) {
+      carryOver.set(pid, qty);
+    }
   }
 
   dayBooks.sort((a, b) => b.book_date.localeCompare(a.book_date));
@@ -619,11 +638,9 @@ export const DayBooksView: React.FC = () => {
           reason_code: entry.reason_code ?? null,
         });
 
-        // Optimistically update the entry and recalculate running_balance for all entries
         setSelectedDayBook((prev) => {
           if (!prev) return prev;
 
-          // 1. Apply the field changes to the edited entry
           const updated = prev.entries.map((e) =>
             e.id === entry.id
               ? {
@@ -634,10 +651,12 @@ export const DayBooksView: React.FC = () => {
               : e,
           );
 
-          // 2. Re-sort by occurred_at to match the original _buildLocalDayBooks ordering
           const sorted = [...updated].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
 
-          // 3. Recalculate running_balance per product_id so the Balance column stays accurate
+          // Rebalance per-product from opening balance (0 for server books where
+          // opening_balance is an aggregate; correct for local books).
+          // We use product-scoped running totals so the Balance column shows the
+          // per-product stock level, not a meaningless cross-product sum.
           const productRunning = new Map<string, number>();
           const rebalanced = sorted.map((e) => {
             const before = productRunning.get(e.product_id) ?? 0;
@@ -671,6 +690,7 @@ export const DayBooksView: React.FC = () => {
 
           const sorted = [...remaining].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
 
+          // Per-product rebalance (same logic as handleSaveEntryEdit)
           const productRunning = new Map<string, number>();
           const rebalanced = sorted.map((e) => {
             const before = productRunning.get(e.product_id) ?? 0;

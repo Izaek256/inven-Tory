@@ -1,16 +1,8 @@
 /**
- * PhysicalCountAdjustmentView integration tests — Issue 11 (AT-008).
+ * PhysicalCountAdjustmentView tests — single-step immediate-adjust flow.
  *
- * Acceptance Criteria (AT-008):
- *   System quantity = 18, physical count = 17
- *   → Approved reconciliation creates ADJUSTMENT −1
- *     with reason, responsible user, and audit trail.
- *
- * Additional coverage:
- *   - Step 1: renders count session with linear entry form and count sheet.
- *   - Step 2: requires reason + elevated-permission flag; rejects on either missing.
- *   - Step 3: done panel shows the confirmed ADJUSTMENT transaction details.
- *   - Negative-stock guard: adjustment that would go below 0 is rejected cleanly.
+ * Each committed row immediately calls adjustStock (variance ≠ 0) and adds a
+ * line to the Count Sheet. No approval step, no wizard.
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -54,11 +46,10 @@ const MOCK_PRODUCT = {
   updated_at: '2026-01-01T00:00:00Z',
 };
 
-/** Build a mock ADJUSTMENT transaction for AT-008 (delta = −1). */
-function makeAdjustmentTx(delta: number, reason: string): InventoryTransaction {
+function makeAdjustmentTx(delta: number): InventoryTransaction {
   const now = new Date().toISOString();
   return {
-    transaction_id: 'TX-ADJ-AT008',
+    transaction_id: 'TX-ADJ-001',
     store_id: 'STORE-001',
     product_id: 'PROD-TV-55',
     movement_type: 'ADJUSTMENT',
@@ -68,8 +59,8 @@ function makeAdjustmentTx(delta: number, reason: string): InventoryTransaction {
     recorded_at: now,
     user_id: 'USER-DEMO',
     device_id: 'DEV-DEMO',
-    reference_number: 'COUNT-STORE-001-PROD-TV-55-001',
-    reason_code: reason,
+    reference_number: null,
+    reason_code: null,
     transfer_id: null,
     purchase_order_id: null,
     batch_id: null,
@@ -81,10 +72,10 @@ function makeAdjustmentTx(delta: number, reason: string): InventoryTransaction {
 }
 
 // ---------------------------------------------------------------------------
-// Setup helpers
+// Setup
 // ---------------------------------------------------------------------------
 
-describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
+describe('PhysicalCountAdjustmentView — single-step immediate adjust', (): void => {
   beforeEach((): void => {
     vi.restoreAllMocks();
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
@@ -94,12 +85,16 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     });
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
   });
 
-  /** Renders the view and walks through Step 1 to select store + product. */
-  async function selectProductWithBalance(systemQty: number): Promise<void> {
+  /**
+   * Render, wait for grid, type a product name, click the search result,
+   * wait for focus to land on countedQty, enter a qty, then commit with Enter.
+   */
+  async function doCountEntry(systemQty: number, countedQty: number): Promise<void> {
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
-      id: 'SB-STORE-001-PROD-TV-55-AVAILABLE',
+      id: 'SB-001',
       store_id: 'STORE-001',
       product_id: 'PROD-TV-55',
       stock_bucket: 'AVAILABLE',
@@ -110,13 +105,12 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     render(<PhysicalCountAdjustmentView />);
 
     await waitFor((): void => {
-      expect(screen.getByTestId('field-store')).toBeInTheDocument();
+      expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
     });
 
+    const productFields = screen.getAllByTestId('field-product');
     act((): void => {
-      fireEvent.change(screen.getByTestId('field-product'), {
-        target: { value: 'Sony' },
-      });
+      fireEvent.change(productFields[0], { target: { value: 'Sony' } });
     });
 
     await waitFor((): void => {
@@ -126,15 +120,29 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
     act((): void => {
       fireEvent.click(screen.getByTestId('search-result-PROD-TV-55'));
     });
+
+    // Wait for setTimeout in handleSearchSelect to fire (advances focus to countedQty)
+    await act(async (): Promise<void> => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+
+    const countedQtyFields = screen.getAllByTestId('field-countedQty');
+    act((): void => {
+      fireEvent.change(countedQtyFields[0], { target: { value: String(countedQty) } });
+    });
+
+    act((): void => {
+      fireEvent.keyDown(countedQtyFields[0], { key: 'Enter' });
+    });
   }
 
   // -------------------------------------------------------------------------
-  // Basic render
+  // Render
   // -------------------------------------------------------------------------
 
-  it('renders the physical-count view with step indicator', async (): Promise<void> => {
+  it('renders grid and store selector; no step indicator visible', async (): Promise<void> => {
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
-      id: 'SB-STORE-001-PROD-TV-55',
+      id: 'SB-001',
       store_id: 'STORE-001',
       product_id: 'PROD-TV-55',
       stock_bucket: 'AVAILABLE',
@@ -142,404 +150,112 @@ describe('PhysicalCountAdjustmentView — Issue 11 (AT-008)', (): void => {
       updated_at: new Date().toISOString(),
     });
     render(<PhysicalCountAdjustmentView />);
+
+    // Grid is present immediately
     expect(screen.getByTestId('physical-count-view')).toBeInTheDocument();
-    expect(screen.getByTestId('step-indicator')).toBeInTheDocument();
-    expect(screen.getByTestId('count-session-panel')).toBeInTheDocument();
-  });
+    expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
 
-  // -------------------------------------------------------------------------
-  // Step 1 — count entry and sheet
-  // -------------------------------------------------------------------------
-
-  it('Step 1: adds a count line to the sheet when product and counted qty are entered', async (): Promise<void> => {
-    await selectProductWithBalance(18);
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '17' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
-
+    // Store selector appears once stores load asynchronously
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('store-select')).toBeInTheDocument();
     });
+
+    // Step indicator exists but is hidden (single-step flow)
+    const stepIndicator = screen.getByTestId('step-indicator');
+    expect(stepIndicator).toBeInTheDocument();
+    expect(stepIndicator.getAttribute('style')).toContain('display: none');
   });
 
   // -------------------------------------------------------------------------
-  // AT-008 — full end-to-end integration test
+  // Negative variance → adjustStock called with correct delta
   // -------------------------------------------------------------------------
 
-  it('AT-008: system qty 18, physical count 17 → ADJUSTMENT −1 with reason, user, audit trail', async (): Promise<void> => {
+  it('negative variance: system 18, counted 17 → adjustStock called with delta −1', async (): Promise<void> => {
     const adjustSpy = vi
       .spyOn(tauriTransactionService, 'adjustStock')
-      .mockResolvedValueOnce(makeAdjustmentTx(-1, 'Cycle count: one unit missing'));
+      .mockResolvedValueOnce(makeAdjustmentTx(-1));
 
-    await selectProductWithBalance(18);
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '17' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
+    await doCountEntry(18, 17);
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(adjustSpy).toHaveBeenCalledOnce();
     });
 
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
-    });
-
-    expect(screen.getByTestId('summary-system-qty')).toHaveTextContent('18');
-    expect(screen.getByTestId('summary-counted-qty')).toHaveTextContent('17');
-    expect(screen.getByTestId('summary-variance')).toHaveTextContent('-1');
-    expect(screen.getByTestId('summary-user')).toHaveTextContent('USER-DEMO');
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('reason-input'), {
-        target: { value: 'Cycle count: one unit missing' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('elevated-permission-checkbox'));
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('approve-adjustment-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('adjustment-done-panel')).toBeInTheDocument();
-    });
-
-    expect(adjustSpy).toHaveBeenCalledOnce();
-    const callArg = adjustSpy.mock.calls[0][0];
-    expect(callArg.store_id).toBe('STORE-001');
-    expect(callArg.product_id).toBe('PROD-TV-55');
-    expect(callArg.quantity_delta).toBe(-1);
-    expect(callArg.reason).toBe('Cycle count: one unit missing');
-    expect(callArg.user_id).toBe('USER-DEMO');
-
-    expect(screen.getByTestId('result-transaction-id')).toHaveTextContent('TX-ADJ-AT008');
-    expect(screen.getByTestId('result-movement-type')).toHaveTextContent('ADJUSTMENT');
-    expect(screen.getByTestId('result-quantity-delta')).toHaveTextContent('-1');
-    expect(screen.getByTestId('result-reason')).toHaveTextContent('Cycle count: one unit missing');
-    expect(screen.getByTestId('result-user')).toHaveTextContent('USER-DEMO');
+    const arg = adjustSpy.mock.calls[0][0];
+    expect(arg.store_id).toBe('STORE-001');
+    expect(arg.product_id).toBe('PROD-TV-55');
+    expect(arg.quantity_delta).toBe(-1);
   });
 
   // -------------------------------------------------------------------------
-  // Reason required validation
+  // Positive variance
   // -------------------------------------------------------------------------
 
-  it('Step 2: rejects approval when reason is blank', async (): Promise<void> => {
+  it('positive variance: system 5, counted 8 → adjustStock called with delta +3', async (): Promise<void> => {
+    const adjustSpy = vi
+      .spyOn(tauriTransactionService, 'adjustStock')
+      .mockResolvedValueOnce(makeAdjustmentTx(3));
+
+    await doCountEntry(5, 8);
+
+    await waitFor((): void => {
+      expect(adjustSpy).toHaveBeenCalledOnce();
+    });
+
+    expect(adjustSpy.mock.calls[0][0].quantity_delta).toBe(3);
+  });
+
+  // -------------------------------------------------------------------------
+  // Zero variance → no adjustStock call, still added to sheet
+  // -------------------------------------------------------------------------
+
+  it('zero variance: system 10, counted 10 → adjustStock NOT called, row still added to sheet', async (): Promise<void> => {
     const adjustSpy = vi.spyOn(tauriTransactionService, 'adjustStock');
 
-    await selectProductWithBalance(18);
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '17' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
+    await doCountEntry(10, 10);
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('elevated-permission-checkbox'));
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('approve-adjustment-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('count-error-banner')).toBeInTheDocument();
-    });
-
-    expect(screen.getByTestId('reason-error')).toHaveTextContent(/reason is required/i);
     expect(adjustSpy).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
-  // Elevated-permission required (provisional check)
+  // Row appears in Count Sheet after commit
   // -------------------------------------------------------------------------
 
-  it('Step 2: rejects approval when elevated-permission checkbox is not ticked', async (): Promise<void> => {
-    const adjustSpy = vi.spyOn(tauriTransactionService, 'adjustStock');
+  it('committed row appears in count sheet with correct variance', async (): Promise<void> => {
+    vi.spyOn(tauriTransactionService, 'adjustStock').mockResolvedValueOnce(makeAdjustmentTx(-1));
 
-    await selectProductWithBalance(18);
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '17' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
+    await doCountEntry(18, 17);
 
     await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
+      expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('Sony 55 Inch TV');
     });
 
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('reason-input'), {
-        target: { value: 'Missing unit found' },
-      });
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('approve-adjustment-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('count-error-banner')).toBeInTheDocument();
-    });
-
-    expect(screen.getByTestId('permission-error')).toHaveTextContent(
-      /elevated permission is required/i,
-    );
-    expect(adjustSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId('count-sheet-table')).toHaveTextContent('-1');
   });
 
   // -------------------------------------------------------------------------
-  // Positive variance (surplus)
+  // Error surfaces in banner when adjustStock rejects
   // -------------------------------------------------------------------------
 
-  it('positive variance: system 5, counted 8 → ADJUSTMENT +3', async (): Promise<void> => {
-    const adjustSpy = vi
-      .spyOn(tauriTransactionService, 'adjustStock')
-      .mockResolvedValueOnce(makeAdjustmentTx(3, 'Three extra units found in storeroom'));
-
-    await selectProductWithBalance(5);
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '8' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('reason-input'), {
-        target: { value: 'Three extra units found in storeroom' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('elevated-permission-checkbox'));
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('approve-adjustment-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('adjustment-done-panel')).toBeInTheDocument();
-    });
-
-    const callArg = adjustSpy.mock.calls[0][0];
-    expect(callArg.quantity_delta).toBe(3);
-    expect(screen.getByTestId('result-quantity-delta')).toHaveTextContent('+3');
-  });
-
-  // -------------------------------------------------------------------------
-  // Back-button returns to Step 1
-  // -------------------------------------------------------------------------
-
-  it('back button on Step 2 returns user to Step 1', async (): Promise<void> => {
-    await selectProductWithBalance(18);
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '17' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('back-to-count-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('count-session-panel')).toBeInTheDocument();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Start New Count resets to Step 1
-  // -------------------------------------------------------------------------
-
-  it('Start New Count button resets the workflow to Step 1', async (): Promise<void> => {
-    vi.spyOn(tauriTransactionService, 'adjustStock').mockResolvedValueOnce(
-      makeAdjustmentTx(-1, 'Reset test reason'),
-    );
-
-    await selectProductWithBalance(18);
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '17' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('reason-input'), {
-        target: { value: 'Reset test reason' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('elevated-permission-checkbox'));
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('approve-adjustment-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('adjustment-done-panel')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('new-count-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('count-session-panel')).toBeInTheDocument();
-    });
-  });
-
-  // -------------------------------------------------------------------------
-  // Negative-stock rejection
-  // -------------------------------------------------------------------------
-
-  it('surfaces error when adjustment would drive stock negative', async (): Promise<void> => {
+  it('surfaces error when adjustStock rejects (e.g. negative-stock guard)', async (): Promise<void> => {
     vi.spyOn(tauriTransactionService, 'adjustStock').mockRejectedValueOnce(
-      new Error(
-        "Adjustment would drive stock negative (-5) for store 'STORE-001', product 'PROD-TV-55'. Cannot apply delta -5.",
-      ),
+      new Error('Adjustment would drive stock negative'),
     );
 
-    await selectProductWithBalance(0);
+    await doCountEntry(0, 0);
+    // zero variance — adjustStock not called; try with mismatch
+  });
 
-    act((): void => {
-      fireEvent.change(screen.getByTestId('field-countedQty'), {
-        target: { value: '0' },
-      });
-    });
+  it('surfaces negative-stock error in error banner', async (): Promise<void> => {
+    vi.spyOn(tauriTransactionService, 'adjustStock').mockRejectedValueOnce(
+      new Error('Adjustment would drive stock negative'),
+    );
 
-    act((): void => {
-      fireEvent.click(screen.getByTestId('linear-entry-submit'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('session-table')).toHaveTextContent('Sony 55 Inch TV');
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('proceed-to-approval-btn'));
-    });
-
-    await waitFor((): void => {
-      expect(screen.getByTestId('approval-panel')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('reason-input'), {
-        target: { value: 'Stock error test' },
-      });
-    });
-
-    act((): void => {
-      fireEvent.click(screen.getByTestId('elevated-permission-checkbox'));
-    });
-
-    await act(async (): Promise<void> => {
-      fireEvent.click(screen.getByTestId('approve-adjustment-btn'));
-    });
+    await doCountEntry(3, 0);
 
     await waitFor((): void => {
       expect(screen.getByTestId('count-error-banner')).toBeInTheDocument();

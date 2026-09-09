@@ -10,6 +10,7 @@ export interface GridFieldDef {
   min?: number;
   max?: number;
   options?: { value: string; label: string }[];
+  readOnly?: boolean;
 }
 
 export interface GridRow {
@@ -46,8 +47,8 @@ export interface UseGridKeyboardFlowReturn {
   /** Directly commit a row by index. Use instead of relying on event-bubbling Enter. */
   triggerCommit: (rowIndex: number) => Promise<void>;
   isCommitting: boolean;
-  fieldRefs: React.MutableRefObject<Record<string, HTMLInputElement | null>>;
-  registerFieldRef: (cellId: string, el: HTMLInputElement | null) => void;
+  fieldRefs: React.MutableRefObject<Record<string, HTMLInputElement | HTMLSelectElement | null>>;
+  registerFieldRef: (cellId: string, el: HTMLInputElement | HTMLSelectElement | null) => void;
   searchQuery: string;
   barcodeBuffer: string;
   /**
@@ -100,15 +101,18 @@ export function useGridKeyboardFlow({
   const [activeRowIndex, setActiveRowIndex] = useState(0);
   const [activeFieldIndex, setActiveFieldIndex] = useState(0);
   const [isCommitting, setIsCommitting] = useState(false);
-  const fieldRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | null>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
 
   const activeCellId = getCellId(activeRowIndex, fields[activeFieldIndex]?.id ?? '');
 
-  const registerFieldRef = useCallback((cellId: string, el: HTMLInputElement | null): void => {
-    fieldRefs.current[cellId] = el;
-  }, []);
+  const registerFieldRef = useCallback(
+    (cellId: string, el: HTMLInputElement | HTMLSelectElement | null): void => {
+      fieldRefs.current[cellId] = el;
+    },
+    [],
+  );
 
   // ─── focusCell ────────────────────────────────────────────────────────────
   // Moves DOM focus to the input at (rowIndex, fieldIndex) and updates
@@ -293,7 +297,9 @@ export function useGridKeyboardFlow({
           const prevEl = fieldRefs.current[prevCellId];
           if (prevEl) {
             prevEl.focus();
-            prevEl.select();
+            if (prevEl instanceof HTMLInputElement) {
+              prevEl.select();
+            }
           }
         }
         return;
