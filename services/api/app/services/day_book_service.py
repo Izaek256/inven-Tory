@@ -113,17 +113,18 @@ async def add_transaction_to_day_book(
 
 async def _recalculate_day_book_balance(db: AsyncSession, day_book: DayBook) -> None:
     """
-    Recalculate the opening balance for a day book based on all transactions
-    before this day.
+    Recalculate the opening balance for a day book based on all AVAILABLE-bucket
+    transactions before this day (excludes IN_TRANSIT to avoid double-counting
+    TRANSFER_OUT/TRANSFER_IN pairs).
 
-    Args:
-        db: Database session
-        day_book: The day book to recalculate
+    The opening_balance stored on the DayBook is an aggregate across all products
+    in the store — it's used only for the header row display. The per-product
+    running_balance shown in entries is computed in get_day_book_with_entries.
     """
-    # Get the sum of all quantity deltas for transactions before this day
     result = await db.execute(
         select(func.sum(InventoryTransaction.quantity_delta)).where(
             InventoryTransaction.store_id == day_book.store_id,
+            InventoryTransaction.stock_bucket == "AVAILABLE",
             InventoryTransaction.occurred_at < day_book.book_date,
             InventoryTransaction.sync_status != "REJECTED",
         )
@@ -268,12 +269,38 @@ async def get_day_book_with_entries(
     )
     entries_with_products = list(entries_result.all())
 
-    # Calculate running balance for each entry
-    running_balance = day_book.opening_balance
+    # Seed per-product opening balances from all AVAILABLE-bucket transactions
+    # that occurred before this day book's date (same store).
+    product_ids = list({e.product_id for e, _ in entries_with_products})
+    product_running: dict[str, int] = {}
+    if product_ids:
+        from app.models.inventory_transaction import InventoryTransaction as TxnModel
+
+        prior_result = await db.execute(
+            select(
+                TxnModel.product_id,
+                func.sum(TxnModel.quantity_delta).label("prior_sum"),
+            )
+            .where(
+                TxnModel.store_id == day_book.store_id,
+                TxnModel.product_id.in_(product_ids),
+                TxnModel.stock_bucket == "AVAILABLE",
+                TxnModel.occurred_at < day_book.book_date,
+                TxnModel.sync_status != "REJECTED",
+            )
+            .group_by(TxnModel.product_id)
+        )
+        for row in prior_result.all():
+            product_running[row.product_id] = int(row.prior_sum or 0)
+
+    # Calculate running balance for each entry — per product, starting from
+    # that product's cumulative balance before today.
     entries_data = []
 
     for entry, product_name in entries_with_products:
-        running_balance += entry.quantity_delta
+        before = product_running.get(entry.product_id, 0)
+        after = before + entry.quantity_delta
+        product_running[entry.product_id] = after
         entries_data.append(
             {
                 "id": entry.id,
@@ -287,7 +314,7 @@ async def get_day_book_with_entries(
                 "notes": entry.notes,
                 "occurred_at": entry.occurred_at.isoformat(),
                 "recorded_at": entry.recorded_at.isoformat(),
-                "running_balance": running_balance,
+                "running_balance": after,
             }
         )
 

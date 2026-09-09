@@ -16,16 +16,6 @@ interface SessionRow {
   timestamp: string;
 }
 
-const DEFAULT_CATEGORIES = [
-  'Smartphones',
-  'Laptops',
-  'Audio',
-  'Accessories',
-  'Components',
-  'General',
-];
-const DEFAULT_UNITS = ['pcs', 'ctn', 'set', 'box', 'kg', 'm'];
-
 export const CreateProductView: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -38,19 +28,12 @@ export const CreateProductView: React.FC = () => {
 
       const finalName = String(row.values.name ?? '').trim();
       const finalModel = String(row.values.model ?? '').trim();
-      const finalCategory = String(row.values.category ?? '').trim();
 
-      // SKU is derived from the model number — same value, no prefix.
-      // If the user left model blank we fall back to any manually-typed sku field,
-      // but the primary path is model → sku.
+      // SKU is derived from the model number — same value, uppercased, no prefix.
       const finalSku = (finalModel || String(row.values.sku ?? '').trim()).toUpperCase();
 
       if (!finalName) {
         setError('Product name is required.');
-        return;
-      }
-      if (!finalCategory) {
-        setError('Category is required.');
         return;
       }
       if (!finalSku) {
@@ -64,8 +47,10 @@ export const CreateProductView: React.FC = () => {
           name: finalName,
           brand: String(row.values.brand ?? '').trim() || undefined,
           model: finalModel || undefined,
-          category: finalCategory,
-          unit: String(row.values.unit ?? 'pcs').trim(),
+          // Category and unit are not grid columns — default to General/pcs.
+          // Users can update via the Products catalogue view.
+          category: DEFAULT_CATEGORY,
+          unit: DEFAULT_UNIT,
           barcode: String(row.values.barcode ?? '').trim() || undefined,
           alternate_names: String(row.values.alternate_names ?? '').trim() || undefined,
           serial_tracking_enabled: false,
@@ -99,6 +84,11 @@ export const CreateProductView: React.FC = () => {
     setSessionRows((prev) => prev.filter((r) => r.id !== rowId));
   }, []);
 
+  // Category is not a grid column — default to 'General' so users don't have to
+  // pick from a dropdown on every row. They can change it via the Products view.
+  const DEFAULT_CATEGORY = 'General';
+  const DEFAULT_UNIT = 'pcs';
+
   const fields: GridFieldDef[] = [
     {
       id: 'name',
@@ -119,22 +109,7 @@ export const CreateProductView: React.FC = () => {
       type: 'text',
       label: 'Model / SKU',
       required: true,
-      placeholder: 'e.g. A3102  (becomes the SKU)',
-    },
-    {
-      id: 'category',
-      type: 'select',
-      label: 'Category',
-      required: true,
-      options: DEFAULT_CATEGORIES.map((c) => ({ value: c, label: c })),
-    },
-    {
-      id: 'unit',
-      type: 'select',
-      label: 'Unit',
-      required: true,
-      defaultValue: 'pcs',
-      options: DEFAULT_UNITS.map((u) => ({ value: u, label: u })),
+      placeholder: 'Model number — becomes the SKU',
     },
     {
       id: 'barcode',
@@ -266,8 +241,6 @@ export const CreateProductView: React.FC = () => {
             name: 'field-name',
             brand: 'field-brand',
             model: 'field-model',
-            category: 'field-category',
-            unit: 'field-unit',
             barcode: 'field-barcode',
             alternate_names: 'field-alternate_names',
           }}
