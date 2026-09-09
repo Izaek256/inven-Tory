@@ -36,9 +36,14 @@ export const CreateProductView: React.FC = () => {
       setError(null);
       setSuccess(false);
 
-      const finalSku = String(row.values.sku ?? '').trim();
       const finalName = String(row.values.name ?? '').trim();
+      const finalModel = String(row.values.model ?? '').trim();
       const finalCategory = String(row.values.category ?? '').trim();
+
+      // SKU is derived from the model number — same value, no prefix.
+      // If the user left model blank we fall back to any manually-typed sku field,
+      // but the primary path is model → sku.
+      const finalSku = (finalModel || String(row.values.sku ?? '').trim()).toUpperCase();
 
       if (!finalName) {
         setError('Product name is required.');
@@ -49,16 +54,16 @@ export const CreateProductView: React.FC = () => {
         return;
       }
       if (!finalSku) {
-        setError('SKU is required.');
+        setError('Model number is required (it becomes the SKU).');
         return;
       }
 
       try {
         const input: CreateProductInput = {
-          sku: finalSku.toUpperCase(),
+          sku: finalSku,
           name: finalName,
           brand: String(row.values.brand ?? '').trim() || undefined,
-          model: String(row.values.model ?? '').trim() || undefined,
+          model: finalModel || undefined,
           category: finalCategory,
           unit: String(row.values.unit ?? 'pcs').trim(),
           barcode: String(row.values.barcode ?? '').trim() || undefined,
@@ -96,13 +101,6 @@ export const CreateProductView: React.FC = () => {
 
   const fields: GridFieldDef[] = [
     {
-      id: 'sku',
-      type: 'text',
-      label: 'SKU',
-      required: true,
-      placeholder: 'e.g. PROD-1234',
-    },
-    {
       id: 'name',
       type: 'text',
       label: 'Product Name',
@@ -119,9 +117,9 @@ export const CreateProductView: React.FC = () => {
     {
       id: 'model',
       type: 'text',
-      label: 'Model',
-      required: false,
-      placeholder: 'e.g. A3102',
+      label: 'Model / SKU',
+      required: true,
+      placeholder: 'e.g. A3102  (becomes the SKU)',
     },
     {
       id: 'category',
@@ -227,7 +225,9 @@ export const CreateProductView: React.FC = () => {
         <div className="view-header">
           <div>
             <h2 className="view-title">Create Product</h2>
-            <p className="view-subtitle">Rapid product entry (FR-PROD-001)</p>
+            <p className="view-subtitle">
+              Rapid product entry — Model number becomes the SKU (FR-PROD-001)
+            </p>
           </div>
         </div>
 
@@ -263,7 +263,6 @@ export const CreateProductView: React.FC = () => {
           allItems={[]}
           initialRowCount={5}
           fieldTestIds={{
-            sku: 'field-sku',
             name: 'field-name',
             brand: 'field-brand',
             model: 'field-model',

@@ -1,12 +1,17 @@
 /**
  * CreateProductView integration tests — Phase 1 Task B.
  *
+ * Field order (7 columns, no separate SKU field — model IS the SKU):
+ *   name → brand → model (= SKU) → category → unit → barcode → alternate_names
+ *
  * Coverage:
- *   - Full row commit creates a product via createProduct() with stock = 0 (catalogue-only).
+ *   - Full row commit creates a product via createProduct(); model becomes SKU.
+ *   - SKU sent to service is model.toUpperCase() with no prefix.
+ *   - Stock = 0 (catalogue-only — no quantity field in the grid).
  *   - Committed row appears in the "Recently Created" table.
- *   - Required-field validation blocks commit for missing SKU and Product Name.
- *   - Duplicate SKU error is surfaced the same way as the current form behaviour.
- *   - All Tauri IPC is mocked at the service layer (same pattern as TransferStockView.test.tsx).
+ *   - Required-field validation blocks commit for missing Name, Model, Category.
+ *   - Duplicate SKU/model error is surfaced in the error banner.
+ *   - All Tauri IPC is mocked at the service layer.
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
@@ -23,7 +28,7 @@ import { Product } from '../types/product';
 function makeProduct(overrides: Partial<Product> = {}): Product {
   return {
     id: 'PROD-TEST-001',
-    sku: 'TEST-SKU-001',
+    sku: 'W1',
     name: 'Test Widget',
     category: 'General',
     unit: 'pcs',
@@ -32,7 +37,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
     barcode: null,
     alternate_names: null,
     brand: null,
-    model: null,
+    model: 'W1',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,
@@ -40,27 +45,16 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
 }
 
 /**
- * Fill one grid row and commit it by pressing Enter on the last text field.
- * The grid uses LinearGridEntry: each field is a plain <input> (or <select>).
- * Tab/Enter advances to the next field; Enter on the last field commits.
+ * Fill one grid row and commit it by pressing Enter on the last field.
  *
- * fieldTestIds in CreateProductView:
- *   sku → 'field-sku'
- *   name → 'field-name'
- *   brand → 'field-brand'
- *   model → 'field-model'
- *   category → 'field-category'   (select)
- *   unit → 'field-unit'           (select)
- *   barcode → 'field-barcode'
- *   alternate_names → 'field-alternate_names'  ← last field, Enter here commits
+ * Field order matches CreateProductView (7 fields, indices 0–6):
+ *   0 name  1 brand  2 model  3 category  4 unit  5 barcode  6 alternate_names
  *
- * Each field must be focused before being changed so that useGridKeyboardFlow
- * tracks the correct activeFieldIndex — commit only fires when Enter lands on
- * the last field (index 7).
+ * Each field is focused before change so useGridKeyboardFlow tracks
+ * activeFieldIndex correctly — commit only fires when Enter lands on index 6.
  */
 async function fillAndCommitRow(
   overrides: {
-    sku?: string;
     name?: string;
     brand?: string;
     model?: string;
@@ -71,68 +65,48 @@ async function fillAndCommitRow(
   } = {},
 ): Promise<void> {
   const {
-    sku = 'TEST-SKU-001',
     name = 'Test Widget',
     brand = '',
-    model = '',
+    model = 'W1',
     category = 'General',
     unit = 'pcs',
     barcode = '',
     alternate_names = '',
   } = overrides;
 
-  // Helper: focus + change an input element (updates hook's activeFieldIndex)
   function focusChange(el: HTMLElement, value: string): void {
     fireEvent.focus(el);
     fireEvent.change(el, { target: { value } });
   }
 
-  // Use getAllByTestId — grid renders 5 initial rows so [0] targets row 0.
-  const skuFields = screen.getAllByTestId('field-sku');
+  // getAllByTestId — grid renders 5 initial rows, [0] = row 0.
   act((): void => {
-    focusChange(skuFields[0], sku);
+    focusChange(screen.getAllByTestId('field-name')[0], name);
+  });
+  act((): void => {
+    focusChange(screen.getAllByTestId('field-brand')[0], brand);
+  });
+  act((): void => {
+    focusChange(screen.getAllByTestId('field-model')[0], model);
+  });
+  act((): void => {
+    focusChange(screen.getAllByTestId('field-category')[0], category);
+  });
+  act((): void => {
+    focusChange(screen.getAllByTestId('field-unit')[0], unit);
+  });
+  act((): void => {
+    focusChange(screen.getAllByTestId('field-barcode')[0], barcode);
   });
 
-  const nameFields = screen.getAllByTestId('field-name');
+  const altFields = screen.getAllByTestId('field-alternate_names');
   act((): void => {
-    focusChange(nameFields[0], name);
+    focusChange(altFields[0], alternate_names);
   });
 
-  const brandFields = screen.getAllByTestId('field-brand');
+  // Enter on the last field (alternate_names, index 6) triggers commitRow.
   act((): void => {
-    focusChange(brandFields[0], brand);
-  });
-
-  const modelFields = screen.getAllByTestId('field-model');
-  act((): void => {
-    focusChange(modelFields[0], model);
-  });
-
-  const categoryFields = screen.getAllByTestId('field-category');
-  act((): void => {
-    focusChange(categoryFields[0], category);
-  });
-
-  const unitFields = screen.getAllByTestId('field-unit');
-  act((): void => {
-    focusChange(unitFields[0], unit);
-  });
-
-  const barcodeFields = screen.getAllByTestId('field-barcode');
-  act((): void => {
-    focusChange(barcodeFields[0], barcode);
-  });
-
-  const altNameFields = screen.getAllByTestId('field-alternate_names');
-  act((): void => {
-    focusChange(altNameFields[0], alternate_names);
-  });
-
-  // Press Enter on the last field (alternate_names) to trigger commit.
-  // At this point activeFieldIndex = 7 (last), so the grid's handleKeyDown
-  // calls commitRow which fires onCommitRow → handleCommit.
-  act((): void => {
-    fireEvent.keyDown(altNameFields[0], { key: 'Enter' });
+    fireEvent.keyDown(altFields[0], { key: 'Enter' });
   });
 }
 
@@ -143,7 +117,6 @@ async function fillAndCommitRow(
 describe('CreateProductView — Phase 1 Task B', (): void => {
   beforeEach((): void => {
     vi.restoreAllMocks();
-    // Polyfill Tauri environment detection used by service layer
     Object.defineProperty(window, '__TAURI_INTERNALS__', {
       value: {},
       writable: true,
@@ -155,22 +128,29 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
   // Basic render
   // -------------------------------------------------------------------------
 
-  it('renders the create-product view with the grid and empty recently-created table', (): void => {
+  it('renders the create-product view with grid and empty recently-created table', (): void => {
     render(<CreateProductView />);
     expect(screen.getByTestId('create-product-view')).toBeInTheDocument();
     expect(screen.getByTestId('create-product-grid')).toBeInTheDocument();
     expect(screen.getByTestId('recently-created-table')).toBeInTheDocument();
-    // Table should be empty on first render
     expect(screen.getByTestId('recently-created-table')).toHaveTextContent(
       'No products created yet',
     );
   });
 
+  it('no separate SKU column — model field is used as the SKU input', (): void => {
+    render(<CreateProductView />);
+    // model field present
+    expect(screen.getAllByTestId('field-model')[0]).toBeInTheDocument();
+    // no dedicated SKU input
+    expect(screen.queryByTestId('field-sku')).not.toBeInTheDocument();
+  });
+
   // -------------------------------------------------------------------------
-  // Full row commit — product created with stock = 0 (catalogue-only)
+  // Full row commit — model becomes SKU, no stock field
   // -------------------------------------------------------------------------
 
-  it('full row commit calls createProduct with the correct input and stock is not included (catalogue-only)', async (): Promise<void> => {
+  it('full row commit: model becomes SKU (uppercased, no prefix), stock not included', async (): Promise<void> => {
     const createSpy = vi
       .spyOn(tauriProductService, 'createProduct')
       .mockResolvedValueOnce(makeProduct());
@@ -178,10 +158,9 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
     render(<CreateProductView />);
 
     await fillAndCommitRow({
-      sku: 'WIDGET-001',
       name: 'Test Widget',
       brand: 'Acme',
-      model: 'W1',
+      model: 'w1-pro',
       category: 'General',
       unit: 'pcs',
       barcode: '1234567890',
@@ -192,66 +171,42 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
       expect(createSpy).toHaveBeenCalledOnce();
     });
 
-    const callArg = createSpy.mock.calls[0][0];
-    expect(callArg.sku).toBe('WIDGET-001');
-    expect(callArg.name).toBe('Test Widget');
-    expect(callArg.brand).toBe('Acme');
-    expect(callArg.model).toBe('W1');
-    expect(callArg.category).toBe('General');
-    expect(callArg.unit).toBe('pcs');
-    expect(callArg.barcode).toBe('1234567890');
-    expect(callArg.alternate_names).toBe('TW, Widget');
-    // Stock / quantity fields must NOT be sent — this is catalogue-only
-    expect(callArg).not.toHaveProperty('quantity');
-    expect(callArg).not.toHaveProperty('stock');
-    expect(callArg.is_active).toBe(true);
-    expect(callArg.serial_tracking_enabled).toBe(false);
+    const arg = createSpy.mock.calls[0][0];
+    // Model value uppercased becomes the SKU — no prefix added
+    expect(arg.sku).toBe('W1-PRO');
+    expect(arg.name).toBe('Test Widget');
+    expect(arg.brand).toBe('Acme');
+    expect(arg.model).toBe('w1-pro');
+    expect(arg.category).toBe('General');
+    expect(arg.unit).toBe('pcs');
+    expect(arg.barcode).toBe('1234567890');
+    expect(arg.alternate_names).toBe('TW, Widget');
+    // Catalogue-only: no stock quantity sent
+    expect(arg).not.toHaveProperty('quantity');
+    expect(arg).not.toHaveProperty('stock');
+    expect(arg.is_active).toBe(true);
+    expect(arg.serial_tracking_enabled).toBe(false);
   });
 
   // -------------------------------------------------------------------------
   // Committed row appears in "Recently Created" table
   // -------------------------------------------------------------------------
 
-  it('committed row appears in the Recently Created table after successful commit', async (): Promise<void> => {
+  it('committed row appears in the Recently Created table', async (): Promise<void> => {
     vi.spyOn(tauriProductService, 'createProduct').mockResolvedValueOnce(
-      makeProduct({ sku: 'WIDGET-002', name: 'Super Widget', category: 'Accessories' }),
+      makeProduct({ sku: 'SUPERWIDGET', name: 'Super Widget', category: 'Accessories' }),
     );
 
     render(<CreateProductView />);
 
-    await fillAndCommitRow({
-      sku: 'WIDGET-002',
-      name: 'Super Widget',
-      category: 'Accessories',
-    });
+    await fillAndCommitRow({ name: 'Super Widget', model: 'SUPERWIDGET', category: 'Accessories' });
 
     await waitFor((): void => {
       expect(screen.getByTestId('recently-created-table')).toHaveTextContent('Super Widget');
     });
 
-    expect(screen.getByTestId('recently-created-table')).toHaveTextContent('WIDGET-002');
+    expect(screen.getByTestId('recently-created-table')).toHaveTextContent('SUPERWIDGET');
     expect(screen.getByTestId('recently-created-table')).toHaveTextContent('Accessories');
-  });
-
-  // -------------------------------------------------------------------------
-  // Required-field validation — SKU missing
-  // -------------------------------------------------------------------------
-
-  it('blocks commit and shows error when SKU is missing', async (): Promise<void> => {
-    const createSpy = vi.spyOn(tauriProductService, 'createProduct');
-
-    render(<CreateProductView />);
-
-    // Fill all fields except SKU
-    await fillAndCommitRow({ sku: '', name: 'No SKU Product', category: 'General', unit: 'pcs' });
-
-    // createProduct must NOT have been called
-    await waitFor((): void => {
-      expect(screen.getByTestId('create-product-error')).toBeInTheDocument();
-    });
-
-    expect(screen.getByTestId('create-product-error')).toHaveTextContent(/sku is required/i);
-    expect(createSpy).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -263,7 +218,7 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
 
     render(<CreateProductView />);
 
-    await fillAndCommitRow({ sku: 'NONAME-001', name: '', category: 'General', unit: 'pcs' });
+    await fillAndCommitRow({ name: '', model: 'NONAME-MODEL', category: 'General' });
 
     await waitFor((): void => {
       expect(screen.getByTestId('create-product-error')).toBeInTheDocument();
@@ -271,6 +226,27 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
 
     expect(screen.getByTestId('create-product-error')).toHaveTextContent(
       /product name is required/i,
+    );
+    expect(createSpy).not.toHaveBeenCalled();
+  });
+
+  // -------------------------------------------------------------------------
+  // Required-field validation — Model (SKU) missing
+  // -------------------------------------------------------------------------
+
+  it('blocks commit and shows error when Model (SKU) is missing', async (): Promise<void> => {
+    const createSpy = vi.spyOn(tauriProductService, 'createProduct');
+
+    render(<CreateProductView />);
+
+    await fillAndCommitRow({ name: 'No Model Product', model: '', category: 'General' });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('create-product-error')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('create-product-error')).toHaveTextContent(
+      /model number is required/i,
     );
     expect(createSpy).not.toHaveBeenCalled();
   });
@@ -284,7 +260,7 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
 
     render(<CreateProductView />);
 
-    await fillAndCommitRow({ sku: 'NOCAT-001', name: 'No Category Product', category: '' });
+    await fillAndCommitRow({ name: 'No Category Product', model: 'NOCAT-001', category: '' });
 
     await waitFor((): void => {
       expect(screen.getByTestId('create-product-error')).toBeInTheDocument();
@@ -295,22 +271,17 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
   });
 
   // -------------------------------------------------------------------------
-  // Duplicate SKU — service error surfaces in the UI
+  // Duplicate model/SKU — service error surfaces in the UI
   // -------------------------------------------------------------------------
 
-  it('surfaces duplicate-SKU error from the service in the error banner', async (): Promise<void> => {
+  it('surfaces duplicate model/SKU error from the service in the error banner', async (): Promise<void> => {
     vi.spyOn(tauriProductService, 'createProduct').mockRejectedValueOnce(
       new Error('UNIQUE constraint failed: products.sku'),
     );
 
     render(<CreateProductView />);
 
-    await fillAndCommitRow({
-      sku: 'DUPE-SKU-001',
-      name: 'Duplicate Product',
-      category: 'General',
-      unit: 'pcs',
-    });
+    await fillAndCommitRow({ name: 'Duplicate Product', model: 'DUPE-MODEL', category: 'General' });
 
     await waitFor((): void => {
       expect(screen.getByTestId('create-product-error')).toBeInTheDocument();
@@ -322,15 +293,15 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
   });
 
   // -------------------------------------------------------------------------
-  // Success banner cleared after next valid commit
+  // Success banner
   // -------------------------------------------------------------------------
 
-  it('shows success banner after commit and clears error state', async (): Promise<void> => {
+  it('shows success banner after a clean commit', async (): Promise<void> => {
     vi.spyOn(tauriProductService, 'createProduct').mockResolvedValueOnce(makeProduct());
 
     render(<CreateProductView />);
 
-    await fillAndCommitRow({ sku: 'OK-001', name: 'Good Product', category: 'General' });
+    await fillAndCommitRow({ name: 'Good Product', model: 'GOOD-001', category: 'General' });
 
     await waitFor((): void => {
       expect(screen.getByTestId('create-product-success')).toBeInTheDocument();

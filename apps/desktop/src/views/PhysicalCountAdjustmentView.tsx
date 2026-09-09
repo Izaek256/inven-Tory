@@ -1,4 +1,4 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useState, useRef } from 'react';
 import {
   ClipboardList,
   Check,
@@ -115,7 +115,10 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const [searchResults, setSearchResults] = useState<SearchResultItem[]>([]);
+  const [allProducts, setAllProducts] = useState<SearchResultItem[]>([]);
   const [productMap, setProductMap] = useState<Map<string, Product>>(new Map());
+  const [nameToId, setNameToId] = useState<Map<string, string>>(new Map());
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     const loadStores = async (): Promise<void> => {
@@ -140,11 +143,22 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         const products = await getProducts();
         const active = products.filter((p) => p.is_active);
 
+        const items: SearchResultItem[] = active.map((p) => ({
+          id: p.id,
+          label: p.name,
+          subtitle: `SKU: ${p.sku}${p.model ? ` • ${p.model}` : ''}`,
+          detail: undefined,
+        }));
+        setAllProducts(items);
+
         const pMap = new Map<string, Product>();
+        const nMap = new Map<string, string>();
         active.forEach((p) => {
           pMap.set(p.id, p);
+          nMap.set(p.name, p.id);
         });
         setProductMap(pMap);
+        setNameToId(nMap);
       } catch {
         // Silently fail — FTS5 search will still work
       }
@@ -152,33 +166,56 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     void loadAllProducts();
   }, []);
 
-  const handleSearch = useCallback(async (query: string, _rowIndex: number) => {
-    if (!query.trim()) {
-      setSearchResults([]);
-      return;
-    }
-    try {
-      const results = await searchProductsFts5(query);
-      const mapped = results
-        .filter((p) => p.is_active)
-        .map((p) => ({
-          id: p.id,
-          label: p.name,
-          subtitle: `SKU: ${p.sku}${p.barcode ? ` • Barcode: ${p.barcode}` : ''}`,
-          detail: undefined,
-        })) as SearchResultItem[];
-      setSearchResults(mapped);
+  const handleSearch = useCallback(
+    (query: string, _rowIndex: number): void => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
-      // Update product map with search results
-      setProductMap((prev) => {
-        const next = new Map(prev);
-        results.forEach((p) => next.set(p.id, p));
-        return next;
-      });
-    } catch {
-      setSearchResults([]);
-    }
-  }, []);
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        setSearchResults([]);
+        return;
+      }
+
+      // Instant local filter
+      const localMatches = allProducts.filter(
+        (p) =>
+          p.label.toLowerCase().includes(q) || (p.subtitle && p.subtitle.toLowerCase().includes(q)),
+      );
+      setSearchResults(localMatches);
+
+      // Debounced FTS5 backend search
+      searchTimerRef.current = setTimeout((): void => {
+        void (async (): Promise<void> => {
+          try {
+            const results = await searchProductsFts5(query);
+            const mapped = results
+              .filter((p) => p.is_active)
+              .map((p) => ({
+                id: p.id,
+                label: p.name,
+                subtitle: `SKU: ${p.sku}${p.model ? ` • ${p.model}` : ''}`,
+                detail: undefined,
+              })) as SearchResultItem[];
+            setSearchResults(mapped);
+
+            setProductMap((prev) => {
+              const next = new Map(prev);
+              results.forEach((p) => next.set(p.id, p));
+              return next;
+            });
+            setNameToId((prev) => {
+              const next = new Map(prev);
+              results.forEach((p) => next.set(p.name, p.id));
+              return next;
+            });
+          } catch {
+            // localMatches already shown
+          }
+        })();
+      }, 100);
+    },
+    [allProducts],
+  );
 
   const handleBarcodeScan = useCallback((barcode: string, _rowIndex: number): void => {
     if (!barcode.trim()) return;
@@ -215,11 +252,12 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         return;
       }
 
-      // Resolve product from search results
-      const productId = String(row.values.product_id ?? '');
+      // Resolve product: prefer product_id set by handleSearchSelect, fall back
+      // to name lookup (same pattern as ReceiveStockView / SaleStockView).
+      const productId = String(row.values.product_id ?? '') || (nameToId.get(productName) ?? '');
       const product = productMap.get(productId);
       if (!product) {
-        setError(`Product "${productName}" not found — please search and select from the panel`);
+        setError(`Product "${productName}" not found — please search and select from the list`);
         return;
       }
 
@@ -246,7 +284,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
       setCountEntries((prev) => [...prev, entry]);
     },
-    [selectedStoreId, productMap],
+    [selectedStoreId, productMap, nameToId],
   );
 
   const handleVoidCount = useCallback((rowId: string, _rowIndex: number) => {
@@ -443,6 +481,45 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
             </p>
           </div>
         </div>
+
+        {/* Store selector — visible and user-controlled, same pattern as other views */}
+        {stores.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <label
+              htmlFor="count-store-select"
+              style={{ fontSize: '13px', color: 'var(--it-text-secondary)', whiteSpace: 'nowrap' }}
+            >
+              Store:
+            </label>
+            <select
+              id="count-store-select"
+              data-testid="store-select"
+              value={selectedStoreId}
+              onChange={(e) => {
+                setSelectedStoreId(e.target.value);
+                // Clear any existing count entries when the store changes —
+                // system quantities would be wrong for the new store.
+                setCountEntries([]);
+                setSearchResults([]);
+                setError(null);
+              }}
+              style={{
+                padding: '6px 10px',
+                borderRadius: 'var(--it-r-md)',
+                border: '1px solid var(--it-border)',
+                backgroundColor: 'var(--it-card)',
+                color: 'var(--it-text-primary)',
+                fontSize: '13px',
+              }}
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       <div data-testid="step-indicator" style={{ marginBottom: '20px' }}>
@@ -482,7 +559,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
               onSearch={handleSearch}
               onBarcodeScan={handleBarcodeScan}
               searchResults={searchResults}
-              allItems={[]}
+              allItems={allProducts}
               initialRowCount={5}
               fieldTestIds={{
                 product: 'field-product',
