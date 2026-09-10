@@ -175,7 +175,7 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Active Store Selector */}
         {stores.length > 0 &&
-          (() => {
+          ((): React.ReactElement => {
             const currentStore = stores.find((s) => s.id === activeStoreId) || stores[0];
             return (
               <div className="store-switcher-wrapper" data-testid="store-switcher-wrapper">

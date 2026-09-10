@@ -63,7 +63,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       return;
     }
     let cancelled = false;
-    const loadBalances = async () => {
+    const loadBalances = async (): Promise<void> => {
       try {
         const balances = await Promise.all(
           products.map(async (p) => {
@@ -83,7 +83,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       }
     };
     void loadBalances();
-    return () => {
+    return (): void => {
       cancelled = true;
     };
   }, [products, activeStoreId]);

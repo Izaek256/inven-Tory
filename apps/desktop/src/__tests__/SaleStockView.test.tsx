@@ -47,12 +47,18 @@ const mockStoreContextValue = {
   activeStoreId: 'STORE-A',
   setActiveStoreId: vi.fn(),
 };
-vi.mock('../context/StoreContext', () => ({
-  useActiveStore: () => mockStoreContextValue,
-  StoreContext: {
-    Provider: ({ children }: { children: React.ReactNode }) => children,
-  },
-}));
+vi.mock(
+  '../context/StoreContext',
+  (): {
+    useActiveStore: () => typeof mockStoreContextValue;
+    StoreContext: { Provider: ({ children }: { children: React.ReactNode }) => React.ReactNode };
+  } => ({
+    useActiveStore: (): typeof mockStoreContextValue => mockStoreContextValue,
+    StoreContext: {
+      Provider: ({ children }: { children: React.ReactNode }): React.ReactNode => children,
+    },
+  }),
+);
 
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 

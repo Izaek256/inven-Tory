@@ -15,7 +15,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
     setMoreOpen(isMoreView);
   }, [currentView]);
 
-  const handleMoreClick = (view: NavView) => {
+  const handleMoreClick = (view: NavView): void => {
     onNavigate(view);
     setMoreOpen(false);
   };
