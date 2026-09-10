@@ -18,6 +18,24 @@ import * as tauriAuthService from '../services/tauriAuthService';
 import { Transfer } from '../types/transfer';
 import { StockBalance } from '../types/transaction';
 
+// Mock StoreContext to provide activeStoreId
+const mockStoreContextValue = {
+  activeStoreId: 'STORE-A',
+  setActiveStoreId: vi.fn(),
+};
+vi.mock(
+  '../context/StoreContext',
+  (): {
+    useActiveStore: () => typeof mockStoreContextValue;
+    StoreContext: { Provider: ({ children }: { children: React.ReactNode }) => React.ReactNode };
+  } => ({
+    useActiveStore: (): typeof mockStoreContextValue => mockStoreContextValue,
+    StoreContext: {
+      Provider: ({ children }: { children: React.ReactNode }): React.ReactNode => children,
+    },
+  }),
+);
+
 vi.mock('../services/tauriAuthService', async () => {
   const actual = await vi.importActual('../services/tauriAuthService');
   return {

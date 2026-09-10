@@ -197,4 +197,82 @@ describe('Store CRUD & Device Registration (FR-STORE-001–003)', () => {
     expect(screen.getByTestId('edit-store-btn-STORE-ALPHA')).toBeDisabled();
     expect(screen.getByTestId('toggle-store-btn-STORE-ALPHA')).toBeDisabled();
   });
+
+  // Task D regression test: create store → store appears in list without reload
+  it('create store → onRetry refreshes list so new store appears without reload', async () => {
+    // Start with one store
+    const startStores: Store[] = [
+      {
+        id: 'STORE-ALPHA',
+        code: 'ALPHA',
+        name: 'Store Alpha',
+        address: '100 Electronics Way',
+        is_active: true,
+        created_at: '2026-08-29T10:00:00Z',
+        updated_at: '2026-08-29T10:00:00Z',
+      },
+    ];
+
+    // The updated list that onRetry will "return" after creation
+    const updatedStores: Store[] = [
+      ...startStores,
+      {
+        id: 'STORE-GAMMA',
+        code: 'GAMMA',
+        name: 'Store Gamma',
+        address: '888 Commerce Blvd',
+        is_active: true,
+        created_at: '2026-08-29T12:00:00Z',
+        updated_at: '2026-08-29T12:00:00Z',
+      },
+    ];
+
+    // onRetry simulates a refresh that returns the updated list
+    const onRetry = vi.fn(async () => {
+      rerender(
+        <DashboardView stores={updatedStores} loading={false} error={null} onRetry={onRetry} />,
+      );
+    });
+
+    vi.spyOn(tauriStoreService, 'createStore').mockResolvedValue({
+      id: 'STORE-GAMMA',
+      code: 'GAMMA',
+      name: 'Store Gamma',
+      address: '888 Commerce Blvd',
+      is_active: true,
+      created_at: '2026-08-29T12:00:00Z',
+      updated_at: '2026-08-29T12:00:00Z',
+    });
+
+    const { rerender } = render(
+      <DashboardView stores={startStores} loading={false} error={null} onRetry={onRetry} />,
+    );
+
+    // Verify initial state - only ALPHA is shown
+    expect(screen.getByText('ALPHA')).toBeInTheDocument();
+    expect(screen.queryByText('GAMMA')).not.toBeInTheDocument();
+
+    // Click Add Store
+    fireEvent.click(screen.getByTestId('add-store-btn'));
+    expect(screen.getByTestId('store-modal')).toBeInTheDocument();
+
+    // Fill form
+    fireEvent.change(screen.getByTestId('store-code-input'), { target: { value: 'GAMMA' } });
+    fireEvent.change(screen.getByTestId('store-name-input'), { target: { value: 'Store Gamma' } });
+    fireEvent.change(screen.getByTestId('store-address-input'), {
+      target: { value: '888 Commerce Blvd' },
+    });
+
+    // Submit form
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('store-modal-submit'));
+    });
+
+    // onRetry should have been called
+    expect(onRetry).toHaveBeenCalled();
+
+    // After onRetry, the new store should appear WITHOUT a manual page reload
+    expect(screen.getByText('GAMMA')).toBeInTheDocument();
+    expect(screen.getByText('Store Gamma')).toBeInTheDocument();
+  });
 });

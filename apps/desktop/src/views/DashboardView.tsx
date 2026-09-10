@@ -9,7 +9,15 @@ import {
 import { StoreModal } from '../components/StoreModal';
 import { DeviceRegistrationModal } from '../components/DeviceRegistrationModal';
 import { Button, Badge, StatCard, DataTable, EmptyState, ColumnDef } from '@invenTory/ui';
-import { Store as StoreIcon, Plus, Edit2, Power, Smartphone, AlertTriangle } from 'lucide-react';
+import {
+  LayoutDashboard,
+  Store as StoreIcon,
+  Plus,
+  Edit2,
+  Power,
+  Smartphone,
+  AlertTriangle,
+} from 'lucide-react';
 
 interface DashboardViewProps {
   stores: Store[];
@@ -186,11 +194,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   return (
     <div className="dashboard-view" data-testid="dashboard-view">
       <div className="view-header">
-        <div>
-          <h2 className="view-title">Dashboard & Store Locations</h2>
-          <p className="view-subtitle">
-            Local SQLite multi-store management and device assignment (FR-STORE-001–003)
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <LayoutDashboard size={24} color="var(--it-green)" />
+          <div>
+            <h2 className="view-title">Dashboard &amp; Store Locations</h2>
+            <p className="view-subtitle">
+              Local SQLite multi-store management and device assignment (FR-STORE-001–003)
+            </p>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {!isAuthorized && <Badge status="INACTIVE" label={`Restricted Role (${userRole})`} />}

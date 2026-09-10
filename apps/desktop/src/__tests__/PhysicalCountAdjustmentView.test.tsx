@@ -13,6 +13,24 @@ import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
 import { InventoryTransaction } from '../types/transaction';
 
+// Mock StoreContext to provide activeStoreId
+const mockStoreContextValue = {
+  activeStoreId: 'STORE-001',
+  setActiveStoreId: vi.fn(),
+};
+vi.mock(
+  '../context/StoreContext',
+  (): {
+    useActiveStore: () => typeof mockStoreContextValue;
+    StoreContext: { Provider: ({ children }: { children: React.ReactNode }) => React.ReactNode };
+  } => ({
+    useActiveStore: (): typeof mockStoreContextValue => mockStoreContextValue,
+    StoreContext: {
+      Provider: ({ children }: { children: React.ReactNode }): React.ReactNode => children,
+    },
+  }),
+);
+
 // ---------------------------------------------------------------------------
 // Fixtures
 // ---------------------------------------------------------------------------
@@ -154,11 +172,6 @@ describe('PhysicalCountAdjustmentView — single-step immediate adjust', (): voi
     // Grid is present immediately
     expect(screen.getByTestId('physical-count-view')).toBeInTheDocument();
     expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
-
-    // Store selector appears once stores load asynchronously
-    await waitFor((): void => {
-      expect(screen.getByTestId('store-select')).toBeInTheDocument();
-    });
 
     // Step indicator exists but is hidden (single-step flow)
     const stepIndicator = screen.getByTestId('step-indicator');

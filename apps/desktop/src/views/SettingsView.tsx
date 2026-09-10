@@ -32,9 +32,12 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
   return (
     <div className="settings-view" data-testid="settings-view">
       <div className="view-header">
-        <div>
-          <h2 className="view-title">System Settings</h2>
-          <p className="view-subtitle">Device configuration, sync rules, and store parameters</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Settings size={24} color="var(--it-green)" />
+          <div>
+            <h2 className="view-title">System Settings</h2>
+            <p className="view-subtitle">Device configuration, sync rules, and store parameters</p>
+          </div>
         </div>
       </div>
 

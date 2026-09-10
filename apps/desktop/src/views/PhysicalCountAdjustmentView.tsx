@@ -1,13 +1,12 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
 import { ClipboardList, Check, AlertCircle, Trash2, RotateCcw } from 'lucide-react';
-import { getStores } from '../services/tauriStoreService';
 import { searchProductsFts5 } from '../services/tauriProductService';
 import { getStockBalance, adjustStock } from '../services/tauriTransactionService';
-import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { AdjustStockInput } from '../types/transaction';
 import { Button, LinearGridEntry, GridFieldDef, SearchResultItem, DataTable } from '@invenTory/ui';
 import type { ColumnDef } from '@invenTory/ui';
+import { useActiveStore } from '../context/StoreContext';
 
 interface PhysicalCountAdjustmentViewProps {
   userRole?: string;
@@ -59,6 +58,7 @@ function VarianceCell({ delta }: { delta: number }): React.ReactElement {
 }
 
 export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewProps> = () => {
+  const { activeStoreId } = useActiveStore();
   const [sessionUserId, setSessionUserId] = useState('');
   const [sessionDeviceId, setSessionDeviceId] = useState('');
 
@@ -84,8 +84,6 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     void loadSession();
   }, []);
 
-  const [stores, setStores] = useState<Store[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState('');
   const [countEntries, setCountEntries] = useState<CountEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -100,21 +98,6 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   // Live qty cache for the currently selected store (productId → qty)
   const [storeQtyCache, setStoreQtyCache] = useState<Map<string, number>>(new Map());
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  // ── Stores ───────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const loadStores = async (): Promise<void> => {
-      try {
-        const data = await getStores();
-        setStores(data.filter((s) => s.is_active));
-        if (data.length > 0) setSelectedStoreId(data[0].id);
-      } catch {
-        setError('Failed to load stores. Please refresh.');
-      }
-    };
-    void loadStores();
-  }, []);
 
   // ── Products + per-store qty for search panel ─────────────────────────────
 
@@ -160,10 +143,10 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   }, []);
 
   useEffect(() => {
-    if (selectedStoreId) {
-      void loadProductsWithQty(selectedStoreId);
+    if (activeStoreId) {
+      void loadProductsWithQty(activeStoreId);
     }
-  }, [selectedStoreId, loadProductsWithQty]);
+  }, [activeStoreId, loadProductsWithQty]);
 
   // ── Search ────────────────────────────────────────────────────────────────
 
@@ -249,8 +232,8 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     async (row: { id: string; values: Record<string, string | number> }, _rowIndex: number) => {
       setError(null);
 
-      if (!selectedStoreId) {
-        setError('Please select a store.');
+      if (!activeStoreId) {
+        setError('Please select a store from the header.');
         return;
       }
 
@@ -272,7 +255,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
       // Fetch live system qty at the moment of commit
       let systemQty = storeQtyCache.get(product.id) ?? 0;
       try {
-        const bal = await getStockBalance(selectedStoreId, product.id);
+        const bal = await getStockBalance(activeStoreId, product.id);
         systemQty = bal.quantity;
       } catch {
         // use cache
@@ -286,13 +269,13 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         setSubmittingIds((prev) => new Set(prev).add(row.id));
         try {
           const input: AdjustStockInput = {
-            store_id: selectedStoreId,
+            store_id: activeStoreId,
             product_id: product.id,
             quantity_delta: variance,
             reason: `Physical count: system ${systemQty}, counted ${countedQty}`,
             user_id: sessionUserId || 'USER-LOCAL',
             device_id: sessionDeviceId || 'SINGLE-USER-DEVICE',
-            count_reference: `COUNT-${selectedStoreId}-${Date.now()}`,
+            count_reference: `COUNT-${activeStoreId}-${Date.now()}`,
           };
           await adjustStock(input);
 
@@ -336,7 +319,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
       setCountEntries((prev) => [...prev, entry]);
     },
-    [selectedStoreId, productMap, nameToId, storeQtyCache, sessionUserId, sessionDeviceId],
+    [activeStoreId, productMap, nameToId, storeQtyCache, sessionUserId, sessionDeviceId],
   );
 
   const handleVoidCount = useCallback((rowId: string) => {
@@ -455,42 +438,6 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
             </p>
           </div>
         </div>
-
-        {stores.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <label
-              htmlFor="count-store-select"
-              style={{ fontSize: '13px', color: 'var(--it-text-secondary)', whiteSpace: 'nowrap' }}
-            >
-              Store:
-            </label>
-            <select
-              id="count-store-select"
-              data-testid="store-select"
-              value={selectedStoreId}
-              onChange={(e) => {
-                setSelectedStoreId(e.target.value);
-                setCountEntries([]);
-                setSearchResults([]);
-                setError(null);
-              }}
-              style={{
-                padding: '6px 10px',
-                borderRadius: 'var(--it-r-md)',
-                border: '1px solid var(--it-border)',
-                backgroundColor: 'var(--it-card)',
-                color: 'var(--it-text-primary)',
-                fontSize: '13px',
-              }}
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
       </div>
 
       {/* ── Step indicator removed — single step now ─────────────────────── */}

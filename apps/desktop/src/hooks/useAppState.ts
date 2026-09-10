@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { usePersistentState } from './usePersistentState';
-import type { NavView } from '../components/Sidebar';
+import type { NavView } from '../config/navigation';
 
 const APP_STATE_KEY = 'inven_tory_app_state_v1';
 

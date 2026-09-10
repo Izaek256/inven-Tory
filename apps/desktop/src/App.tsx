@@ -40,6 +40,8 @@ import { getStores } from './services/tauriStoreService';
 import { getSession, isAuthenticated, logout } from './services/tauriAuthService';
 import { startBackgroundSync, stopBackgroundSync, triggerSync } from './services/tauriSyncService';
 import { useAppState } from './hooks/useAppState';
+import { StoreProvider } from './context/StoreContext';
+import { Store as StoreIcon } from 'lucide-react';
 import { Store } from './types/store';
 import type { AuthSession } from './types/auth';
 import './index.css';
@@ -128,6 +130,11 @@ export function App(): React.ReactElement {
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [interactiveTimeMs, setInteractiveTimeMs] = useState<number | null>(null);
+  const [switchingStore, setSwitchingStore] = useState<{
+    active: boolean;
+    storeName: string;
+    storeCode: string;
+  }>({ active: false, storeName: '', storeCode: '' });
 
   // ---------------------------------------------------------------------------
   // Auth bootstrap
@@ -182,6 +189,17 @@ export function App(): React.ReactElement {
       fetchStores();
     }
   }, [fetchStores, authState]);
+
+  // Listen for local store updates across the app (creation, activation, sync)
+  useEffect(() => {
+    const handleStoresUpdated = (): void => {
+      void fetchStores();
+    };
+    window.addEventListener('inven-tory:stores-updated', handleStoresUpdated);
+    return (): void => {
+      window.removeEventListener('inven-tory:stores-updated', handleStoresUpdated);
+    };
+  }, [fetchStores]);
 
   // Background Sync Engine (Issue 15 / Section 21)
   useEffect(() => {
@@ -275,6 +293,40 @@ export function App(): React.ReactElement {
     void refresh();
   };
 
+  // Store-context reload: switching stores via the header persists the new
+  // activeStoreId and then forces a full app reload, so every mounted view
+  // re-reads `activeStoreId`. There are no in-view store selectors left — the
+  // header dropdown is the single source of truth for which store every
+  // operation runs against.
+  const handleSelectStoreAndReload = useCallback(
+    (storeId: string): void => {
+      const target = stores.find((s) => s.id === storeId);
+      setSwitchingStore({
+        active: true,
+        storeName: target?.name ?? 'Store',
+        storeCode: target?.code ?? '',
+      });
+      setActiveStoreId(storeId);
+      setTimeout(() => {
+        try {
+          if (
+            typeof window !== 'undefined' &&
+            typeof window.location !== 'undefined' &&
+            typeof navigator !== 'undefined' &&
+            !navigator.userAgent.includes('jsdom')
+          ) {
+            window.location.reload();
+            return;
+          }
+        } catch {
+          // fall through — context update alone still propagates
+        }
+        setSwitchingStore({ active: false, storeName: '', storeCode: '' });
+      }, 450);
+    },
+    [stores, setActiveStoreId],
+  );
+
   const handleLogout = async (): Promise<void> => {
     await logout();
     setSession(null);
@@ -339,7 +391,7 @@ export function App(): React.ReactElement {
       case 'create_product':
         return <CreateProductView />;
       case 'day_books':
-        return <DayBooksView />;
+        return <DayBooksView stores={stores} />;
       case 'transactions':
         return <TransactionsView />;
       case 'settings':
@@ -359,10 +411,32 @@ export function App(): React.ReactElement {
 
   return (
     <div className="app-container" data-testid="app-container">
+      {switchingStore.active && (
+        <div className="store-switch-overlay" data-testid="store-switch-overlay">
+          <div className="store-switch-modal">
+            <div className="store-switch-spinner-container">
+              <div className="store-switch-spinner-ring" />
+              <div className="store-switch-spinner-core">
+                <StoreIcon size={22} />
+              </div>
+            </div>
+            <h3 className="store-switch-title">Switching Store</h3>
+            <p className="store-switch-target">
+              {switchingStore.storeName}{' '}
+              {switchingStore.storeCode && (
+                <span className="store-switch-badge">{switchingStore.storeCode}</span>
+              )}
+            </p>
+            <p className="store-switch-subtitle">
+              Refreshing inventory ledger and localized data...
+            </p>
+          </div>
+        </div>
+      )}
       <Header
         stores={stores}
         activeStoreId={activeStoreId}
-        onSelectStore={setActiveStoreId}
+        onSelectStore={handleSelectStoreAndReload}
         interactiveTimeMs={interactiveTimeMs}
         currentUser={session}
         onLogout={handleLogout}
@@ -379,7 +453,7 @@ export function App(): React.ReactElement {
               onReauthSuccess={handleReauthSuccess}
             />
           )}
-          {renderView()}
+          <StoreProvider>{renderView()}</StoreProvider>
         </main>
       </div>
     </div>

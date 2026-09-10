@@ -18,6 +18,24 @@ import * as tauriTransactionService from '../services/tauriTransactionService';
 import * as tauriAuthService from '../services/tauriAuthService';
 import { InventoryTransaction, StockBucket } from '../types/transaction';
 
+// Mock StoreContext to provide activeStoreId
+const mockStoreContextValue = {
+  activeStoreId: 'STORE-A',
+  setActiveStoreId: vi.fn(),
+};
+vi.mock(
+  '../context/StoreContext',
+  (): {
+    useActiveStore: () => typeof mockStoreContextValue;
+    StoreContext: { Provider: ({ children }: { children: React.ReactNode }) => React.ReactNode };
+  } => ({
+    useActiveStore: (): typeof mockStoreContextValue => mockStoreContextValue,
+    StoreContext: {
+      Provider: ({ children }: { children: React.ReactNode }): React.ReactNode => children,
+    },
+  }),
+);
+
 vi.mock('../services/tauriAuthService', async () => {
   const actual = await vi.importActual('../services/tauriAuthService');
   return {
@@ -170,16 +188,6 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
   async function setupForm(qty: number = 2, reasonText: string = ''): Promise<void> {
     render(<DamageQuarantineView />);
 
-    await waitFor((): void => {
-      expect(screen.getByTestId('store-select')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('store-select'), {
-        target: { value: 'STORE-A' },
-      });
-    });
-
     act((): void => {
       fireEvent.change(screen.getByTestId('product-search-input'), {
         target: { value: 'Sony' },
@@ -310,13 +318,7 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     render(<SaleStockView />);
 
     await waitFor((): void => {
-      expect(screen.getByTestId('store-select')).toBeInTheDocument();
-    });
-
-    act((): void => {
-      fireEvent.change(screen.getByTestId('store-select'), {
-        target: { value: 'STORE-A' },
-      });
+      expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
 
     const productCell = screen.getByTestId('cell-0-product');

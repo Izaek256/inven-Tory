@@ -137,6 +137,36 @@ body {
   box-shadow: var(--it-focus-ring);
 }
 
+.nav-more-toggle {
+  justify-content: space-between;
+  color: var(--it-text-secondary);
+}
+
+.nav-more-toggle:hover {
+  background-color: var(--it-gray-surface);
+  color: var(--it-text-primary);
+}
+
+.nav-more-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 4px;
+  border-left: 2px solid var(--it-border);
+  margin-top: 4px;
+}
+
+.nav-more-group .nav-item {
+  font-size: 12px;
+  padding: 6px 8px;
+}
+
+.nav-more-group .nav-item.active {
+  background-color: var(--it-green-surface);
+  color: var(--it-green-text);
+  border-color: var(--it-green-border);
+}
+
 /* Main Content Area */
 .app-content {
   flex: 1;
@@ -245,4 +275,229 @@ body {
 }
 .it-summary-card__body {
   padding: 12px 16px;
+}
+
+/* ── Redesigned Store Switcher (Header) ────────────────────────────────── */
+.store-switcher-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.store-switcher-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background-color: var(--it-card);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-md);
+  padding: 4px 10px 4px 6px;
+  height: 32px;
+  transition: all 0.15s ease-in-out;
+  cursor: pointer;
+}
+
+.store-switcher-wrapper:hover .store-switcher-pill {
+  border-color: var(--it-green-border);
+  background-color: var(--it-surface);
+  box-shadow: var(--it-shadow-xs);
+}
+
+.store-switcher-wrapper:focus-within .store-switcher-pill {
+  outline: none;
+  border-color: var(--it-green);
+  box-shadow: var(--it-focus-ring);
+}
+
+.store-switcher-icon-wrap {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--it-r-sm);
+  background-color: var(--it-green-surface);
+  color: var(--it-green-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.store-switcher-info {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  max-width: 170px;
+}
+
+.store-switcher-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--it-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.store-switcher-code {
+  font-size: 11px;
+  font-family: var(--it-font-mono);
+  font-weight: 600;
+  color: var(--it-green-text);
+  background-color: var(--it-green-surface);
+  border: 1px solid var(--it-green-border);
+  border-radius: 3px;
+  padding: 1px 4px;
+}
+
+.store-switcher-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--it-green);
+  box-shadow: 0 0 6px var(--it-green);
+  flex-shrink: 0;
+}
+
+.store-switcher-chevron {
+  color: var(--it-text-secondary);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.store-switcher-wrapper:hover .store-switcher-chevron {
+  color: var(--it-text-primary);
+}
+
+.store-switcher-native-select {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+  font-size: 13px;
+}
+
+/* ── Blurry Store Switching Overlay ────────────────────────────────────── */
+.store-switch-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.45);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  animation: fadeInOverlay 0.2s ease-out forwards;
+}
+
+@keyframes fadeInOverlay {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.store-switch-modal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 28px 36px;
+  background-color: var(--it-surface);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-xl);
+  box-shadow: var(--it-shadow-lg);
+  max-width: 380px;
+  animation: scaleInModal 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes scaleInModal {
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.store-switch-spinner-container {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.store-switch-spinner-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 3px solid var(--it-green-surface);
+  border-top-color: var(--it-green);
+  border-right-color: var(--it-green);
+  animation: spinRing 0.85s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.25);
+}
+
+@keyframes spinRing {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.store-switch-spinner-core {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: var(--it-green-surface);
+  color: var(--it-green-text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.store-switch-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--it-text-primary);
+  margin-bottom: 6px;
+  letter-spacing: -0.3px;
+}
+
+.store-switch-target {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--it-green-text);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.store-switch-badge {
+  font-family: var(--it-font-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  background-color: var(--it-green-surface);
+  border: 1px solid var(--it-green-border);
+  border-radius: var(--it-r-sm);
+}
+
+.store-switch-subtitle {
+  font-size: 12px;
+  color: var(--it-text-secondary);
+  line-height: 1.4;
+  margin: 0;
 }

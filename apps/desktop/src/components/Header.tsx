@@ -2,8 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
-import { Badge, ThemeToggle, Select, Button } from '@invenTory/ui';
-import { LogOut, User } from 'lucide-react';
+import { Badge, ThemeToggle, Button } from '@invenTory/ui';
+import { LogOut, User, Store as StoreIcon, ChevronDown } from 'lucide-react';
 import type { AuthSession } from '../types/auth';
 
 interface HeaderProps {
@@ -174,19 +174,43 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Active Store Selector */}
-        {stores.length > 0 && (
-          <div className="store-selector-box">
-            <Select
-              value={activeStoreId || ''}
-              onChange={(e) => onSelectStore(e.target.value)}
-              data-testid="store-selector"
-              options={stores.map((store) => ({
-                value: store.id,
-                label: `${store.name} (${store.code})`,
-              }))}
-            />
-          </div>
-        )}
+        {stores.length > 0 &&
+          ((): React.ReactElement => {
+            const currentStore = stores.find((s) => s.id === activeStoreId) || stores[0];
+            return (
+              <div className="store-switcher-wrapper" data-testid="store-switcher-wrapper">
+                <div
+                  className="store-switcher-pill"
+                  title={`Active Store: ${currentStore?.name} (${currentStore?.code})`}
+                >
+                  <div className="store-switcher-icon-wrap">
+                    <StoreIcon size={14} className="store-switcher-icon" />
+                  </div>
+                  <div className="store-switcher-info">
+                    <span className="store-switcher-name">{currentStore?.name}</span>
+                    <span className="store-switcher-code">{currentStore?.code}</span>
+                  </div>
+                  <span className="store-switcher-dot" aria-hidden="true" />
+                  <ChevronDown size={14} className="store-switcher-chevron" />
+                </div>
+                <select
+                  className="store-switcher-native-select"
+                  value={activeStoreId || ''}
+                  onChange={(e: React.ChangeEvent<HTMLSelectElement>): void =>
+                    onSelectStore(e.target.value)
+                  }
+                  data-testid="store-selector"
+                  aria-label="Active Store Location"
+                >
+                  {stores.map((store) => (
+                    <option key={store.id} value={store.id}>
+                      {store.name} ({store.code})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            );
+          })()}
 
         {/* Current user identity */}
         {currentUser && (

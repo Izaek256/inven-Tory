@@ -42,6 +42,24 @@ vi.mock('@tauri-apps/plugin-store', () => ({
   ),
 }));
 
+// Mock StoreContext to provide activeStoreId
+const mockStoreContextValue = {
+  activeStoreId: 'STORE-A',
+  setActiveStoreId: vi.fn(),
+};
+vi.mock(
+  '../context/StoreContext',
+  (): {
+    useActiveStore: () => typeof mockStoreContextValue;
+    StoreContext: { Provider: ({ children }: { children: React.ReactNode }) => React.ReactNode };
+  } => ({
+    useActiveStore: (): typeof mockStoreContextValue => mockStoreContextValue,
+    StoreContext: {
+      Provider: ({ children }: { children: React.ReactNode }): React.ReactNode => children,
+    },
+  }),
+);
+
 // ─── Fixtures ──────────────────────────────────────────────────────────────────
 
 const MOCK_STORES = [
@@ -121,11 +139,6 @@ function makeSaleTx(overrides: Partial<InventoryTransaction> = {}): InventoryTra
  */
 async function setupAndCommitRow(qty: number = 1): Promise<void> {
   render(<SaleStockView />);
-
-  // Wait for the grid to render (store-select appears after stores load)
-  await waitFor(() => {
-    expect(screen.getByTestId('store-select')).toBeInTheDocument();
-  });
 
   // Wait for the live-search-panel to populate (allProducts loaded)
   await waitFor(() => {
@@ -233,8 +246,9 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
 
   it('live panel filters as the user types in the product field', async (): Promise<void> => {
     render(<SaleStockView />);
+
     await waitFor(() => {
-      expect(screen.getByTestId('store-select')).toBeInTheDocument();
+      expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
 
     const productCell = screen.getByTestId('cell-0-product');

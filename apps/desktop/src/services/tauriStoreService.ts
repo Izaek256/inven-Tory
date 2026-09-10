@@ -78,7 +78,14 @@ export async function getStores(): Promise<Store[]> {
 export async function createStore(input: CreateStoreInput): Promise<Store> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Store>('create_store', { input });
+      const created = await invoke<Store>('create_store', { input });
+      // Dispatch event after successful creation to ensure the store is committed
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+        }, 0);
+      }
+      return created;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriStoreService] Error invoking create_store:', err);
@@ -90,7 +97,14 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
     method: 'POST',
     body: JSON.stringify(input),
   });
-  if (created) return created;
+  if (created) {
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+      }, 0);
+    }
+    return created;
+  }
 
   throw new Error(
     '[TauriStoreService] createStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
@@ -103,7 +117,13 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
 export async function updateStore(input: UpdateStoreInput): Promise<Store> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Store>('update_store', { input });
+      const updated = await invoke<Store>('update_store', { input });
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+        }, 0);
+      }
+      return updated;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriStoreService] Error invoking update_store:', err);
@@ -115,7 +135,14 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
     method: 'PATCH',
     body: JSON.stringify(input),
   });
-  if (updated) return updated;
+  if (updated) {
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+      }, 0);
+    }
+    return updated;
+  }
 
   throw new Error(
     '[TauriStoreService] updateStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
@@ -128,7 +155,17 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
 export async function toggleStoreActive(id: string, is_active: boolean): Promise<Store> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Store>('toggle_store_active', { id, isActive: is_active, is_active });
+      const toggled = await invoke<Store>('toggle_store_active', {
+        id,
+        isActive: is_active,
+        is_active,
+      });
+      if (typeof window !== 'undefined') {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+        }, 0);
+      }
+      return toggled;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TauriStoreService] Error invoking toggle_store_active:', err);
@@ -140,7 +177,14 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
     method: 'PATCH',
     body: JSON.stringify({ is_active }),
   });
-  if (toggled) return toggled;
+  if (toggled) {
+    if (typeof window !== 'undefined') {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+      }, 0);
+    }
+    return toggled;
+  }
 
   throw new Error(
     '[TauriStoreService] toggleStoreActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',

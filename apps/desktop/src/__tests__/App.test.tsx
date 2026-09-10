@@ -101,10 +101,10 @@ describe('Desktop Shell Application', () => {
       expect(screen.getByTestId('stores-table')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('ALPHA')).toBeInTheDocument();
-    expect(screen.getByText('Store Alpha (Main Flagship)')).toBeInTheDocument();
-    expect(screen.getByText('BETA')).toBeInTheDocument();
-    expect(screen.getByText('Store Beta (Downtown)')).toBeInTheDocument();
+    expect(screen.getAllByText('ALPHA').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Store Alpha (Main Flagship)').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('BETA').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Store Beta (Downtown)').length).toBeGreaterThan(0);
   });
 
   it('handles store loading errors gracefully', async () => {
@@ -120,5 +120,46 @@ describe('Desktop Shell Application', () => {
     });
 
     expect(screen.getByText(/Failed to connect to SQLite database/)).toBeInTheDocument();
+  });
+
+  it('renders redesigned store switcher and displays blurry loading spinner when switching stores', async () => {
+    renderWithProviders(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('store-switcher-wrapper')).toBeInTheDocument();
+    });
+
+    const selector = screen.getByTestId('store-selector') as HTMLSelectElement;
+    expect(selector).toBeInTheDocument();
+
+    // Select store Beta
+    act(() => {
+      fireEvent.change(selector, { target: { value: 'STORE-BETA' } });
+    });
+
+    // Blurry spinner overlay should appear
+    expect(screen.getByTestId('store-switch-overlay')).toBeInTheDocument();
+    expect(screen.getByText('Switching Store')).toBeInTheDocument();
+    expect(screen.getAllByText('Store Beta (Downtown)').length).toBeGreaterThan(0);
+  });
+
+  it('listens for inven-tory:stores-updated event and automatically refreshes store list', async () => {
+    const getStoresSpy = vi.spyOn(tauriStoreService, 'getStores');
+    renderWithProviders(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('store-switcher-wrapper')).toBeInTheDocument();
+    });
+
+    const initialCalls = getStoresSpy.mock.calls.length;
+
+    // Dispatch stores-updated event
+    act(() => {
+      window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+    });
+
+    await waitFor(() => {
+      expect(getStoresSpy.mock.calls.length).toBeGreaterThan(initialCalls);
+    });
   });
 });
