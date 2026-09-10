@@ -20,6 +20,18 @@ import * as tauriTransactionService from '../services/tauriTransactionService';
 import * as tauriAuthService from '../services/tauriAuthService';
 import { InventoryTransaction } from '../types/transaction';
 
+// Mock StoreContext to provide activeStoreId
+const mockStoreContextValue = {
+  activeStoreId: 'STORE-A',
+  setActiveStoreId: vi.fn(),
+};
+vi.mock('../context/StoreContext', () => ({
+  useActiveStore: () => mockStoreContextValue,
+  StoreContext: {
+    Provider: ({ children }: { children: React.ReactNode }) => children,
+  },
+}));
+
 // ─── Module mocks ──────────────────────────────────────────────────────────────
 
 vi.mock('../services/tauriAuthService', async () => {
@@ -111,10 +123,6 @@ function makeReceiptTx(overrides: Partial<InventoryTransaction> = {}): Inventory
 
 async function setupAndCommitRow(qty: number = 1): Promise<void> {
   render(<ReceiveStockView />);
-
-  await waitFor(() => {
-    expect(screen.getByTestId('store-select')).toBeInTheDocument();
-  });
 
   await waitFor(() => {
     expect(screen.getByTestId('receive-grid')).toBeInTheDocument();

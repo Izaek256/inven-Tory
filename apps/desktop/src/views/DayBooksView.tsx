@@ -16,8 +16,9 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import { getStores, isTauriEnvironment } from '../services/tauriStoreService';
 import { getProducts } from '../services/tauriProductService';
+import { isTauriEnvironment } from '../services/tauriStoreService';
+import { Store } from '../types/store';
 import {
   getLocalTransactions,
   getStockBalance,
@@ -25,7 +26,6 @@ import {
   deleteTransaction,
 } from '../services/tauriTransactionService';
 import { getAccessToken } from '../services/tauriAuthService';
-import { Store } from '../types/store';
 import { InventoryTransaction } from '../types/transaction';
 import { BalanceSheetPdf } from '../components/BalanceSheetPdf';
 import {
@@ -34,15 +34,8 @@ import {
   type DayBookEntryForSheet,
   type BalanceSheetRow,
 } from '../utils/balanceSheetUtils';
-import {
-  Button,
-  Badge,
-  DataTable,
-  EmptyState,
-  Select,
-  ColumnDef,
-  type BadgeStatus,
-} from '@invenTory/ui';
+import { Button, Badge, DataTable, EmptyState, ColumnDef, type BadgeStatus } from '@invenTory/ui';
+import { useActiveStore } from '../context/StoreContext';
 
 const DAYBOOKS_CACHE_PREFIX = 'inven_tory_daybooks_';
 const DAYBOOK_DETAIL_CACHE_PREFIX = 'inven_tory_daybook_detail_';
@@ -288,9 +281,12 @@ interface DayBookDetail {
   entries: DayBookEntry[];
 }
 
-export const DayBooksView: React.FC = () => {
-  const [stores, setStores] = useState<Store[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
+interface DayBooksViewProps {
+  stores: Store[];
+}
+
+export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
+  const { activeStoreId } = useActiveStore();
   const [dayBooks, setDayBooks] = useState<DayBook[]>([]);
   const [selectedDayBook, setSelectedDayBook] = useState<DayBookDetail | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -328,21 +324,6 @@ export const DayBooksView: React.FC = () => {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
     return fetch(`${getApiBaseUrl()}${path}`, { ...options, headers });
-  }, []);
-
-  useEffect(() => {
-    const loadStores = async (): Promise<void> => {
-      try {
-        const data = await getStores();
-        setStores(data.filter((s) => s.is_active));
-        if (data.length > 0) {
-          setSelectedStoreId(data[0].id);
-        }
-      } catch (err) {
-        setError('Failed to load stores');
-      }
-    };
-    loadStores();
   }, []);
 
   const loadDayBooks = useCallback(
@@ -427,11 +408,11 @@ export const DayBooksView: React.FC = () => {
   );
 
   useEffect(() => {
-    if (selectedStoreId) {
+    if (activeStoreId) {
       setSelectedDayBook(null);
-      void loadDayBooks(selectedStoreId);
+      void loadDayBooks(activeStoreId);
     }
-  }, [selectedStoreId, loadDayBooks]);
+  }, [activeStoreId, loadDayBooks]);
 
   const loadDayBookDetail = useCallback(
     async (dayBookId: string): Promise<void> => {
@@ -1044,13 +1025,16 @@ export const DayBooksView: React.FC = () => {
   return (
     <div className="view-container" data-testid="day-books-view">
       <div className="view-header">
-        <div>
-          <h2 className="view-title">Day Books</h2>
-          <p className="view-subtitle">Daily stock operation logs and balance sheets</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <BookOpen size={24} color="var(--it-green)" />
+          <div>
+            <h2 className="view-title">Day Books</h2>
+            <p className="view-subtitle">Daily stock operation logs and balance sheets</p>
+          </div>
         </div>
         <Button
           variant="secondary"
-          onClick={() => void loadDayBooks(selectedStoreId)}
+          onClick={() => activeStoreId && void loadDayBooks(activeStoreId)}
           disabled={loading}
           data-testid="btn-refresh"
         >
@@ -1096,17 +1080,6 @@ export const DayBooksView: React.FC = () => {
 
       {!selectedDayBook ? (
         <>
-          <div style={{ marginBottom: '20px' }}>
-            <Select
-              id="store-select"
-              data-testid="store-select"
-              label="Store"
-              value={selectedStoreId}
-              onChange={(e) => setSelectedStoreId(e.target.value)}
-              options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-            />
-          </div>
-
           <div
             style={{
               backgroundColor: 'var(--it-card)',
@@ -1116,7 +1089,7 @@ export const DayBooksView: React.FC = () => {
             }}
           >
             <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
-              Day Books for {stores.find((s) => s.id === selectedStoreId)?.name || selectedStoreId}
+              Day Books for {stores.find((s) => s.id === activeStoreId)?.name || activeStoreId}
             </h3>
 
             {dayBooks.length === 0 ? (

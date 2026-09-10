@@ -1,16 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Package, RotateCcw, X, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
-import { getStores } from '../services/tauriStoreService';
+import { RotateCcw, X, Check, AlertCircle, Eye, EyeOff, Package } from 'lucide-react';
 import { searchProducts } from '../services/tauriProductService';
 import { returnStock, getStockBalanceForBucket } from '../services/tauriTransactionService';
-import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { ReturnStockInput, StockBucket } from '../types/transaction';
 import { Button, TextInput, NumericInput, Select } from '@invenTory/ui';
+import { useActiveStore } from '../context/StoreContext';
 
 export const ReturnStockView: React.FC = () => {
-  const [stores, setStores] = useState<Store[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
+  const { activeStoreId } = useActiveStore();
   const [productQuery, setProductQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -71,22 +69,6 @@ export const ReturnStockView: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const loadStores = async (): Promise<void> => {
-      try {
-        const data = await getStores();
-        const activeStores = data.filter((s) => s.is_active);
-        setStores(activeStores);
-        if (activeStores.length > 0) {
-          setSelectedStoreId(activeStores[0].id);
-        }
-      } catch (_err) {
-        setError('Failed to load stores');
-      }
-    };
-    loadStores();
-  }, []);
-
-  useEffect(() => {
     const searchProductsDebounced = setTimeout(async () => {
       if (productQuery.trim()) {
         try {
@@ -117,18 +99,18 @@ export const ReturnStockView: React.FC = () => {
   };
 
   useEffect(() => {
-    if (selectedProduct && selectedStoreId) {
-      loadBucketQuantity(selectedStoreId, selectedProduct, stockBucket);
+    if (selectedProduct && activeStoreId) {
+      loadBucketQuantity(activeStoreId, selectedProduct, stockBucket);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedStoreId, stockBucket]);
+  }, [activeStoreId, stockBucket]);
 
   const handleProductSelect = (product: Product): void => {
     setSelectedProduct(product);
     setProductQuery(product.name);
     setSearchResults([]);
-    if (selectedStoreId) {
-      loadBucketQuantity(selectedStoreId, product, stockBucket);
+    if (activeStoreId) {
+      loadBucketQuantity(activeStoreId, product, stockBucket);
     }
   };
 
@@ -144,8 +126,8 @@ export const ReturnStockView: React.FC = () => {
     setError(null);
     setSuccess(false);
 
-    if (!selectedStoreId) {
-      setError('Please select a store');
+    if (!activeStoreId) {
+      setError('Please select a store from the header');
       return;
     }
     if (!selectedProduct) {
@@ -164,7 +146,7 @@ export const ReturnStockView: React.FC = () => {
       const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
 
       const input: ReturnStockInput = {
-        store_id: selectedStoreId,
+        store_id: activeStoreId,
         product_id: selectedProduct.id,
         return_type: returnType,
         stock_bucket: stockBucket,
@@ -193,8 +175,8 @@ export const ReturnStockView: React.FC = () => {
         },
       ]);
 
-      if (selectedProduct && selectedStoreId) {
-        await loadBucketQuantity(selectedStoreId, selectedProduct, stockBucket);
+      if (selectedProduct && activeStoreId) {
+        await loadBucketQuantity(activeStoreId, selectedProduct, stockBucket);
       }
 
       setQuantity(1);
@@ -215,12 +197,15 @@ export const ReturnStockView: React.FC = () => {
     >
       <div style={{ flex: 1, maxWidth: '640px' }}>
         <div className="view-header">
-          <div>
-            <h2 className="view-title">Customer &amp; Supplier Returns</h2>
-            <p className="view-subtitle">
-              Process stock returns affecting Available, Damaged, or Quarantine buckets (FR-MOV-003,
-              Section 13.3)
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <RotateCcw size={24} color="var(--it-green)" />
+            <div>
+              <h2 className="view-title">Customer & Supplier Returns</h2>
+              <p className="view-subtitle">
+                Process stock returns affecting Available, Damaged, or Quarantine buckets
+                (FR-MOV-003, Section 13.3)
+              </p>
+            </div>
           </div>
           <Button
             variant="secondary"
@@ -255,7 +240,7 @@ export const ReturnStockView: React.FC = () => {
           </div>
         )}
 
-        {stores.length === 0 ? (
+        {!activeStoreId ? (
           <div
             style={{
               backgroundColor: 'var(--it-card)',
@@ -265,13 +250,9 @@ export const ReturnStockView: React.FC = () => {
               textAlign: 'center',
             }}
           >
-            <Package
-              size={48}
-              style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}
-            />
-            <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
+            <h3 style={{ marginBottom: '8px' }}>No store selected</h3>
             <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
-              Create a store location first to record stock movements.
+              Select a store from the header to record stock returns.
             </p>
           </div>
         ) : (
@@ -314,17 +295,6 @@ export const ReturnStockView: React.FC = () => {
                 </Button>
               </div>
             </div>
-
-            {/* Store Selection */}
-            <Select
-              id="store-select"
-              data-testid="store-select"
-              label="Store Location"
-              required
-              value={selectedStoreId}
-              onChange={(e): void => setSelectedStoreId(e.target.value)}
-              options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-            />
 
             {/* Product Search / Selection */}
             <div style={{ position: 'relative' }}>

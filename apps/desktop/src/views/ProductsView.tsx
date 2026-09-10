@@ -6,9 +6,11 @@ import {
   updateProduct,
   toggleProductActive,
 } from '../services/tauriProductService';
+import { getStockBalance } from '../services/tauriTransactionService';
 import { ProductModal } from '../components/ProductModal';
 import { Button, Badge, DataTable, EmptyState, SearchInput, ColumnDef } from '@invenTory/ui';
 import { Package, Plus, Edit2, Power, AlertTriangle } from 'lucide-react';
+import { useActiveStore } from '../context/StoreContext';
 
 interface ProductsViewProps {
   /** Current user's role from the auth session (Issue 25). */
@@ -16,10 +18,12 @@ interface ProductsViewProps {
 }
 
 export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }) => {
+  const { activeStoreId } = useActiveStore();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [stockMap, setStockMap] = useState<Map<string, number>>(new Map());
 
   // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
@@ -51,6 +55,38 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       setLoading(false);
     }
   }, []);
+
+  // Fetch per-store stock balances when products or activeStoreId changes
+  useEffect(() => {
+    if (!activeStoreId) {
+      setStockMap(new Map());
+      return;
+    }
+    let cancelled = false;
+    const loadBalances = async () => {
+      try {
+        const balances = await Promise.all(
+          products.map(async (p) => {
+            try {
+              const bal = await getStockBalance(activeStoreId, p.id);
+              return [p.id, bal.quantity] as const;
+            } catch {
+              return [p.id, 0] as const;
+            }
+          }),
+        );
+        if (!cancelled) {
+          setStockMap(new Map(balances));
+        }
+      } catch {
+        if (!cancelled) setStockMap(new Map());
+      }
+    };
+    void loadBalances();
+    return () => {
+      cancelled = true;
+    };
+  }, [products, activeStoreId]);
 
   useEffect(() => {
     fetchProductsList();
@@ -175,7 +211,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       numeric: true,
       sortable: true,
       render: (p): React.ReactElement => {
-        const qty = p.stock_quantity ?? 0;
+        const qty = stockMap.get(p.id) ?? 0;
         return (
           <span
             style={{
@@ -188,7 +224,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           </span>
         );
       },
-      accessor: (p) => p.stock_quantity ?? 0,
+      accessor: (p) => stockMap.get(p.id) ?? 0,
     },
     {
       key: 'status',
@@ -232,11 +268,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   return (
     <div className="products-view" data-testid="products-view">
       <div className="view-header">
-        <div>
-          <h2 className="view-title">Products Catalogue</h2>
-          <p className="view-subtitle">
-            Master item index and v1.0.0 product management (FR-PROD-001–003)
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <Package size={24} color="var(--it-green)" />
+          <div>
+            <h2 className="view-title">Products Catalogue</h2>
+            <p className="view-subtitle">
+              Master item index and v1.0.0 product management (FR-PROD-001–003)
+            </p>
+          </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           {!isAuthorized && <Badge status="INACTIVE" label={`Restricted Role (${userRole})`} />}

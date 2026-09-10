@@ -17,6 +17,18 @@ import * as tauriTransactionService from '../services/tauriTransactionService';
 import * as tauriAuthService from '../services/tauriAuthService';
 import { InventoryTransaction, StockBucket } from '../types/transaction';
 
+// Mock StoreContext to provide activeStoreId
+const mockStoreContextValue = {
+  activeStoreId: 'STORE-A',
+  setActiveStoreId: vi.fn(),
+};
+vi.mock('../context/StoreContext', () => ({
+  useActiveStore: () => mockStoreContextValue,
+  StoreContext: {
+    Provider: ({ children }: { children: React.ReactNode }) => children,
+  },
+}));
+
 vi.mock('../services/tauriAuthService', async () => {
   const actual = await vi.importActual('../services/tauriAuthService');
   return {
@@ -138,7 +150,7 @@ describe('ReturnStockView — Issue 08 Acceptance Criteria', (): void => {
     render(<ReturnStockView />);
 
     await waitFor((): void => {
-      expect(screen.getByTestId('store-select')).toBeInTheDocument();
+      expect(screen.getByTestId('product-search')).toBeInTheDocument();
     });
 
     act((): void => {

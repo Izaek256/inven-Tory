@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from 'react';
-import { Trash2, Check, AlertCircle } from 'lucide-react';
+import { Trash2, Check, AlertCircle, Plus } from 'lucide-react';
 import { createProduct } from '../services/tauriProductService';
 import { CreateProductInput } from '../types/product';
 import { LinearGridEntry, GridFieldDef, DataTable } from '@invenTory/ui';
@@ -198,11 +198,14 @@ export const CreateProductView: React.FC = () => {
     >
       <div style={{ flex: '1 1 60%', minWidth: '320px' }}>
         <div className="view-header">
-          <div>
-            <h2 className="view-title">Create Product</h2>
-            <p className="view-subtitle">
-              Rapid product entry — Model number becomes the SKU (FR-PROD-001)
-            </p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <Plus size={24} color="var(--it-green)" />
+            <div>
+              <h2 className="view-title">Create Product</h2>
+              <p className="view-subtitle">
+                Rapid product entry — Model number becomes the SKU (FR-PROD-001)
+              </p>
+            </div>
           </div>
         </div>
 

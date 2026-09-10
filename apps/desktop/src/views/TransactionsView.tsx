@@ -1,10 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowLeftRight, RefreshCw, AlertCircle, WifiOff } from 'lucide-react';
-import { getStores } from '../services/tauriStoreService';
 import { getAccessToken } from '../services/tauriAuthService';
 import { getLocalTransactions } from '../services/tauriTransactionService';
-import { Store } from '../types/store';
-import { Button, Badge, DataTable, EmptyState, Select, ColumnDef } from '@invenTory/ui';
+import { Button, Badge, DataTable, EmptyState, ColumnDef } from '@invenTory/ui';
+import { useActiveStore } from '../context/StoreContext';
 
 const TRANSACTIONS_CACHE_KEY = 'inven_tory_transactions_cache_v1';
 
@@ -25,8 +24,7 @@ interface TransactionItem {
 }
 
 export const TransactionsView: React.FC = () => {
-  const [stores, setStores] = useState<Store[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
+  const { activeStoreId } = useActiveStore();
   const [transactions, setTransactions] = useState<TransactionItem[]>([]);
   const [total, setTotal] = useState<number>(0);
   const [offset, setOffset] = useState<number>(0);
@@ -53,21 +51,6 @@ export const TransactionsView: React.FC = () => {
     return fetch(`${getApiBaseUrl()}${path}`, { headers });
   }, []);
 
-  useEffect(() => {
-    const loadStores = async (): Promise<void> => {
-      try {
-        const data = await getStores();
-        setStores(data.filter((s) => s.is_active));
-        if (data.length > 0) {
-          setSelectedStoreId(data[0].id);
-        }
-      } catch {
-        // non-fatal
-      }
-    };
-    void loadStores();
-  }, []);
-
   const loadTransactions = useCallback(
     async (storeId: string, currentOffset: number): Promise<void> => {
       setLoading(true);
@@ -76,6 +59,8 @@ export const TransactionsView: React.FC = () => {
 
       try {
         const localTxns = await getLocalTransactions().catch(() => [] as TransactionItem[]);
+        // Filter local transactions by storeId to prevent cross-store leak
+        const filteredLocalTxns = localTxns.filter((t) => t.store_id === storeId);
 
         const params = new URLSearchParams({
           limit: String(LIMIT),
@@ -93,7 +78,7 @@ export const TransactionsView: React.FC = () => {
 
         const serverIds = new Set(serverTxns.map((t) => t.transaction_id));
         const merged = [...serverTxns];
-        for (const t of localTxns) {
+        for (const t of filteredLocalTxns) {
           if (!serverIds.has(t.transaction_id)) {
             merged.push({
               transaction_id: t.transaction_id,
@@ -178,11 +163,11 @@ export const TransactionsView: React.FC = () => {
   );
 
   useEffect(() => {
-    if (selectedStoreId !== undefined) {
+    if (activeStoreId) {
       setOffset(0);
-      void loadTransactions(selectedStoreId, 0);
+      void loadTransactions(activeStoreId, 0);
     }
-  }, [selectedStoreId, loadTransactions]);
+  }, [activeStoreId, loadTransactions]);
 
   const formatDateTime = (dateString: string): string => {
     const date = new Date(dateString);
@@ -292,13 +277,16 @@ export const TransactionsView: React.FC = () => {
   return (
     <div className="view-container" data-testid="transactions-view">
       <div className="view-header">
-        <div>
-          <h2 className="view-title">Transactions Ledger</h2>
-          <p className="view-subtitle">Stock movement and audit transaction entries</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ArrowLeftRight size={24} color="var(--it-green)" />
+          <div>
+            <h2 className="view-title">Transactions Ledger</h2>
+            <p className="view-subtitle">Stock movement and audit transaction entries</p>
+          </div>
         </div>
         <Button
           variant="secondary"
-          onClick={() => void loadTransactions(selectedStoreId, offset)}
+          onClick={() => activeStoreId && void loadTransactions(activeStoreId, offset)}
           disabled={loading}
           data-testid="btn-refresh"
         >
@@ -329,23 +317,7 @@ export const TransactionsView: React.FC = () => {
         </div>
       )}
 
-      {/* Store filter */}
-      {stores.length > 0 && (
-        <div style={{ marginBottom: '20px' }}>
-          <Select
-            id="txn-store-select"
-            data-testid="txn-store-select"
-            label="Store"
-            value={selectedStoreId}
-            onChange={(e) => setSelectedStoreId(e.target.value)}
-            options={[
-              { value: '', label: 'All stores' },
-              ...stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` })),
-            ]}
-          />
-        </div>
-      )}
-
+      {/* Store filter - removed, uses header store selector */}
       <div
         style={{
           backgroundColor: 'var(--it-card)',
@@ -380,7 +352,7 @@ export const TransactionsView: React.FC = () => {
                   onClick={() => {
                     const newOffset = Math.max(0, offset - LIMIT);
                     setOffset(newOffset);
-                    void loadTransactions(selectedStoreId, newOffset);
+                    if (activeStoreId) void loadTransactions(activeStoreId, newOffset);
                   }}
                   disabled={loading || offset === 0}
                 >
@@ -392,7 +364,7 @@ export const TransactionsView: React.FC = () => {
                   onClick={() => {
                     const newOffset = offset + LIMIT;
                     setOffset(newOffset);
-                    void loadTransactions(selectedStoreId, newOffset);
+                    if (activeStoreId) void loadTransactions(activeStoreId, newOffset);
                   }}
                   disabled={loading || offset + LIMIT >= total}
                 >

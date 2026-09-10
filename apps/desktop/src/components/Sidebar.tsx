@@ -1,31 +1,6 @@
-import React from 'react';
-import {
-  LayoutDashboard,
-  Package,
-  ArrowLeftRight,
-  ArrowDownCircle,
-  ArrowUpCircle,
-  RotateCcw,
-  ShieldAlert,
-  ClipboardList,
-  BookOpen,
-  Settings,
-  Plus,
-} from 'lucide-react';
-
-export type NavView =
-  | 'dashboard'
-  | 'products'
-  | 'transactions'
-  | 'receive_stock'
-  | 'sale_stock'
-  | 'return_stock'
-  | 'transfer_stock'
-  | 'damage_quarantine'
-  | 'physical_count'
-  | 'create_product'
-  | 'day_books'
-  | 'settings';
+import React, { useEffect, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
+import { PRIMARY_NAV_ITEMS, MORE_NAV_ITEMS, type NavView } from '../config/navigation';
 
 interface SidebarProps {
   currentView: NavView;
@@ -33,25 +8,23 @@ interface SidebarProps {
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => {
-  const navItems: { id: NavView; label: string; icon: React.ReactNode }[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: <LayoutDashboard size={18} /> },
-    { id: 'products', label: 'Products', icon: <Package size={18} /> },
-    { id: 'create_product', label: 'Create Product', icon: <Plus size={18} /> },
-    { id: 'receive_stock', label: 'Receive Stock', icon: <ArrowDownCircle size={18} /> },
-    { id: 'sale_stock', label: 'Sale / Issue', icon: <ArrowUpCircle size={18} /> },
-    { id: 'return_stock', label: 'Returns', icon: <RotateCcw size={18} /> },
-    { id: 'transfer_stock', label: 'Transfers', icon: <ArrowLeftRight size={18} /> },
-    { id: 'damage_quarantine', label: 'Damage & Quarantine', icon: <ShieldAlert size={18} /> },
-    { id: 'physical_count', label: 'Physical Count', icon: <ClipboardList size={18} /> },
-    { id: 'day_books', label: 'Day Books', icon: <BookOpen size={18} /> },
-    { id: 'transactions', label: 'Transactions', icon: <ArrowLeftRight size={18} /> },
-    { id: 'settings', label: 'Settings', icon: <Settings size={18} /> },
-  ];
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  useEffect(() => {
+    const isMoreView = MORE_NAV_ITEMS.some((item) => item.id === currentView);
+    setMoreOpen(isMoreView);
+  }, [currentView]);
+
+  const handleMoreClick = (view: NavView) => {
+    onNavigate(view);
+    setMoreOpen(false);
+  };
 
   return (
     <aside className="app-sidebar" data-testid="app-sidebar">
-      {navItems.map((item) => {
+      {PRIMARY_NAV_ITEMS.map((item) => {
         const isActive = currentView === item.id;
+        const Icon = item.icon;
         return (
           <button
             key={item.id}
@@ -60,11 +33,43 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentView, onNavigate }) => 
             onClick={(): void => onNavigate(item.id)}
             data-testid={`nav-${item.id}`}
           >
-            {item.icon}
+            <Icon size={18} />
             <span>{item.label}</span>
           </button>
         );
       })}
+
+      <button
+        type="button"
+        className="nav-item nav-more-toggle"
+        onClick={() => setMoreOpen(!moreOpen)}
+        aria-expanded={moreOpen}
+        data-testid="nav-more-toggle"
+      >
+        <span>More</span>
+        {moreOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+      </button>
+
+      {moreOpen && (
+        <div className="nav-more-group" data-testid="nav-more-group">
+          {MORE_NAV_ITEMS.map((item) => {
+            const isActive = currentView === item.id;
+            const Icon = item.icon;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`nav-item ${isActive ? 'active' : ''}`}
+                onClick={() => handleMoreClick(item.id)}
+                data-testid={`nav-${item.id}`}
+              >
+                <Icon size={18} />
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </aside>
   );
 };

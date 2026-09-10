@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Package, Check, AlertCircle, Eye, EyeOff } from 'lucide-react';
-import { getStores } from '../services/tauriStoreService';
+import { Check, AlertCircle, Eye, EyeOff, ArrowUpCircle } from 'lucide-react';
 import { searchProductsFts5, getProducts } from '../services/tauriProductService';
 import {
   sellStock,
   updateTransaction,
   deleteTransaction,
 } from '../services/tauriTransactionService';
-import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { CreateTransactionInput } from '../types/transaction';
 import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem, Button } from '@invenTory/ui';
+import { useActiveStore } from '../context/StoreContext';
 
 // ─── Entry log (session-level committed rows) ─────────────────────────────────
 
@@ -52,8 +51,7 @@ const FIELDS: GridFieldDef[] = [
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export const SaleStockView: React.FC = () => {
-  const [stores, setStores] = useState<Store[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('');
+  const { activeStoreId } = useActiveStore();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
   const [showEntryLog, setShowEntryLog] = useState<boolean>(true);
@@ -105,56 +103,40 @@ export const SaleStockView: React.FC = () => {
     void loadSession();
   }, []);
 
-  // ── Stores ───────────────────────────────────────────────────────────────
-
-  useEffect(() => {
-    const loadStores = async (): Promise<void> => {
-      try {
-        const data = await getStores();
-        setStores(data.filter((s) => s.is_active));
-        if (data.length > 0) {
-          setSelectedStoreId(data[0].id);
-        }
-      } catch (_err) {
-        setError('Failed to load stores');
-      }
-    };
-    void loadStores();
-  }, []);
-
   // ── All products (right-panel default) ───────────────────────────────────
 
-  useEffect(() => {
-    const loadAllProducts = async (): Promise<void> => {
-      try {
-        const products = await getProducts();
-        const active = products.filter((p) => p.is_active);
+  const loadAllProducts = useCallback(async (): Promise<void> => {
+    try {
+      const products = await getProducts();
+      const active = products.filter((p) => p.is_active);
 
-        const items: SearchResultItem[] = active.map((p) => ({
-          id: p.id,
-          label: p.name,
-          subtitle: p.model ?? undefined,
-          detail:
-            p.stock_quantity !== null && p.stock_quantity !== undefined
-              ? `Qty: ${p.stock_quantity}`
-              : undefined,
-        }));
-        setAllProducts(items);
+      const items: SearchResultItem[] = active.map((p) => ({
+        id: p.id,
+        label: p.name,
+        subtitle: p.model ?? undefined,
+        detail:
+          p.stock_quantity !== null && p.stock_quantity !== undefined
+            ? `Qty: ${p.stock_quantity}`
+            : undefined,
+      }));
+      setAllProducts(items);
 
-        const pMap = new Map<string, Product>();
-        const nMap = new Map<string, string>();
-        active.forEach((p) => {
-          pMap.set(p.id, p);
-          nMap.set(p.name, p.id);
-        });
-        setProductMap(pMap);
-        setNameToId(nMap);
-      } catch {
-        // Silently fail — FTS5 search will still work
-      }
-    };
-    void loadAllProducts();
+      const pMap = new Map<string, Product>();
+      const nMap = new Map<string, string>();
+      active.forEach((p) => {
+        pMap.set(p.id, p);
+        nMap.set(p.name, p.id);
+      });
+      setProductMap(pMap);
+      setNameToId(nMap);
+    } catch {
+      // Silently fail — FTS5 search will still work
+    }
   }, []);
+
+  useEffect(() => {
+    void loadAllProducts();
+  }, [loadAllProducts]);
 
   // ── Live search (instant local filter + 100 ms debounced backend FTS5) ─────
 
@@ -248,8 +230,8 @@ export const SaleStockView: React.FC = () => {
       setError(null);
       setSuccess(false);
 
-      if (!selectedStoreId) {
-        setError('Please select a store');
+      if (!activeStoreId) {
+        setError('Please select a store from the header');
         return;
       }
 
@@ -275,7 +257,7 @@ export const SaleStockView: React.FC = () => {
       }
 
       const input: CreateTransactionInput = {
-        store_id: selectedStoreId,
+        store_id: activeStoreId,
         product_id: product.id,
         movement_type: 'SALE',
         quantity: qty,
@@ -319,7 +301,7 @@ export const SaleStockView: React.FC = () => {
         setSuccess(false);
       }
     },
-    [selectedStoreId, productMap, nameToId, sessionUserId, sessionDeviceId, setCommittedTxnIds],
+    [activeStoreId, productMap, nameToId, sessionUserId, sessionDeviceId, setCommittedTxnIds],
   );
 
   // ── Edit / Delete handlers (row-level) ───────────────────────────────────
@@ -394,30 +376,14 @@ export const SaleStockView: React.FC = () => {
     <div className="sale-stock-view" data-testid="sale-stock-view">
       {/* Header */}
       <div className="view-header">
-        <div>
-          <h2 className="view-title">Sale / Issue Stock</h2>
-          <p className="view-subtitle">Record outgoing inventory (FR-MOV-002, Section 13.2)</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ArrowUpCircle size={24} color="var(--it-green)" />
+          <div>
+            <h2 className="view-title">Sale / Issue Stock</h2>
+            <p className="view-subtitle">Record outgoing inventory (FR-MOV-002, Section 13.2)</p>
+          </div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <select
-            data-testid="store-select"
-            value={selectedStoreId}
-            onChange={(e) => setSelectedStoreId(e.target.value)}
-            style={{
-              padding: '6px 10px',
-              borderRadius: 'var(--it-r-md)',
-              border: '1px solid var(--it-border)',
-              backgroundColor: 'var(--it-card)',
-              color: 'var(--it-text-primary)',
-              fontSize: '13px',
-            }}
-          >
-            {stores.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
           <Button
             variant="secondary"
             size="sm"
@@ -453,8 +419,7 @@ export const SaleStockView: React.FC = () => {
         </div>
       )}
 
-      {/* No stores configured */}
-      {stores.length === 0 ? (
+      {!activeStoreId ? (
         <div
           style={{
             backgroundColor: 'var(--it-card)',
@@ -464,10 +429,9 @@ export const SaleStockView: React.FC = () => {
             textAlign: 'center',
           }}
         >
-          <Package size={48} style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }} />
-          <h3 style={{ marginBottom: '8px' }}>No stores configured</h3>
+          <h3 style={{ marginBottom: '8px' }}>No store selected</h3>
           <p style={{ color: 'var(--it-text-secondary)', marginBottom: '16px' }}>
-            Create a store location first to record stock movements.
+            Select a store from the header to record stock movements.
           </p>
         </div>
       ) : (

@@ -7,6 +7,7 @@ import {
   PlusCircle,
   List,
   RefreshCw,
+  ArrowLeftRight,
 } from 'lucide-react';
 import { Store } from '../types/store';
 import { Product } from '../types/product';
@@ -32,8 +33,10 @@ import {
   Select,
   ColumnDef,
 } from '@invenTory/ui';
+import { useActiveStore } from '../context/StoreContext';
 
 export const TransferStockView: React.FC = () => {
+  const { activeStoreId } = useActiveStore();
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('list');
 
   // Auth: resolve user/device from the active session instead of hardcoded values.
@@ -79,7 +82,6 @@ export const TransferStockView: React.FC = () => {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Form State
-  const [sourceStoreId, setSourceStoreId] = useState<string>('');
   const [destinationStoreId, setDestinationStoreId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [matchingProducts, setMatchingProducts] = useState<Product[]>([]);
@@ -105,18 +107,20 @@ export const TransferStockView: React.FC = () => {
       setProducts(fetchedProducts);
       setTransfers(fetchedTransfers);
 
-      if (fetchedStores.length >= 2) {
-        if (!sourceStoreId) setSourceStoreId(fetchedStores[0].id);
-        if (!destinationStoreId) setDestinationStoreId(fetchedStores[1].id);
-      } else if (fetchedStores.length === 1) {
-        if (!sourceStoreId) setSourceStoreId(fetchedStores[0].id);
+      // Initialize destination store if not already set
+      if (fetchedStores.length >= 2 && !destinationStoreId) {
+        // Pick the first store that isn't the active store as default destination
+        const firstNonActive = fetchedStores.find((s) => s.id !== activeStoreId);
+        if (firstNonActive) {
+          setDestinationStoreId(firstNonActive.id);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [destinationStoreId, sourceStoreId]);
+  }, [destinationStoreId, activeStoreId]);
 
   useEffect(() => {
     fetchData();
@@ -149,9 +153,9 @@ export const TransferStockView: React.FC = () => {
     };
   }, [searchQuery]);
 
-  // Fetch available stock balance when source store or product changes
+  // Fetch available stock balance when active store or product changes
   useEffect(() => {
-    if (!sourceStoreId || !selectedProduct) {
+    if (!activeStoreId || !selectedProduct) {
       setSourceStock(null);
       return;
     }
@@ -159,7 +163,7 @@ export const TransferStockView: React.FC = () => {
     let isMounted = true;
     const fetchBalance = async (): Promise<void> => {
       try {
-        const balanceObj = await getStockBalance(sourceStoreId, selectedProduct.id);
+        const balanceObj = await getStockBalance(activeStoreId, selectedProduct.id);
         if (isMounted) {
           setSourceStock(balanceObj.quantity);
         }
@@ -173,7 +177,7 @@ export const TransferStockView: React.FC = () => {
     return (): void => {
       isMounted = false;
     };
-  }, [sourceStoreId, selectedProduct]);
+  }, [activeStoreId, selectedProduct]);
 
   const handleSelectProduct = (product: Product): void => {
     setSelectedProduct(product);
@@ -185,15 +189,15 @@ export const TransferStockView: React.FC = () => {
     setError(null);
     setSuccessMessage(null);
 
-    if (!sourceStoreId) {
-      setError('Please select a source store.');
+    if (!activeStoreId) {
+      setError('Please select a store from the header.');
       return;
     }
     if (!destinationStoreId) {
       setError('Please select a destination store.');
       return;
     }
-    if (sourceStoreId === destinationStoreId) {
+    if (activeStoreId === destinationStoreId) {
       setError('Source store and destination store must be different.');
       return;
     }
@@ -217,7 +221,7 @@ export const TransferStockView: React.FC = () => {
 
     try {
       const created = await createTransfer({
-        source_store_id: sourceStoreId,
+        source_store_id: activeStoreId,
         destination_store_id: destinationStoreId,
         product_id: selectedProduct.id,
         quantity,
@@ -499,12 +503,15 @@ export const TransferStockView: React.FC = () => {
   return (
     <div className="view-container" data-testid="transfer-stock-view">
       <div className="view-header">
-        <div>
-          <h2 className="view-title">Inter-Store Stock Transfers</h2>
-          <p className="view-subtitle">
-            Move inventory between stores with linked transaction history (FR-MOV-004, Section 11,
-            AT-005)
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <ArrowLeftRight size={24} color="var(--it-green)" />
+          <div>
+            <h2 className="view-title">Inter-Store Stock Transfers</h2>
+            <p className="view-subtitle">
+              Move inventory between stores with linked transaction history (FR-MOV-004, Section 11,
+              AT-005)
+            </p>
+          </div>
         </div>
         <Button
           variant="secondary"
@@ -601,15 +608,31 @@ export const TransferStockView: React.FC = () => {
               marginTop: '16px',
             }}
           >
-            {/* Source Store */}
-            <Select
-              id="source-store"
-              data-testid="select-source-store"
-              label="Source Store (Origin)"
-              value={sourceStoreId}
-              onChange={(e): void => setSourceStoreId(e.target.value)}
-              options={stores.map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
-            />
+            {/* Source Store - read-only, controlled by header selector */}
+            <div style={{ gridColumn: 'span 2' }}>
+              <div
+                style={{
+                  fontSize: '13px',
+                  fontWeight: 600,
+                  color: 'var(--it-text-primary)',
+                  marginBottom: '4px',
+                }}
+              >
+                Source Store (Origin)
+              </div>
+              <div
+                style={{
+                  padding: '10px 14px',
+                  backgroundColor: 'var(--it-surface)',
+                  border: '1px solid var(--it-border)',
+                  borderRadius: 'var(--it-r-md)',
+                  fontSize: '14px',
+                  color: 'var(--it-text-secondary)',
+                }}
+              >
+                {activeStoreId ? getStoreName(activeStoreId) : 'No store selected'}
+              </div>
+            </div>
 
             {/* Destination Store */}
             <Select
@@ -619,7 +642,7 @@ export const TransferStockView: React.FC = () => {
               value={destinationStoreId}
               onChange={(e): void => setDestinationStoreId(e.target.value)}
               options={stores
-                .filter((s) => s.id !== sourceStoreId)
+                .filter((s) => s.id !== activeStoreId)
                 .map((s) => ({ value: s.id, label: `${s.name} (${s.code})` }))}
             />
 
