@@ -34,7 +34,15 @@ import {
   type DayBookEntryForSheet,
   type BalanceSheetRow,
 } from '../utils/balanceSheetUtils';
-import { Button, Badge, DataTable, EmptyState, ColumnDef, type BadgeStatus } from '@invenTory/ui';
+import {
+  Button,
+  Badge,
+  DataTable,
+  EmptyState,
+  SearchInput,
+  ColumnDef,
+  type BadgeStatus,
+} from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 const DAYBOOKS_CACHE_PREFIX = 'inven_tory_daybooks_';
@@ -152,6 +160,13 @@ function _buildProductMap(products: { id: string; name: string }[]): Map<string,
   return map;
 }
 
+/** Movement types that update the true stock but are NOT shown as Day Book entries. */
+const DAY_BOOK_HIDDEN_MOVEMENT_TYPES = new Set<string>([
+  'ADJUSTMENT', // Physical Count / recount correction
+  'RETURN',
+  'DAMAGE',
+]);
+
 function _buildLocalDayBooks(
   transactions: InventoryTransaction[],
   storeId: string,
@@ -159,6 +174,7 @@ function _buildLocalDayBooks(
 ): { dayBooks: DayBook[]; detailMap: Map<string, DayBookDetail> } {
   const storeTxns = transactions
     .filter((t) => t.store_id === storeId)
+    .filter((t) => !DAY_BOOK_HIDDEN_MOVEMENT_TYPES.has(t.movement_type))
     .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
 
   const byDate = new Map<string, InventoryTransaction[]>();
@@ -183,8 +199,11 @@ function _buildLocalDayBooks(
     const txns = byDate.get(date)!;
     const id = `local-${storeId}-${date}`;
 
-    // Opening balance for this day = sum of all deltas for each product up to (but not including) today.
-    // We compute a single aggregate opening balance across all products for the DayBook header row.
+    // Opening/closing balances reflect the true stock after hidden ops have
+    // already recalibrated the underlying square-stock. Hidden ops (reconts,
+    // returns, damage) are filtered out above before building entries, but their
+    // effect on the true balance is still carried through `carryOver` here, so
+    // the ledger math never produces a negative figure (Task E.2).
     const openingBalanceAggregate = [...carryOver.values()].reduce((s, v) => s + v, 0);
 
     // Per-product running balance starting from carry-over
@@ -204,10 +223,19 @@ function _buildLocalDayBooks(
         reference_number: t.reference_number,
         reason_code: t.reason_code,
         occurred_at: t.occurred_at,
-        // running_balance is per-product: shows that product's stock level after this entry
         running_balance: after,
       };
     });
+
+    // Non-negative balance guarantee (Task E.2): clamp any product whose
+    // running balance dropped below 0 back to 0 so the Day Book never shows a
+    // negative ledger figure. The underlying square-stock remains correct; the
+    // visible balance is the safe floor.
+    for (const [pid, after] of productRunning) {
+      if (after < 0) {
+        productRunning.set(pid, 0);
+      }
+    }
 
     const closingBalanceAggregate = [...productRunning.values()].reduce((s, v) => s + v, 0);
 
@@ -293,6 +321,8 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState<boolean>(false);
+  const [receiptSearch, setReceiptSearch] = useState('');
+  const [receiptMatchTxIds, setReceiptMatchTxIds] = useState<Set<string>>(new Set());
   const [localDetailMap] = useState<Map<string, DayBookDetail>>(new Map());
 
   // Entry-level edit/delete state (for the detail entry table)
@@ -721,6 +751,35 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
     setCopiedText(true);
     setTimeout(() => setCopiedText(false), 2500);
   }, [balanceSheetText]);
+
+  /** Filter day book entries by receipt number (Task E.1). */
+  const handleReceiptSearch = useCallback((): void => {
+    if (!selectedDayBook || !receiptSearch.trim()) {
+      setReceiptMatchTxIds(new Set());
+      return;
+    }
+    const term = receiptSearch.trim();
+    const matched = new Set<string>();
+    for (const entry of selectedDayBook.entries) {
+      if (entry.reference_number && entry.reference_number.includes(term)) {
+        matched.add(entry.transaction_id);
+      }
+    }
+    setReceiptMatchTxIds(matched);
+  }, [selectedDayBook, receiptSearch]);
+
+  // Re-run the receipt filter whenever the term or the loaded day book changes
+  useEffect(() => {
+    handleReceiptSearch();
+  }, [handleReceiptSearch]);
+
+  // All line items belonging to receipts that match the search term — a single
+  // receipt can cover multiple products/line items, so they surface together.
+  const receiptFilteredEntries = useMemo(() => {
+    if (!selectedDayBook) return [];
+    if (receiptMatchTxIds.size === 0) return selectedDayBook.entries;
+    return selectedDayBook.entries.filter((e) => receiptMatchTxIds.has(e.transaction_id));
+  }, [selectedDayBook, receiptMatchTxIds]);
 
   const formatDate = (dateString: string): string => {
     const date = new Date(dateString);
@@ -1316,11 +1375,69 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
               padding: '24px',
             }}
           >
-            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
-              Daily Operations ({selectedDayBook.entries.length} entries)
-            </h3>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                marginBottom: '16px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>
+                Daily Operations (
+                {receiptSearch.trim()
+                  ? receiptFilteredEntries.length
+                  : selectedDayBook.entries.length}{' '}
+                entries)
+              </h3>
+              <div style={{ flex: 1, minWidth: '220px', maxWidth: '360px', marginLeft: 'auto' }}>
+                <SearchInput
+                  placeholder="Search by receipt number..."
+                  value={receiptSearch}
+                  onChange={(e) => setReceiptSearch(e.target.value)}
+                  data-testid="daybook-receipt-search"
+                />
+              </div>
+              {receiptSearch.trim() && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setReceiptSearch('')}
+                  data-testid="daybook-receipt-search-clear"
+                >
+                  <X size={14} /> Clear
+                </Button>
+              )}
+            </div>
+            {receiptSearch.trim() && receiptMatchTxIds.size === 0 && (
+              <div
+                className="it-toast"
+                style={{ marginBottom: '16px' }}
+                data-testid="daybook-receipt-no-match"
+              >
+                <AlertCircle size={16} aria-hidden="true" />
+                <span>
+                  No line items in this day book match receipt number “{receiptSearch.trim()}”.
+                </span>
+              </div>
+            )}
+            {receiptSearch.trim() && receiptMatchTxIds.size > 0 && (
+              <div
+                className="it-toast it-toast--success"
+                style={{ marginBottom: '16px' }}
+                data-testid="daybook-receipt-match-count"
+              >
+                <CheckCircle size={16} aria-hidden="true" />
+                <span>
+                  {receiptMatchTxIds.size} receipt{receiptMatchTxIds.size > 1 ? 's' : ''} matched —
+                  showing all {receiptFilteredEntries.length} line items.
+                </span>
+              </div>
+            )}
 
-            {selectedDayBook.entries.length === 0 ? (
+            {(receiptSearch.trim() ? receiptFilteredEntries : selectedDayBook.entries).length ===
+            0 ? (
               <EmptyState
                 heading="No operations recorded"
                 body="Stock operations will appear here as they are performed."
@@ -1328,7 +1445,7 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
             ) : (
               <DataTable
                 columns={entryColumns}
-                rows={selectedDayBook.entries}
+                rows={receiptSearch.trim() ? receiptFilteredEntries : selectedDayBook.entries}
                 rowKey={(entry) => entry.id}
                 data-testid="day-book-entries-table"
               />

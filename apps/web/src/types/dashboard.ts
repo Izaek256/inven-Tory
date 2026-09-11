@@ -24,6 +24,17 @@ export interface ProductSearchResult {
   total_quantity: number | null;
   /** ISO-8601 timestamp of the most recent stock balance update for this product. */
   last_balance_update: string | null;
+  /**
+   * Per-store quantity breakdown (AVAILABLE bucket) — populated when the
+   * backend is queried with ?scope=all-stores (Phase 3, Task D).
+   */
+  store_quantities: StoreQuantity[];
+}
+
+export interface StoreQuantity {
+  store_id: string;
+  store_name: string;
+  quantity: number;
 }
 
 export interface ProductSearchResponse {
@@ -105,32 +116,42 @@ export interface StoreInventoryResponse {
   total_quantity: number;
 }
 
-// ---------------------------------------------------------------------------
-// User management (admin-only)
-// ---------------------------------------------------------------------------
-
-export type UserRole =
-  'GLOBAL_ADMIN' | 'INVENTORY_MANAGER' | 'STORE_MANAGER' | 'STORE_CLERK' | 'AUDITOR' | 'SYNC';
-
-export interface UserRead {
-  id: number;
-  username: string;
-  email: string;
-  full_name: string | null;
-  role: UserRole | string;
-  assigned_store_id: string | null;
-  is_active: boolean;
-  is_superuser: boolean;
-  is_verified: boolean;
-  created_at: string; // ISO-8601
-  updated_at: string; // ISO-8601
+export interface MostSoldProductMetric {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  units_sold: number;
 }
 
-export interface UserCreate {
-  username: string;
-  email: string;
-  password: string;
-  full_name?: string | null;
-  role?: UserRole | string;
-  assigned_store_id?: string | null;
+export interface LowStockProductMetric {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  unit: string;
+  quantity: number;
+  threshold: number;
+}
+
+export interface CrossStoreSummaryMetric {
+  products_in_multiple_stores: number;
+  stores_with_stock: number;
+  combined_quantity: number;
+}
+
+export interface ReceiptSalesDayMetric {
+  /** YYYY-MM-DD */
+  date: string;
+  receipt_count: number;
+  items_sold: number;
+  avg_items_per_receipt: number;
+}
+
+export interface DashboardMetrics {
+  total_products: number;
+  total_stock_units: number;
+  last_sync_at: string | null;
+  most_sold: MostSoldProductMetric[];
+  low_stock: LowStockProductMetric[];
+  cross_store: CrossStoreSummaryMetric;
+  receipt_linked_sales: ReceiptSalesDayMetric[];
 }

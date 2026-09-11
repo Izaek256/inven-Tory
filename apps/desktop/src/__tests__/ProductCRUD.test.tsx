@@ -192,21 +192,4 @@ describe('Product CRUD & Master Catalog (FR-PROD-001–002)', () => {
       }),
     );
   });
-
-  it('toggles product active state', async () => {
-    const toggleSpy = vi.spyOn(tauriProductService, 'toggleProductActive').mockResolvedValue({
-      ...initialProducts[0],
-      is_active: false,
-    });
-
-    render(<ProductsView />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('products-table')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('toggle-product-btn-PROD-01'));
-
-    expect(toggleSpy).toHaveBeenCalledWith('PROD-01', false);
-  });
 });

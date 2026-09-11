@@ -260,17 +260,28 @@ async def get_day_book_with_entries(
     if not day_book:
         return None
 
-    # Get entries with product names
+    # Get entries with product names — only RECEIPT and SALE are shown in the
+    # Day Book (what came in / what went out). ADJUSTMENT, RETURN, DAMAGE,
+    # TRANSFER_IN, and TRANSFER_OUT are excluded from the visible ledger but
+    # still update the underlying stock balance correctly.
+    _DAY_BOOK_VISIBLE_TYPES = {"RECEIPT", "SALE"}
+
     entries_result = await db.execute(
         select(DayBookEntry, Product.name)
         .join(Product, DayBookEntry.product_id == Product.id)
-        .where(DayBookEntry.day_book_id == day_book_id)
+        .where(
+            DayBookEntry.day_book_id == day_book_id,
+            DayBookEntry.movement_type.in_(_DAY_BOOK_VISIBLE_TYPES),
+        )
         .order_by(DayBookEntry.occurred_at)
     )
     entries_with_products = list(entries_result.all())
 
-    # Seed per-product opening balances from all AVAILABLE-bucket transactions
-    # that occurred before this day book's date (same store).
+    # Seed per-product opening balances from ALL prior AVAILABLE-bucket
+    # transactions (same store). The Day Book only *displays* RECEIPT/SALE
+    # entries, but the opening/closing balance math must reflect every
+    # operation that touched stock (receives, recounts, returns, damage, etc.)
+    # so the balance is always correct regardless of what's visibly logged.
     product_ids = list({e.product_id for e, _ in entries_with_products})
     product_running: dict[str, int] = {}
     if product_ids:

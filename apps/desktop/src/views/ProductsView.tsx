@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
-import {
-  getProducts,
-  createProduct,
-  updateProduct,
-  toggleProductActive,
-} from '../services/tauriProductService';
+import { Store } from '../types/store';
+import { getProducts, createProduct, updateProduct } from '../services/tauriProductService';
 import { getStockBalance } from '../services/tauriTransactionService';
+import { getStores } from '../services/tauriStoreService';
 import { ProductModal } from '../components/ProductModal';
 import { Button, Badge, DataTable, EmptyState, SearchInput, ColumnDef } from '@invenTory/ui';
-import { Package, Plus, Edit2, Power, AlertTriangle } from 'lucide-react';
+import { Package, Plus, Edit2, AlertTriangle } from 'lucide-react';
 import { useActiveStore } from '../context/StoreContext';
 
 interface ProductsViewProps {
@@ -23,12 +20,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [stockMap, setStockMap] = useState<Map<string, number>>(new Map());
-
-  // Search & Filter state
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
-  const [activeFilter, setActiveFilter] = useState<'ALL' | 'ACTIVE' | 'INACTIVE'>('ALL');
+
+  // Cross-store breakdown state (Task I): per-product, per-store AVAILABLE qty.
+  const [stores, setStores] = useState<Store[]>([]);
+  const [crossStoreMap, setCrossStoreMap] = useState<Map<string, Map<string, number>>>(new Map());
 
   // Modal state
   const [productModalOpen, setProductModalOpen] = useState(false);
@@ -56,43 +52,59 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     }
   }, []);
 
-  // Fetch per-store stock balances when products or activeStoreId changes
+  // Store list — read-only reference data for the breakdown columns
   useEffect(() => {
-    if (!activeStoreId) {
-      setStockMap(new Map());
+    let cancelled = false;
+    getStores()
+      .then((list) => {
+        if (!cancelled) setStores(list);
+      })
+      .catch(() => {
+        // non-fatal: table still renders with the active store column
+      });
+    return (): void => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Fetch cross-store balances when products, stores, or activeStoreId change.
+  // Read-only aggregation: per-store records are untouched (Phase 3, Task I).
+  useEffect(() => {
+    if (products.length === 0 || stores.length === 0) {
+      setCrossStoreMap(new Map());
       return;
     }
     let cancelled = false;
     const loadBalances = async (): Promise<void> => {
-      try {
-        const balances = await Promise.all(
-          products.map(async (p) => {
-            try {
-              const bal = await getStockBalance(activeStoreId, p.id);
-              return [p.id, bal.quantity] as const;
-            } catch {
-              return [p.id, 0] as const;
-            }
-          }),
-        );
-        if (!cancelled) {
-          setStockMap(new Map(balances));
+      const next = new Map<string, Map<string, number>>();
+      for (const store of stores) {
+        for (const p of products) {
+          let qty = 0;
+          try {
+            const bal = await getStockBalance(store.id, p.id);
+            qty = bal.quantity;
+          } catch {
+            qty = 0;
+          }
+          const row = next.get(p.id) ?? new Map<string, number>();
+          row.set(store.id, qty);
+          next.set(p.id, row);
         }
-      } catch {
-        if (!cancelled) setStockMap(new Map());
       }
+      if (!cancelled) setCrossStoreMap(next);
     };
     void loadBalances();
     return (): void => {
       cancelled = true;
     };
-  }, [products, activeStoreId]);
+  }, [products, stores, activeStoreId]);
 
   useEffect(() => {
     fetchProductsList();
   }, [fetchProductsList]);
 
-  // Filtered products list
+  // Filtered products list — search only (Category/Status columns removed
+  // per Phase 3, Task I)
   const filteredProducts = products.filter((p) => {
     const term = searchQuery.toLowerCase().trim();
     const matchesSearch =
@@ -102,18 +114,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       (p.brand && p.brand.toLowerCase().includes(term)) ||
       (p.model && p.model.toLowerCase().includes(term)) ||
       (p.barcode && p.barcode.toLowerCase().includes(term)) ||
-      (p.alternate_names && p.alternate_names.toLowerCase().includes(term));
-
-    const matchesCategory =
-      selectedCategory === 'ALL' ||
-      p.category.toLowerCase().includes(selectedCategory.toLowerCase());
-
-    const matchesActive =
-      activeFilter === 'ALL' ||
-      (activeFilter === 'ACTIVE' && p.is_active) ||
-      (activeFilter === 'INACTIVE' && !p.is_active);
-
-    return matchesSearch && matchesCategory && matchesActive;
+      (p.alternate_names && p.alternate_names.toLowerCase().includes(term)) ||
+      p.category.toLowerCase().includes(term);
+    return matchesSearch;
   });
 
   const handleOpenCreateModal = (): void => {
@@ -138,17 +141,34 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     fetchProductsList();
   };
 
-  const handleToggleActive = async (product: Product): Promise<void> => {
-    try {
-      setActionError(null);
-      await toggleProductActive(product.id, !product.is_active);
-      fetchProductsList();
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : String(err));
-    }
+  const activeStore = stores.find((s) => s.id === activeStoreId);
+  // Column order: active store pinned first, then the other stores (dynamic),
+  // per Phase 3 Task I. If the active store is not in the list (e.g. lookup
+  // failed), fall back to the first store so the leading column still exists.
+  const orderedStores: Store[] = activeStore
+    ? [activeStore, ...stores.filter((s) => s.id !== activeStore.id)]
+    : stores;
+
+  const qtyFor = (productId: string, storeId: string | undefined): number => {
+    if (!storeId) return 0;
+    return crossStoreMap.get(productId)?.get(storeId) ?? 0;
   };
 
   const columns: ColumnDef<Product>[] = [
+    {
+      key: 'name',
+      header: 'Product Name',
+      sortable: true,
+      render: (p) => (
+        <div>
+          <div style={{ fontWeight: 500 }}>{p.name}</div>
+          <div className="product-secondary">
+            {[p.brand, p.model].filter(Boolean).join(' · ') || '—'}
+          </div>
+        </div>
+      ),
+      accessor: (p) => p.name,
+    },
     {
       key: 'sku',
       header: 'SKU',
@@ -166,99 +186,71 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       ),
       accessor: (p) => p.sku,
     },
-    {
-      key: 'name',
-      header: 'Product Name',
-      sortable: true,
-      render: (p) => (
-        <div>
-          <div style={{ fontWeight: 500 }}>{p.name}</div>
-          {p.alternate_names && (
-            <div style={{ fontSize: '11px', color: 'var(--it-text-secondary)' }}>
-              Aliases: {p.alternate_names}
-            </div>
-          )}
-        </div>
-      ),
-      accessor: (p) => p.name,
-    },
-    {
-      key: 'brandModel',
-      header: 'Brand / Model',
-      render: (p) => (
-        <span style={{ color: 'var(--it-text-secondary)' }}>
-          {p.brand || '-'} {p.model ? `(${p.model})` : ''}
-        </span>
-      ),
-      accessor: (p) => `${p.brand || ''} ${p.model || ''}`,
-    },
-    {
-      key: 'category',
-      header: 'Category',
-      sortable: true,
-      render: (p) => <Badge status="SENT" label={p.category} />,
-      accessor: (p) => p.category,
-    },
-    {
-      key: 'unit',
-      header: 'Unit',
-      render: (p) => <span style={{ color: 'var(--it-text-secondary)' }}>{p.unit}</span>,
-      accessor: (p) => p.unit,
-    },
-    {
-      key: 'stock_quantity',
-      header: 'Stock (Avail.)',
+    // Active store quantity first — this is "that store's product list".
+    // Edit only ever operates on this store's record (scoped write).
+    ...orderedStores.map((store, index): ColumnDef<Product> => ({
+      key: `qty-${store.id}`,
+      header: index === 0 ? `${store.name} (This Store)` : store.name,
       numeric: true,
-      sortable: true,
-      render: (p): React.ReactElement => {
-        const qty = stockMap.get(p.id) ?? 0;
+      width: '11%',
+      render: (p) => {
+        const qty = qtyFor(p.id, store.id);
+        const isActiveCol = index === 0;
         return (
           <span
-            style={{
-              fontWeight: 600,
-              color: qty > 0 ? 'var(--it-green-text)' : 'var(--it-text-secondary)',
-              fontFamily: 'var(--it-font-mono)',
-            }}
+            className={`store-qty-cell ${isActiveCol ? 'store-qty-cell--active' : ''} ${qty === 0 ? 'store-qty-cell--zero' : ''}`}
+            data-testid={`qty-${p.id}-${store.id}`}
+            title={
+              isActiveCol
+                ? `Stock in the active store: ${qty.toLocaleString()} ${p.unit}`
+                : `Read-only reference — stock in ${store.name}: ${qty.toLocaleString()} ${p.unit}`
+            }
           >
             {qty.toLocaleString()}
           </span>
         );
       },
-      accessor: (p) => stockMap.get(p.id) ?? 0,
-    },
+      accessor: (p) => qtyFor(p.id, store.id),
+    })),
     {
-      key: 'status',
-      header: 'Status',
-      render: (p) => <Badge status={p.is_active ? 'ACTIVE' : 'INACTIVE'} />,
-      accessor: (p) => (p.is_active ? 'Active' : 'Inactive'),
+      key: 'total',
+      header: 'Total',
+      numeric: true,
+      width: '9%',
+      render: (p) => {
+        const total = orderedStores.reduce((sum, s) => sum + qtyFor(p.id, s.id), 0);
+        return (
+          <span
+            style={{
+              fontFamily: 'var(--it-font-mono)',
+              fontWeight: 700,
+              fontSize: '15px',
+              color: 'var(--it-green-text)',
+            }}
+          >
+            {total.toLocaleString()}
+          </span>
+        );
+      },
+      accessor: (p) => orderedStores.reduce((sum, s) => sum + qtyFor(p.id, s.id), 0),
     },
     {
       key: 'actions',
       header: 'Actions',
       numeric: true,
+      width: '8%',
       render: (p) => (
         <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
           <Button
             variant="ghost"
             size="sm"
             iconOnly
-            title="Edit Product"
+            title="Edit Product (active store only)"
             onClick={() => handleOpenEditModal(p)}
             disabled={!isAuthorized}
             data-testid={`edit-product-btn-${p.id}`}
           >
             <Edit2 size={14} />
-          </Button>
-          <Button
-            variant={p.is_active ? 'destructive' : 'primary'}
-            size="sm"
-            iconOnly
-            title={p.is_active ? 'Deactivate Product' : 'Activate Product'}
-            onClick={() => handleToggleActive(p)}
-            disabled={!isAuthorized}
-            data-testid={`toggle-product-btn-${p.id}`}
-          >
-            <Power size={14} />
           </Button>
         </div>
       ),
@@ -273,7 +265,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           <div>
             <h2 className="view-title">Products Catalogue</h2>
             <p className="view-subtitle">
-              Master item index and v1.0.0 product management (FR-PROD-001–003)
+              Active-store catalogue with cross-store availability breakdown (read-only per-store
+              reference; edits apply to the active store only)
             </p>
           </div>
         </div>
@@ -323,47 +316,6 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
             onChange={(e) => setSearchQuery(e.target.value)}
             data-testid="product-search-input"
           />
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <SearchInput
-            placeholder="Filter by category..."
-            value={selectedCategory === 'ALL' ? '' : selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value || 'ALL')}
-            data-testid="category-filter-input"
-          />
-
-          <div
-            style={{
-              display: 'flex',
-              backgroundColor: 'var(--it-surface)',
-              padding: '3px',
-              borderRadius: 'var(--it-r-md)',
-              border: '1px solid var(--it-border)',
-            }}
-          >
-            <button
-              type="button"
-              className={`it-btn it-btn--sm ${activeFilter === 'ALL' ? 'it-btn--secondary' : 'it-btn--ghost'}`}
-              onClick={() => setActiveFilter('ALL')}
-            >
-              All
-            </button>
-            <button
-              type="button"
-              className={`it-btn it-btn--sm ${activeFilter === 'ACTIVE' ? 'it-btn--secondary' : 'it-btn--ghost'}`}
-              onClick={() => setActiveFilter('ACTIVE')}
-            >
-              Active
-            </button>
-            <button
-              type="button"
-              className={`it-btn it-btn--sm ${activeFilter === 'INACTIVE' ? 'it-btn--secondary' : 'it-btn--ghost'}`}
-              onClick={() => setActiveFilter('INACTIVE')}
-            >
-              Inactive
-            </button>
-          </div>
         </div>
       </div>
 
@@ -416,37 +368,37 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
             data-testid="error-state"
           />
         ) : (
-          <DataTable
-            columns={columns}
-            rows={filteredProducts}
-            rowKey={(p) => p.id}
-            data-testid="products-table"
-            emptySlot={
-              <EmptyState
-                heading="No products found"
-                body="No products match the selected criteria."
-                action={
-                  searchQuery || selectedCategory !== 'ALL' || activeFilter !== 'ALL' ? (
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setSearchQuery('');
-                        setSelectedCategory('ALL');
-                        setActiveFilter('ALL');
-                      }}
-                    >
-                      Clear Filters
-                    </Button>
-                  ) : (
-                    <Button variant="primary" onClick={handleOpenCreateModal}>
-                      Create First Product
-                    </Button>
-                  )
-                }
-                data-testid="empty-state"
-              />
-            }
-          />
+          <div className="products-cross-store-wrap">
+            <DataTable
+              columns={columns}
+              rows={filteredProducts}
+              rowKey={(p) => p.id}
+              data-testid="products-table"
+              emptySlot={
+                <EmptyState
+                  heading="No products found"
+                  body="No products match the selected criteria."
+                  action={
+                    searchQuery ? (
+                      <Button
+                        variant="secondary"
+                        onClick={() => {
+                          setSearchQuery('');
+                        }}
+                      >
+                        Clear Filters
+                      </Button>
+                    ) : (
+                      <Button variant="primary" onClick={handleOpenCreateModal}>
+                        Create First Product
+                      </Button>
+                    )
+                  }
+                  data-testid="empty-state"
+                />
+              }
+            />
+          </div>
         )}
       </div>
 

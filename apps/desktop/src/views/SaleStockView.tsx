@@ -44,7 +44,8 @@ const FIELDS: GridFieldDef[] = [
     id: 'reference_number',
     type: 'text',
     label: 'Receipt No.',
-    placeholder: 'Optional',
+    placeholder: 'Receipt number (required)',
+    required: true,
   },
 ];
 
@@ -241,6 +242,14 @@ export const SaleStockView: React.FC = () => {
         return;
       }
 
+      // Phase 3 (Task F): receipt number is compulsory for Sale/Issue.
+      // Block commit with inline-style validation if it's missing.
+      const receiptNumber = String(row.values.reference_number ?? '').trim();
+      if (!receiptNumber) {
+        setError('A receipt number is required for Sale / Issue transactions.');
+        return;
+      }
+
       // Resolve product: try name→id map first (populated from getProducts),
       // then fall back to the search-result id stored in the row.
       const productId = nameToId.get(productName) ?? String(row.values.product_id ?? '');
@@ -261,7 +270,7 @@ export const SaleStockView: React.FC = () => {
         product_id: product.id,
         movement_type: 'SALE',
         quantity: qty,
-        reference_number: String(row.values.reference_number ?? '').trim() || undefined,
+        reference_number: receiptNumber,
         user_id: sessionUserId,
         device_id: sessionDeviceId,
       };
@@ -319,10 +328,16 @@ export const SaleStockView: React.FC = () => {
 
       try {
         const qty = Number(newValues.quantity ?? 1);
+        // Phase 3 (Task F): receipt number is compulsory for SALE edits too.
+        const referenceNumber = String(newValues.reference_number ?? '').trim();
+        if (!referenceNumber) {
+          setError('A receipt number is required for Sale / Issue transactions.');
+          return;
+        }
         await updateTransaction({
           transaction_id: transactionId,
           quantity_delta: -qty, // SALE: negative delta
-          reference_number: String(newValues.reference_number ?? '').trim() || null,
+          reference_number: referenceNumber,
           reason_code: null,
         });
         setSuccess(true);

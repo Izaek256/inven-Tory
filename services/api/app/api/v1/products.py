@@ -44,6 +44,14 @@ router = APIRouter(prefix="/products", tags=["products"])
 # ---------------------------------------------------------------------------
 
 
+class StoreQuantity(BaseModel):
+    """Per-store quantity breakdown for a product (AVAILABLE bucket only)."""
+
+    store_id: str
+    store_name: str
+    quantity: int
+
+
 class ProductSearchResult(BaseModel):
     id: str
     sku: str
@@ -56,6 +64,9 @@ class ProductSearchResult(BaseModel):
     low_stock_threshold: int | None
     total_quantity: int | None = None
     last_balance_update: datetime | None = None
+    # Cross-store breakdown — populated when ?scope=all-stores is requested.
+    # Defaults to an empty list so existing consumers are unaffected.
+    store_quantities: list[StoreQuantity] = []
 
 
 class ProductListItem(BaseModel):
@@ -399,6 +410,12 @@ async def search_products(
         default="", min_length=0, max_length=200, description="Search term (empty returns all)"
     ),
     limit: int = Query(default=200, ge=1, le=500, description="Maximum results to return"),
+    scope: str = Query(
+        default="",
+        description="Set to 'all-stores' to include per-store quantity breakdown "
+        "(field 'store_quantities') in each result. Backward-compatible: omitted or "
+        "any other value returns the original shape.",
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> ProductSearchResponse:
@@ -409,6 +426,13 @@ async def search_products(
 
     Each result includes the total AVAILABLE stock quantity and the
     last balance update timestamp for that product.
+
+    With ``?scope=all-stores`` each result additionally carries a
+    ``store_quantities`` array (one entry per store that holds AVAILABLE
+    stock for that product) plus the same ``total_quantity`` — this is the
+    cross-store distribution table format shared by the web dashboard and
+    the desktop global-search modal.  Read-only aggregation; no store is
+    ever modified by this endpoint.
 
     Requires INVENTORY_READ permission (all authenticated roles qualify).
     """
@@ -459,6 +483,40 @@ async def search_products(
         for row in sb_result.all():
             stock_map[row.product_id] = (int(row.total_qty or 0), row.last_update)
 
+    # Cross-store distribution (Task D): when ?scope=all-stores is requested,
+    # fetch one row per (product, store) holding AVAILABLE stock so the web
+    # dashboard and the desktop global-search modal can render a dynamic
+    # per-store column table.  Read-only — no store is mutated here.
+    all_stores_scope = scope.strip().lower() == "all-stores"
+    per_store_map: dict[str, list[StoreQuantity]] = {}
+    if all_stores_scope and product_ids:
+        store_stmt = (
+            select(
+                StockBalance.product_id,
+                Store.id.label("store_id"),
+                Store.name.label("store_name"),
+                StockBalance.quantity,
+            )
+            .join(Store, StockBalance.store_id == Store.id)
+            .where(
+                and_(
+                    StockBalance.product_id.in_(product_ids),
+                    StockBalance.stock_bucket == "AVAILABLE",
+                    StockBalance.quantity != 0,
+                )
+            )
+            .order_by(Store.name)
+        )
+        store_result = await db.execute(store_stmt)
+        for row in store_result.all():
+            per_store_map.setdefault(row.product_id, []).append(
+                StoreQuantity(
+                    store_id=row.store_id,
+                    store_name=row.store_name,
+                    quantity=int(row.quantity),
+                )
+            )
+
     logger.info("PRODUCT_SEARCH q=%r results=%d user_id=%s", q, len(products), _user.id)
 
     return ProductSearchResponse(
@@ -475,6 +533,7 @@ async def search_products(
                 low_stock_threshold=p.low_stock_threshold,
                 total_quantity=stock_map.get(p.id, (0, None))[0],
                 last_balance_update=stock_map.get(p.id, (0, None))[1],
+                store_quantities=per_store_map.get(p.id, []),
             )
             for p in products
         ],

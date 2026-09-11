@@ -1056,6 +1056,13 @@ pub mod commands {
             return Err("Quantity must be greater than zero.".to_string());
         }
 
+        // Phase 3 (Task F): a receipt number is compulsory for Sale/Issue.
+        // Enforced here (authoritative local write path), in the UI, and
+        // server-side in the ingestion pipeline.
+        if input.reference_number.as_ref().map_or(true, |s| s.trim().is_empty()) {
+            return Err("Receipt number is required for Sale / Issue transactions.".to_string());
+        }
+
         ensure_foreign_keys_exist(&conn, &input.user_id, &input.device_id, &input.store_id, &input.product_id)?;
 
         // FR-MOV-008 / Section 21 strict-mode negative-stock rejection:
@@ -2231,6 +2238,14 @@ pub mod commands {
 
         let (old_delta, store_id, product_id, stock_bucket, movement_type, user_id, device_id, _sync_status) = old;
         let delta_diff = input.quantity_delta - old_delta;
+
+        // Phase 3 (Task F): a receipt number is compulsory for Sale/Issue.
+        // Applies to row edits too — a SALE line cannot be committed without one.
+        if movement_type == "SALE"
+            && input.reference_number.as_ref().map_or(true, |s| s.trim().is_empty())
+        {
+            return Err("Receipt number is required for Sale / Issue transactions.".to_string());
+        }
 
         // Update the transaction row (only mutable fields)
         conn.execute(

@@ -501,3 +501,313 @@ body {
   line-height: 1.4;
   margin: 0;
 }
+
+/* ── Brand icon as Lucide glyph (Task J — both apps) ─────────────────────── */
+
+.brand-icon-glyph {
+  width: 32px;
+  height: 32px;
+  background-color: var(--it-green-surface);
+  border: 1px solid var(--it-green-border);
+  border-radius: var(--it-r-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--it-green-text);
+  flex-shrink: 0;
+}
+
+.brand-icon-glyph svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ── Desktop header user/theme grouped menu (Task J) ─────────────────────── */
+
+.header-user-menu {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+
+.header-user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-md);
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--it-text-secondary);
+  transition: all var(--it-dur-fast) var(--it-ease);
+}
+
+.header-user-trigger:hover {
+  background-color: var(--it-gray-surface);
+  color: var(--it-text-primary);
+}
+
+.header-user-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  background-color: var(--it-surface);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-md);
+  box-shadow: var(--it-shadow-md);
+  min-width: 160px;
+  z-index: 30;
+  padding: 4px;
+}
+
+.header-user-dropdown button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: transparent;
+  border-radius: var(--it-r-sm);
+  font-size: 13px;
+  color: var(--it-text-primary);
+  cursor: pointer;
+  text-align: left;
+}
+
+.header-user-dropdown button:hover {
+  background-color: var(--it-gray-surface);
+}
+
+.header-user-dropdown .divider {
+  height: 1px;
+  background-color: var(--it-border);
+  margin: 4px 0;
+}
+
+/* ── Store color badges (Task H — desktop switcher) ──────────────────────── */
+
+.store-switcher-code {
+  display: none;
+}
+
+.store-switcher-badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 2px;
+}
+
+.store-switcher-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.store-switcher-dropdown-option .store-switcher-badge {
+  width: 10px;
+  height: 10px;
+}
+
+/* ── Day Books: receipt search bar (Task E.1) ─────────────────────────────── */
+
+.daybook-receipt-search {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.daybook-receipt-search .it-search {
+  flex: 1;
+}
+
+.daybook-receipt-search .it-btn {
+  flex-shrink: 0;
+}
+
+.daybook-receipt-results {
+  margin-top: 12px;
+  padding: 12px;
+  background-color: var(--it-card);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-md);
+}
+
+.daybook-receipt-empty {
+  text-align: center;
+  color: var(--it-text-secondary);
+  font-size: 13px;
+  padding: 12px;
+}
+
+/* ── Desktop Products: cross-store breakdown columns (Task I) ────────────── */
+
+.products-cross-store-wrap {
+  overflow-x: auto;
+}
+
+.products-cross-store-table {
+  table-layout: fixed;
+  min-width: 700px;
+}
+
+.products-cross-store-table .it-th,
+.products-cross-store-table .it-td {
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.store-qty-cell {
+  text-align: right;
+  font-family: var(--it-font-mono);
+  font-weight: 500;
+}
+
+.store-qty-cell--active {
+  color: var(--it-green-text);
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.store-qty-cell--zero {
+  color: var(--it-text-disabled);
+}
+
+.store-col-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.store-col-header .store-switcher-badge {
+  width: 8px;
+  height: 8px;
+}
+
+.product-secondary {
+  font-size: 12px;
+  color: var(--it-text-secondary);
+  font-family: var(--it-font-mono);
+}
+
+/* ── Global search modal (Task G) ─────────────────────────────────────────── */
+
+.global-search-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 100;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 80px;
+}
+
+.global-search-modal {
+  background-color: var(--it-surface);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-lg);
+  box-shadow: var(--it-shadow-xl);
+  width: 100%;
+  max-width: 720px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  animation: modal-in 0.15s ease-out;
+}
+
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.global-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--it-border);
+}
+
+.global-search-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.global-search-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--it-border);
+}
+
+.global-search-result-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--it-border);
+}
+
+.global-search-result-row:last-child {
+  border-bottom: none;
+}
+
+.global-search-result-name {
+  font-weight: 600;
+  color: var(--it-text-primary);
+  flex: 1;
+}
+
+.global-search-result-meta {
+  font-size: 12px;
+  color: var(--it-text-secondary);
+  font-family: var(--it-font-mono);
+}
+
+.global-search-result-qty {
+  font-family: var(--it-font-mono);
+  font-weight: 600;
+  color: var(--it-green-text);
+  font-size: 14px;
+}
+
+/* ── Global search entry point (Phase 3, Task G) ────────────────────────── */
+.header-global-search-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--it-text-secondary);
+  background: var(--it-surface);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-md);
+  cursor: pointer;
+  transition:
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.header-global-search-btn:hover {
+  color: var(--it-green-text);
+  border-color: var(--it-green);
+}

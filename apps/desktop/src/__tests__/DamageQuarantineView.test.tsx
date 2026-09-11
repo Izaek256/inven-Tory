@@ -347,6 +347,12 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     });
 
     const receiptCell = screen.getByTestId('cell-0-reference_number');
+    await waitFor(() => {
+      expect(receiptCell).toBeInTheDocument();
+    });
+    act(() => {
+      fireEvent.change(receiptCell, { target: { value: 'RCP-TEST-001' } });
+    });
     await act(async (): Promise<void> => {
       fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
     });

@@ -178,8 +178,16 @@ async function setupAndCommitRow(qty: number = 1): Promise<void> {
     fireEvent.keyDown(qtyCell, { key: 'Enter', code: 'Enter' });
   });
 
-  // Press Enter on Receipt No. to commit
+  // Fill in the receipt number
   const receiptCell = screen.getByTestId('cell-0-reference_number');
+  await waitFor(() => {
+    expect(receiptCell).toBeInTheDocument();
+  });
+  act(() => {
+    fireEvent.change(receiptCell, { target: { value: 'RCP-TEST-001' } });
+  });
+
+  // Press Enter on Receipt No. to commit
   await act(async () => {
     fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
   });

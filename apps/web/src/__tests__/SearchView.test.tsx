@@ -39,6 +39,10 @@ const MOCK_RESULTS: ProductSearchResponse = {
       low_stock_threshold: 5,
       total_quantity: 42,
       last_balance_update: new Date(Date.now() - 3_600_000).toISOString(),
+      store_quantities: [
+        { store_id: 'store-a', store_name: 'Store Alpha', quantity: 24 },
+        { store_id: 'store-b', store_name: 'Store Beta', quantity: 18 },
+      ],
     },
     {
       id: 'prod-2',
@@ -52,6 +56,10 @@ const MOCK_RESULTS: ProductSearchResponse = {
       low_stock_threshold: null,
       total_quantity: 0,
       last_balance_update: null,
+      store_quantities: [
+        { store_id: 'store-a', store_name: 'Store Alpha', quantity: 0 },
+        { store_id: 'store-b', store_name: 'Store Beta', quantity: 0 },
+      ],
     },
   ],
 };
