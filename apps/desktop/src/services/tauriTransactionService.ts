@@ -210,6 +210,29 @@ export async function moveStockBucket(
 }
 
 /**
+ * Get all AVAILABLE stock balances for a store in a single query.
+ * Returns a map of productId → quantity.
+ * Used by DayBooksView to anchor running-balance calculations to the actual
+ * stock_balances table (ground truth) rather than replaying from zero.
+ */
+export async function getStockBalancesForStore(storeId: string): Promise<Map<string, number>> {
+  if (isTauriEnvironment()) {
+    try {
+      const rows = await invoke<Array<{ product_id: string; quantity: number }>>(
+        'get_stock_balances_for_store',
+        { storeId },
+      );
+      return new Map(rows.map((r) => [r.product_id, r.quantity]));
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriTransactionService] Error invoking get_stock_balances_for_store:', err);
+      return new Map();
+    }
+  }
+  return new Map();
+}
+
+/**
  * Get the current AVAILABLE stock balance for a product in a store.
  * Used by the Sale screen to display and validate real local stock.
  */

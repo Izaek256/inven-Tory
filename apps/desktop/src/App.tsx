@@ -448,7 +448,9 @@ export function App(): React.ReactElement {
               onReauthSuccess={handleReauthSuccess}
             />
           )}
-          <StoreProvider>{renderView()}</StoreProvider>
+          <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={setActiveStoreId}>
+            {renderView()}
+          </StoreProvider>
         </main>
       </div>
     </div>

@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
-import { Badge } from '@invenTory/ui';
+import { Badge, useTheme } from '@invenTory/ui';
 import {
   Box,
   LogOut,
@@ -42,31 +42,10 @@ export const Header: React.FC<HeaderProps> = ({
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
 
-  // Theme state — reads from localStorage to match app-wide theme
-  const [isDark, setIsDark] = useState<boolean>(() => {
-    if (typeof localStorage === 'undefined') return false;
-    try {
-      const stored = localStorage.getItem('it-theme');
-      if (stored) return stored === 'dark';
-    } catch {
-      // ignore
-    }
-    return (
-      typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches
-    );
-  });
-
-  const toggleTheme = (): void => {
-    setIsDark((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('it-theme', next ? 'dark' : 'light');
-      } catch {
-        // ignore
-      }
-      return next;
-    });
-  };
+  // Theme — delegates to the app-wide ThemeProvider so changes are reflected
+  // across the whole app immediately (data-theme on <html> element).
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
 
   const triggerManualSync = async (): Promise<void> => {
     try {
