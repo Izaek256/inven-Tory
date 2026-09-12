@@ -7,7 +7,7 @@ export interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   children: React.ReactNode;
   footer?: React.ReactNode;
 }
@@ -147,6 +147,7 @@ const CSS = `
 .it-modal--sm { max-width: 420px; }
 .it-modal--md { max-width: 560px; }
 .it-modal--lg { max-width: 760px; }
+.it-modal--xl { max-width: 1440px; width: 96%; }
 
 @keyframes it-modal-in {
   from { opacity: 0; transform: translateY(8px) scale(0.97); }

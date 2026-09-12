@@ -1,6 +1,6 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
 import { ClipboardList, Check, AlertCircle, Trash2, RotateCcw } from 'lucide-react';
-import { searchProductsFts5 } from '../services/tauriProductService';
+import { searchProductsFts5, getProductsByStore } from '../services/tauriProductService';
 import { getStockBalance, adjustStock } from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { AdjustStockInput } from '../types/transaction';
@@ -101,10 +101,11 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
   // ── Products + per-store qty for search panel ─────────────────────────────
 
+  // Products are store-scoped for the adjustment panel (Task E). Re-load whenever
+  // the active store changes so the panel never shows products from another store.
   const loadProductsWithQty = useCallback(async (storeId: string): Promise<void> => {
     try {
-      const { getProducts } = await import('../services/tauriProductService');
-      const products = await getProducts();
+      const products = await getProductsByStore(storeId);
       const active = products.filter((p) => p.is_active);
 
       // Fetch qty for every product in parallel (best-effort)
@@ -172,24 +173,26 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         void (async (): Promise<void> => {
           try {
             const results = await searchProductsFts5(query);
-            const mapped = results
-              .filter((p) => p.is_active)
-              .map((p) => ({
-                id: p.id,
-                label: p.name,
-                subtitle: `SKU: ${p.sku}${p.model ? ` • ${p.model}` : ''}`,
-                detail: `Qty: ${storeQtyCache.get(p.id) ?? 0}`,
-              })) as SearchResultItem[];
+            // FTS5 spans the whole catalogue — keep only products in the store
+            // being counted.
+            const scopedIds = new Set(allProducts.map((p) => p.id));
+            const scoped = results.filter((p) => p.is_active && scopedIds.has(p.id));
+            const mapped = scoped.map((p) => ({
+              id: p.id,
+              label: p.name,
+              subtitle: `SKU: ${p.sku}${p.model ? ` • ${p.model}` : ''}`,
+              detail: `Qty: ${storeQtyCache.get(p.id) ?? 0}`,
+            })) as SearchResultItem[];
             setSearchResults(mapped);
 
             setProductMap((prev) => {
               const next = new Map(prev);
-              results.forEach((p) => next.set(p.id, p));
+              scoped.forEach((p) => next.set(p.id, p));
               return next;
             });
             setNameToId((prev) => {
               const next = new Map(prev);
-              results.forEach((p) => next.set(p.name, p.id));
+              scoped.forEach((p) => next.set(p.name, p.id));
               return next;
             });
           } catch {
@@ -207,7 +210,11 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
       void (async (): Promise<void> => {
         try {
           const results = await searchProductsFts5(barcode);
-          const exact = results.find((p) => p.barcode === barcode || p.sku === barcode);
+          // FTS5 spans the whole catalogue — keep only products in the store
+          // being counted.
+          const scopedIds = new Set(allProducts.map((p) => p.id));
+          const scoped = results.filter((p) => p.is_active && scopedIds.has(p.id));
+          const exact = scoped.find((p) => p.barcode === barcode || p.sku === barcode);
           if (exact) {
             setSearchResults([
               {
@@ -223,7 +230,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
         }
       })();
     },
-    [storeQtyCache],
+    [allProducts, storeQtyCache],
   );
 
   // ── Row commit — immediately applies ADJUSTMENT to stock ──────────────────

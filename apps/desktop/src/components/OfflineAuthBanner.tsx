@@ -1,8 +1,8 @@
 /**
- * OfflineAuthBanner — Issue 25.
+ * OfflineAuthBanner.
  *
  * Shown when the cached access token has expired while the device is offline
- * (Section 21: "Authentication expired → re-authenticate without deleting
+ * (Authentication expired → re-authenticate without deleting
  * queued transactions").
  *
  * Behavior:

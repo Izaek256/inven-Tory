@@ -80,7 +80,7 @@ export function setMockBalance(
 export const MOCK_STOCK_BALANCES = new Map<string, number>();
 
 /**
- * Get current count of pending/sending outbox events (Issue 12).
+ * Get current count of pending/sending outbox events.
  */
 export async function getPendingOutboxCount(): Promise<number> {
   if (isTauriEnvironment()) {
@@ -99,7 +99,7 @@ export async function getPendingOutboxCount(): Promise<number> {
 }
 
 /**
- * Receive stock into a store (FR-MOV-001, Section 13.1).
+ * Receive stock into a store.
  * Creates a RECEIPT transaction, updates stock_balances, and creates an outbox event.
  */
 export async function receiveStock(input: CreateTransactionInput): Promise<InventoryTransaction> {
@@ -130,9 +130,9 @@ export async function receiveStock(input: CreateTransactionInput): Promise<Inven
 }
 
 /**
- * Sell stock from a store (FR-MOV-002, Section 13.2).
+ * Sell stock from a store.
  * Creates a SALE transaction, decreases AVAILABLE stock, and creates an outbox event.
- * Enforces strict-mode negative-stock rejection (FR-MOV-008, Section 21, AT-012).
+ * Enforces strict-mode negative-stock rejection.
  */
 export async function sellStock(input: CreateTransactionInput): Promise<InventoryTransaction> {
   if (isTauriEnvironment()) {
@@ -162,7 +162,7 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
 }
 
 /**
- * Process customer or supplier returns (FR-MOV-003, Section 13.3).
+ * Process customer or supplier returns.
  * Customer returns increase the specified bucket (AVAILABLE, DAMAGED, or QUARANTINE).
  * Supplier returns decrease the specified bucket, enforcing strict mode balance bounds.
  */
@@ -185,7 +185,7 @@ export async function returnStock(input: ReturnStockInput): Promise<InventoryTra
 }
 
 /**
- * Move stock between buckets (AVAILABLE, DAMAGED, QUARANTINE) (FR-MOV-005, Section 9.5).
+ * Move stock between buckets (AVAILABLE, DAMAGED, QUARANTINE).
  * Requires a non-empty reason.
  * Enforces strict-mode negative-stock prevention on the source bucket.
  */
@@ -210,8 +210,8 @@ export async function moveStockBucket(
 }
 
 /**
- * Get the current AVAILABLE stock balance for a product in a store (Section 9.4).
- * Used by the Sale screen to display and validate real local stock (AT-012).
+ * Get the current AVAILABLE stock balance for a product in a store.
+ * Used by the Sale screen to display and validate real local stock.
  */
 export async function getStockBalance(storeId: string, productId: string): Promise<StockBalance> {
   if (isTauriEnvironment()) {
@@ -241,7 +241,7 @@ export async function getStockBalance(storeId: string, productId: string): Promi
 }
 
 /**
- * Get stock balance for a specific bucket (Section 9.4).
+ * Get stock balance for a specific bucket.
  */
 export async function getStockBalanceForBucket(
   storeId: string,
@@ -276,11 +276,11 @@ export async function getStockBalanceForBucket(
 }
 
 /**
- * Physical count reconciliation — create an ADJUSTMENT transaction (FR-MOV-006, Section 13.4, AT-008).
+ * Physical count reconciliation — create an ADJUSTMENT transaction.
  *
  * quantity_delta = counted_quantity − system_quantity.
  * Negative delta reduces AVAILABLE stock; positive increases it.
- * Requires a non-empty reason and provisional elevated-permission flag (server enforcement: Issue 13/14).
+ * Requires a non-empty reason and provisional elevated-permission flag.
  */
 export async function adjustStock(input: AdjustStockInput): Promise<InventoryTransaction> {
   if (isTauriEnvironment()) {
@@ -301,7 +301,7 @@ export async function adjustStock(input: AdjustStockInput): Promise<InventoryTra
 }
 
 /**
- * Get all local transactions from SQLite for offline-first display (Issue 1).
+ * Get all local transactions from SQLite for offline-first display.
  * Falls back to server API when not in Tauri.
  */
 export async function getLocalTransactions(): Promise<InventoryTransaction[]> {

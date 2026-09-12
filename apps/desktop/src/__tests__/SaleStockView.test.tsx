@@ -206,6 +206,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
     vi.spyOn(tauriAuthService, 'getSession').mockResolvedValue(MOCK_SESSION);
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'getProductsByStore').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
       id: 'SB-STORE-A-PROD-001-AVAILABLE',

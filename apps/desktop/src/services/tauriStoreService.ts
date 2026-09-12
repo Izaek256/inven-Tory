@@ -73,18 +73,45 @@ export async function getStores(): Promise<Store[]> {
 }
 
 /**
- * Create a new store record (FR-STORE-001, FR-STORE-002).
+ * Best-effort push of a local store change to the central API so the server's
+ * copy of the store (name/address/active state) stays in sync with the local
+ * SQLite database. Without this, the next sync pull would overwrite local
+ * renames or freshly created store names with stale server / auto-provisioned
+ * placeholder data ("Auto Store (...)").
+ *
+ * Local SQLite is the source of truth while offline; failures here are non-fatal.
+ */
+async function _pushStoreToApi(
+  method: 'POST' | 'PATCH',
+  path: string,
+  body: unknown,
+): Promise<void> {
+  try {
+    await _fetchApi<Store>(path, { method, body: JSON.stringify(body) });
+  } catch {
+    // ignore — offline / server unreachable
+  }
+}
+
+function _dispatchStoresUpdated(): void {
+  if (typeof window !== 'undefined') {
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
+    }, 0);
+  }
+}
+
+/**
+ * Create a new store record.
  */
 export async function createStore(input: CreateStoreInput): Promise<Store> {
   if (isTauriEnvironment()) {
     try {
       const created = await invoke<Store>('create_store', { input });
-      // Dispatch event after successful creation to ensure the store is committed
-      if (typeof window !== 'undefined') {
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
-        }, 0);
-      }
+      // Mirror the new store to the server so a later sync pull won't replace
+      // the real name with an auto-provisioned "Auto Store (...)" placeholder.
+      void _pushStoreToApi('POST', '/stores', input);
+      _dispatchStoresUpdated();
       return created;
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -98,11 +125,7 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
     body: JSON.stringify(input),
   });
   if (created) {
-    if (typeof window !== 'undefined') {
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
-      }, 0);
-    }
+    _dispatchStoresUpdated();
     return created;
   }
 
@@ -112,17 +135,18 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
 }
 
 /**
- * Update existing store name & address (code/id remain immutable per FR-STORE-002).
+ * Update existing store name & address (code/id remain immutable).
  */
 export async function updateStore(input: UpdateStoreInput): Promise<Store> {
   if (isTauriEnvironment()) {
     try {
       const updated = await invoke<Store>('update_store', { input });
-      if (typeof window !== 'undefined') {
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
-        }, 0);
-      }
+      // Keep the server's store row in sync so renames survive refresh/sync pulls.
+      void _pushStoreToApi('PATCH', `/stores/${input.id}`, {
+        name: input.name,
+        address: input.address,
+      });
+      _dispatchStoresUpdated();
       return updated;
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -136,11 +160,7 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
     body: JSON.stringify(input),
   });
   if (updated) {
-    if (typeof window !== 'undefined') {
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
-      }, 0);
-    }
+    _dispatchStoresUpdated();
     return updated;
   }
 
@@ -150,7 +170,7 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
 }
 
 /**
- * Activate or deactivate a store location (FR-STORE-001).
+ * Activate or deactivate a store location.
  */
 export async function toggleStoreActive(id: string, is_active: boolean): Promise<Store> {
   if (isTauriEnvironment()) {
@@ -160,11 +180,8 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
         isActive: is_active,
         is_active,
       });
-      if (typeof window !== 'undefined') {
-        setTimeout(() => {
-          window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
-        }, 0);
-      }
+      void _pushStoreToApi('PATCH', `/stores/${id}`, { is_active });
+      _dispatchStoresUpdated();
       return toggled;
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -178,11 +195,7 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
     body: JSON.stringify({ is_active }),
   });
   if (toggled) {
-    if (typeof window !== 'undefined') {
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
-      }, 0);
-    }
+    _dispatchStoresUpdated();
     return toggled;
   }
 
@@ -192,7 +205,7 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
 }
 
 /**
- * Device registration — FR-STORE-003.
+ * Device registration.
  * Calls the register_device Tauri IPC command which writes to local SQLite.
  * The registered device_id is then used in the login flow.
  */

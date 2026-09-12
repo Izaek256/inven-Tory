@@ -75,8 +75,9 @@ describe('Global cross-store product search (Phase 3, Task G)', () => {
 
     const table = await screen.findByTestId('global-search-results-table');
 
-    // One column header per store + Total (scoped to the table — store names
-    // also appear in the legend badges above it)
+    // Store columns now render as colored chip clusters (one chip per store with
+    // quantity on hover via title) — store names also appear in the legend badges
+    // above the table.
     const scoped = within(table);
     expect(scoped.getByText('Main Store')).toBeInTheDocument();
     expect(scoped.getByText('Branch Store')).toBeInTheDocument();
@@ -89,7 +90,8 @@ describe('Global cross-store product search (Phase 3, Task G)', () => {
 
     await screen.findByTestId('global-search-results-table');
 
-    // PROD-01 quantities
+    // Each store column renders a chip with the quantity as text and the full
+    // "store: qty unit" string in the title attribute.
     await waitFor(() => {
       expect(screen.getByTestId('qty-PROD-01-STORE-MAIN')).toHaveTextContent('5');
     });

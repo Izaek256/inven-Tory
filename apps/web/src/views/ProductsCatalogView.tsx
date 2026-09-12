@@ -161,7 +161,7 @@ export function ProductsCatalogView(): React.ReactElement {
       header: col.store_name,
       numeric: true,
       accessor: (r) => storeQty(r.store_quantities, col.store_id) ?? 0,
-      render: (r) => {
+      render: (r: ProductSearchResult): React.ReactNode => {
         const qty = storeQty(r.store_quantities, col.store_id);
         return qty === null ? (
           <span className="web-cell-empty" data-testid={`store-qty-empty-${r.id}-${col.store_id}`}>

@@ -1,5 +1,5 @@
 /**
- * tauriAuthService — Issue 25 auth consolidation.
+ * tauriAuthService.
  *
  * Responsibilities:
  *   - Post credentials to the central /api/v1/auth/login endpoint.
@@ -7,7 +7,7 @@
  *     (tauri-plugin-store writes to the OS-managed app data directory,
  *     not to the plain SQLite database).
  *   - Expose the current session (user, role, token) to all consumers.
- *   - Handle offline token expiry per Section 21:
+ *   - Handle offline token expiry:
  *       "Authentication expired → re-authenticate without deleting queued
  *       transactions."
  *     When the access token expires while offline, `token_expired_offline`
@@ -463,7 +463,7 @@ async function _tryUpgradeToServerToken(
 /**
  * Attempt to refresh the access token using the cached refresh token.
  *
- * Per Section 21 offline behavior:
+ * Per offline behavior:
  * - If the network is unavailable, set token_expired_offline = true.
  * - The outbox keeps queuing; sync attempts are blocked until this is cleared.
  * - Transactions already in the outbox are NEVER discarded.
@@ -554,7 +554,7 @@ export async function getSession(): Promise<AuthSession | null> {
  *
  * Returns null when:
  *   - not logged in
- *   - token is expired AND we are offline (Section 21 offline behavior)
+ *   - token is expired AND we are offline
  *
  * The caller (tauriSyncService) must check for null and skip sync if
  * token_expired_offline is true — but must NOT drop pending transactions.

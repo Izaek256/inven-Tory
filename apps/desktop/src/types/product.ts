@@ -12,6 +12,8 @@ export interface Product {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  /** Owning store, if the product belongs to a single store. */
+  store_id?: string | null;
   /** Total AVAILABLE stock quantity summed across all stores. */
   stock_quantity?: number | null;
 }

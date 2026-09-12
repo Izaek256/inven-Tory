@@ -92,6 +92,7 @@ const MOCK_PRODUCT = {
   barcode: null,
   alternate_names: null,
   reorder_point: null,
+  store_id: 'STORE-A',
   created_at: '2026-08-01T00:00:00Z',
   updated_at: '2026-08-01T00:00:00Z',
 };
@@ -312,7 +313,6 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
       new Error('Insufficient stock. Available quantity: 0. Cannot sell 1 units.'),
     );
-    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
 
     render(<SaleStockView />);

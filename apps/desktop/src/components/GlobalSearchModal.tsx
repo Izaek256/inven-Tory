@@ -106,7 +106,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
         (p.model && p.model.toLowerCase().includes(term)) ||
         p.category.toLowerCase().includes(term),
     );
-    return filtered.slice(0, 50).map((p) => {
+    return filtered.slice(0, 50).map((p: Product) => {
       const rowQty = qtyMap.get(p.id) ?? new Map<string, number>();
       let total = 0;
       for (const s of stores) {
@@ -116,62 +116,83 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     });
   }, [products, query, stores, qtyMap]);
 
+  const storeColumns = stores.map((store: Store): ColumnDef<SearchResultRow> => ({
+    key: `qty-${store.id}`,
+    header: (
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '4px',
+          whiteSpace: 'normal',
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          className="store-switcher-badge"
+          style={{ backgroundColor: storeColor(store.id), flexShrink: 0 }}
+        />
+        <span>{store.name}</span>
+      </span>
+    ),
+    numeric: true,
+    align: 'center' as const,
+    headerWrap: true,
+    width: stores.length > 0 ? `${Math.max(5, Math.floor((68 / stores.length) * 10) / 10)}%` : '8%',
+    render: (r: SearchResultRow): React.ReactNode => {
+      const qty = r.qtyByStore.get(store.id) ?? 0;
+      return (
+        <span
+          className={`store-qty-cell ${qty === 0 ? 'store-qty-cell--zero' : ''}`}
+          data-testid={`qty-${r.product.id}-${store.id}`}
+          title={`${qty.toLocaleString()} ${r.product.unit} in ${store.name}`}
+        >
+          {qty.toLocaleString()}
+        </span>
+      );
+    },
+    accessor: (r: SearchResultRow) => r.qtyByStore.get(store.id) ?? 0,
+  }));
+
   const columns: ColumnDef<SearchResultRow>[] = [
     {
-      key: 'name',
-      header: 'Product Name',
-      render: (r) => (
-        <div>
-          <div style={{ fontWeight: 500 }}>{r.product.name}</div>
-          <div style={{ fontSize: '11px', color: 'var(--it-text-secondary)' }}>
-            {r.product.brand || '—'} · {r.product.category}
-          </div>
+      key: 'product',
+      header: 'Product',
+      minWidth: '26%',
+      align: 'left' as const,
+      render: (r: SearchResultRow) => (
+        <div style={{ lineHeight: 1.2 }}>
+          <div style={{ fontWeight: 600 }}>{r.product.name}</div>
+          {r.product.model && (
+            <div
+              style={{
+                fontSize: '11px',
+                color: 'var(--it-text-secondary)',
+                fontFamily: 'var(--it-font-mono)',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {r.product.model}
+            </div>
+          )}
         </div>
       ),
-      accessor: (r) => r.product.name,
+      accessor: (r: SearchResultRow) => r.product.name,
     },
-    {
-      key: 'model',
-      header: 'Model',
-      render: (r) => r.product.model || '—',
-      accessor: (r) => r.product.model || '',
-    },
-    {
-      key: 'sku',
-      header: 'SKU',
-      render: (r) => (
-        <span style={{ fontFamily: 'var(--it-font-mono)', color: 'var(--it-green-text)' }}>
-          {r.product.sku}
-        </span>
-      ),
-      accessor: (r) => r.product.sku,
-    },
-    // One dynamic column per store (Task D format)
-    ...stores.map((store): ColumnDef<SearchResultRow> => ({
-      key: `qty-${store.id}`,
-      header: store.name,
-      numeric: true,
-      width: '10%',
-      render: (r) => {
-        const qty = r.qtyByStore.get(store.id) ?? 0;
-        return (
-          <span
-            className={`store-qty-cell ${qty === 0 ? 'store-qty-cell--zero' : ''}`}
-            data-testid={`qty-${r.product.id}-${store.id}`}
-            title={`${qty.toLocaleString()} ${r.product.unit} in ${store.name}`}
-          >
-            {qty.toLocaleString()}
-          </span>
-        );
-      },
-      accessor: (r) => r.qtyByStore.get(store.id) ?? 0,
-    })),
+    // One dedicated column per store so the full cross-store breakdown is
+    // visible at a glance — the wide (xl) modal fits every store without the
+    // table degrading into an overflow chip or horizontal scrolling.
+    ...storeColumns,
     {
       key: 'total',
       header: 'Total',
       numeric: true,
-      width: '9%',
-      render: (r) => (
+      align: 'center' as const,
+      headerWrap: true,
+      width: '8%',
+      render: (r: SearchResultRow) => (
         <span
           style={{
             fontFamily: 'var(--it-font-mono)',
@@ -182,12 +203,11 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
           {r.total.toLocaleString()}
         </span>
       ),
-      accessor: (r) => r.total,
+      accessor: (r: SearchResultRow) => r.total,
     },
   ];
-
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Global Product Search (All Stores)" size="lg">
+    <Modal isOpen={isOpen} onClose={onClose} title="Global Product Search (All Stores)" size="xl">
       <div data-testid="global-search-modal">
         <div style={{ marginBottom: '16px' }}>
           <SearchInput

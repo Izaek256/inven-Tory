@@ -24,7 +24,7 @@ interface DashboardViewProps {
   loading: boolean;
   error: string | null;
   onRetry: () => void;
-  /** Current user's role from the auth session (Issue 25). */
+  /** Current user's role from the auth session. */
   userRole?: string;
 }
 
@@ -157,7 +157,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             variant="ghost"
             size="sm"
             iconOnly
-            title="Register Local Device Stub (FR-STORE-003)"
+            title="Register Local Device"
             onClick={() => handleOpenDeviceModal(s)}
             disabled={!isAuthorized}
             data-testid={`register-device-btn-${s.id}`}
@@ -199,7 +199,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div>
             <h2 className="view-title">Dashboard &amp; Store Locations</h2>
             <p className="view-subtitle">
-              Local SQLite multi-store management and device assignment (FR-STORE-001–003)
+              Local SQLite multi-store management and device assignment
             </p>
           </div>
         </div>
@@ -246,7 +246,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             valueColour="green"
           />
         </div>
-        <StatCard label="Local Engine" value="SQLite (Issue 03)" />
+        <StatCard label="Local Engine" value="SQLite" />
       </div>
 
       {/* Table Section */}
@@ -275,7 +275,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </h3>
           </div>
           <span style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>
-            FR-STORE-001 Store Management
+            Store Management
           </span>
         </div>
 

@@ -65,7 +65,13 @@ export const DamageQuarantineView: React.FC = () => {
       if (productQuery.trim()) {
         try {
           const results = await searchProducts(productQuery);
-          setSearchResults(results.filter((p) => p.is_active));
+          // Only show products belonging to the active store (Task E).
+          const scoped = results.filter(
+            (p) =>
+              p.is_active &&
+              (p.store_id === activeStoreId || p.store_id === null || p.store_id === undefined),
+          );
+          setSearchResults(scoped);
         } catch (_err) {
           // Silently handle product search error
         }
@@ -75,7 +81,7 @@ export const DamageQuarantineView: React.FC = () => {
     }, 300);
 
     return (): void => clearTimeout(searchProductsDebounced);
-  }, [productQuery]);
+  }, [productQuery, activeStoreId]);
 
   const loadBucketBalances = async (
     storeId: string,
@@ -196,7 +202,7 @@ export const DamageQuarantineView: React.FC = () => {
           <div>
             <h2 className="view-title">Damage &amp; Quarantine Management</h2>
             <p className="view-subtitle">
-              Move stock between Available, Damaged, and Quarantine buckets (FR-MOV-005)
+              Move stock between Available, Damaged, and Quarantine buckets
             </p>
           </div>
         </div>

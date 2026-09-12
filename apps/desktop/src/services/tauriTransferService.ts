@@ -17,7 +17,7 @@ function _triggerAutoSync(): void {
 }
 
 /**
- * Fetch all multi-store transfers (Section 11).
+ * Fetch all multi-store transfers.
  */
 export async function getTransfers(): Promise<Transfer[]> {
   if (isTauriEnvironment()) {

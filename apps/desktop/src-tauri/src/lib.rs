@@ -242,6 +242,50 @@ fn generate_id(prefix: &str) -> String {
     format!("{}-{:X}", prefix, nanos)
 }
 
+fn ensure_day_books_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS day_books (
+            id              VARCHAR(36)      PRIMARY KEY,
+            store_id        VARCHAR(36)      NOT NULL REFERENCES stores(id),
+            book_date       DATETIME         NOT NULL,
+            opening_balance INTEGER          NOT NULL DEFAULT 0,
+            closing_balance INTEGER,
+            balance_sheet_generated BOOLEAN  NOT NULL DEFAULT 0,
+            balance_sheet_generated_at DATETIME,
+            created_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_day_books_store_date
+            ON day_books (store_id, book_date);
+
+        CREATE TABLE IF NOT EXISTS day_book_entries (
+            id                VARCHAR(36)      PRIMARY KEY,
+            day_book_id       VARCHAR(36)      NOT NULL REFERENCES day_books(id) ON DELETE CASCADE,
+            transaction_id    VARCHAR(36)      NOT NULL REFERENCES inventory_transactions(transaction_id),
+            movement_type     VARCHAR(50)      NOT NULL,
+            product_id        VARCHAR(36)      NOT NULL REFERENCES products(id),
+            quantity_delta    INTEGER          NOT NULL,
+            stock_bucket      VARCHAR(50)      NOT NULL DEFAULT 'AVAILABLE',
+            reference_number  VARCHAR(100),
+            reason_code       VARCHAR(50),
+            notes             TEXT,
+            occurred_at       DATETIME         NOT NULL,
+            recorded_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_day_book_entries_day_book
+            ON day_book_entries (day_book_id);
+
+        CREATE INDEX IF NOT EXISTS idx_day_book_entries_transaction
+            ON day_book_entries (transaction_id);
+
+        CREATE INDEX IF NOT EXISTS idx_day_book_entries_product
+            ON day_book_entries (product_id);",
+    )
+    .map_err(|e| format!("Failed to create day_books tables: {}", e))
+}
+
 pub mod commands {
     use super::*;
 
@@ -544,6 +588,65 @@ pub mod commands {
             registered_at: now,
             last_seen_at: None,
         })
+    }
+
+    /// Return the product catalogue scoped to a specific store.
+    ///
+    /// A product is "available for operation" in a store when it already has a
+    /// stock row in that store (present there), or when it has never been
+    /// allocated to any store (fresh catalogue items that the store can receive
+    /// into). `stock_quantity` is computed ONLY from that store's balances.
+    #[tauri::command]
+    pub fn get_products_by_store(store_id: String) -> Result<Vec<Product>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' AND sb.store_id = ?1 THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
+                 FROM products p \
+                 LEFT JOIN stock_balances sb ON sb.product_id = p.id \
+                 GROUP BY p.id \
+                 HAVING SUM(CASE WHEN sb.store_id = ?1 THEN 1 ELSE 0 END) > 0 \
+                     OR COUNT(sb.rowid) = 0 \
+                 ORDER BY p.name ASC"
+            )
+            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+
+        let prod_iter = stmt
+            .query_map(params![store_id], |row| {
+                let st_int: i32 = row.get(9)?;
+                let active_int: i32 = row.get(10)?;
+                let stock_qty: i32 = row.get(13)?;
+                Ok(Product {
+                    id: row.get(0)?,
+                    sku: row.get(1)?,
+                    name: row.get(2)?,
+                    brand: row.get(3)?,
+                    model: row.get(4)?,
+                    category: row.get(5)?,
+                    unit: row.get(6)?,
+                    barcode: row.get(7)?,
+                    alternate_names: row.get(8)?,
+                    serial_tracking_enabled: st_int != 0,
+                    is_active: active_int != 0,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    stock_quantity: Some(stock_qty),
+                })
+            })
+            .map_err(|e| format!("Failed to query products: {}", e))?;
+
+        let mut products = Vec::new();
+        for prod in prod_iter {
+            let p = prod.map_err(|e| format!("Failed to read product record: {}", e))?;
+            products.push(p);
+        }
+
+        Ok(products)
     }
 
     #[tauri::command]
@@ -2674,6 +2777,11 @@ pub mod commands {
 
     /// Update the sync_status (and optionally server_accepted_at) on an
     /// inventory_transactions row after a successful push acknowledgement.
+    ///
+    /// If the row no longer exists (e.g. the transaction was deleted locally
+    /// and replaced by a compensating void event), this is treated as a
+    /// successful no-op instead of an error — the void event carries the
+    /// deletion to the server and there is nothing left to mark on this side.
     #[tauri::command]
     pub fn update_transaction_sync_status(
         transaction_id: String,
@@ -2684,7 +2792,7 @@ pub mod commands {
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        let rows_affected = match server_accepted_at {
+        match server_accepted_at {
             Some(ref ts) => conn.execute(
                 "UPDATE inventory_transactions SET sync_status = ?1, server_accepted_at = ?2 \
                  WHERE transaction_id = ?3",
@@ -2698,9 +2806,8 @@ pub mod commands {
         }
         .map_err(|e| format!("Failed to update transaction sync status: {}", e))?;
 
-        if rows_affected == 0 {
-            return Err(format!("Transaction '{}' not found.", transaction_id));
-        }
+        // Rows that were deleted locally (delete_transaction) simply don't exist
+        // anymore — that's expected and not an error.
         Ok(())
     }
 
@@ -2821,11 +2928,50 @@ pub mod commands {
     }
 
     /// Upsert a store from server data (INSERT ... ON CONFLICT DO UPDATE).
+    /// Upsert a store from server data (INSERT ... ON CONFLICT DO UPDATE).
+    ///
+    /// If the incoming server record is an auto-provisioned placeholder
+    /// (name starts with "Auto Store (") and the local row already has a real
+    /// name, the local name/address/code are preserved so user renames and
+    /// locally created store names are never clobbered by the pull loop.
     #[tauri::command]
     pub fn upsert_store_from_server(store: Store) -> Result<Store, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let incoming_is_placeholder = store.name.starts_with("Auto Store (");
+
+        if incoming_is_placeholder {
+            // Check whether the local row already has a real (non-placeholder) name.
+            let local_is_placeholder: bool = conn
+                .query_row(
+                    "SELECT name FROM stores WHERE id = ?1",
+                    params![store.id],
+                    |row| {
+                        let name: String = row.get(0)?;
+                        Ok(name.starts_with("Auto Store ("))
+                    },
+                )
+                .unwrap_or(true); // If the row doesn't exist yet, treat as placeholder (will insert)
+
+            if !local_is_placeholder {
+                // Local store has a real name — do not overwrite it with the
+                // placeholder. Only update is_active and updated_at.
+                conn.execute(
+                    "UPDATE stores SET is_active = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        if store.is_active { 1 } else { 0 },
+                        store.updated_at,
+                        store.id,
+                    ],
+                )
+                .map_err(|e| format!("Failed to update store status: {}", e))?;
+                return Ok(store);
+            }
+            // Both are placeholders — fall through to normal upsert so at least the
+            // row exists with an ID the FK constraints need.
+        }
 
         conn.execute(
             "INSERT INTO stores (id, code, name, address, is_active, created_at, updated_at) \
@@ -3062,6 +3208,16 @@ pub mod commands {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     println!("[TAURI-LOG] Initializing invenTory Desktop Shell...");
+
+    // Initialize local database schema (create tables if they don't exist)
+    if let Ok(db_path) = get_db_path().into_os_string().into_string() {
+        if let Ok(conn) = Connection::open(&db_path) {
+            if let Err(e) = ensure_day_books_tables(&conn) {
+                eprintln!("[TAURI-LOG] Warning: Failed to initialize day_books tables: {}", e);
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -3073,6 +3229,7 @@ pub fn run() {
             commands::toggle_store_active,
             commands::register_device,
             commands::get_products,
+            commands::get_products_by_store,
             commands::search_products,
             commands::search_products_fts5,
             commands::create_product,

@@ -1,5 +1,5 @@
 /**
- * SettingsView — Issue 25 auth consolidation.
+ * SettingsView.
  *
  * Displays device configuration, theme, and current user identity.
  * The logout button calls tauriAuthService.logout() which clears

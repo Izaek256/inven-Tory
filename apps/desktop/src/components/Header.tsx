@@ -117,7 +117,7 @@ export const Header: React.FC<HeaderProps> = ({
     fetchPendingCount();
     const interval = setInterval(fetchPendingCount, 5000);
 
-    // Fetch last sync timestamp on mount and every 5 s (SYNC-009)
+    // Fetch last sync timestamp on mount and every 5 s
     const fetchLastSync = async (): Promise<void> => {
       try {
         const ts = await getLastSyncTimestamp();
@@ -244,7 +244,7 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </div>
 
-        {/* Last sync timestamp (SYNC-009) */}
+        {/* Last sync timestamp */}
         <div
           className="last-sync-badge"
           data-testid="last-sync-timestamp"
@@ -291,15 +291,9 @@ export const Header: React.FC<HeaderProps> = ({
                   data-testid="store-selector"
                   aria-label="Active Store Location"
                 >
-                  {stores.map((store) => (
-                    <option key={store.id} value={store.id}>
-                      <span className="store-switcher-dropdown-option">
-                        <span
-                          className="store-switcher-badge"
-                          style={{ backgroundColor: storeColor(store.id) }}
-                        />
-                        {store.name}
-                      </span>
+                  {stores.map((store: Store) => (
+                    <option key={store.id} value={store.id} data-store-color={storeColor(store.id)}>
+                      {store.name}
                     </option>
                   ))}
                 </select>

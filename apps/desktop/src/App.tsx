@@ -1,5 +1,5 @@
 /**
- * Desktop application root — Issue 25 auth consolidation.
+ * Desktop application root.
  *
  * Authentication gate:
  *   1. On launch, check for a cached AuthSession (Tauri secure store).
@@ -8,7 +8,7 @@
  *      the main shell so local ops continue and outbox keeps queuing.
  *   4. If session is valid → render the full application.
  *
- * Offline behavior (Section 21):
+ * Offline behavior:
  *   - Expired token while offline → OfflineAuthBanner, NOT full login screen.
  *     Queued transactions are preserved; only sync is blocked.
  *   - Re-auth clears the expired flag and resumes background sync.
@@ -201,7 +201,7 @@ export function App(): React.ReactElement {
     };
   }, [fetchStores]);
 
-  // Background Sync Engine (Issue 15 / Section 21)
+  // Background Sync Engine
   useEffect(() => {
     if (authState === 'authenticated') {
       const envBaseUrl =
@@ -294,10 +294,10 @@ export function App(): React.ReactElement {
   };
 
   // Store-context reload: switching stores via the header persists the new
-  // activeStoreId and then forces a full app reload, so every mounted view
-  // re-reads `activeStoreId`. There are no in-view store selectors left — the
-  // header dropdown is the single source of truth for which store every
-  // operation runs against.
+  // activeStoreId and then refreshes store-scoped data across all mounted views,
+  // so every view re-reads `activeStoreId` from context. The session stays intact
+  // (no redirect to login); only the active store/context and store-specific data
+  // change (Task D — switching must not force re-login).
   const handleSelectStoreAndReload = useCallback(
     (storeId: string): void => {
       const target = stores.find((s) => s.id === storeId);
@@ -307,24 +307,19 @@ export function App(): React.ReactElement {
         storeCode: target?.code ?? '',
       });
       setActiveStoreId(storeId);
-      setTimeout(() => {
-        try {
-          if (
-            typeof window !== 'undefined' &&
-            typeof window.location !== 'undefined' &&
-            typeof navigator !== 'undefined' &&
-            !navigator.userAgent.includes('jsdom')
-          ) {
-            window.location.reload();
-            return;
-          }
-        } catch {
-          // fall through — context update alone still propagates
+      // Refresh the store list. Keep the switching overlay open until the refresh
+      // completes (or settles), so views never render with the stale previous-store
+      // state.
+      void fetchStores().then(() => {
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('inven-tory:stores-updated', { detail: { storeId } }),
+          );
         }
         setSwitchingStore({ active: false, storeName: '', storeCode: '' });
-      }, 450);
+      });
     },
-    [stores, setActiveStoreId],
+    [stores, setActiveStoreId, fetchStores],
   );
 
   const handleLogout = async (): Promise<void> => {

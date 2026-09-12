@@ -1,5 +1,5 @@
 /**
- * Authentication types for Issue 25.
+ * Authentication types.
  *
  * These types mirror the Pydantic schemas in services/api/app/api/v1/auth.py.
  * JWT transport: Bearer tokens stored in Tauri secure storage.
@@ -41,7 +41,7 @@ export interface UserProfile {
  * Stored in Tauri's secure storage (tauri-plugin-store) alongside the
  * device identity.  Never written to plain SQLite.
  *
- * Offline behavior (Section 21 / AT-021):
+ * Offline behavior:
  * - token_expired_offline is set to true when the access token expires while
  *   the device is offline.  In this state the outbox keeps queuing and local
  *   operations continue; new sync attempts are blocked until re-auth.
