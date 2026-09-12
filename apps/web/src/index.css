@@ -164,10 +164,13 @@ body {
 
 /* ── View layout ─────────────────────────────────────────────────────────── */
 
-.web-view {
+/* The analytics dashboard uses its own class but shares the same vertical
+ * rhythm (16px between cards) as every other view. */
+.web-view,
+.web-analytics-view {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--it-sp-4);
 }
 
 .web-view-header {
@@ -494,55 +497,131 @@ body {
   box-shadow: var(--it-focus-ring);
 }
 
-/* ── Dashboard tiles (Phase 3, Task B — analytics-only dashboard) ─────────── */
+/* ── Dashboard tile & card type scale (Task B — single source of truth) ───────
+ * Every dashboard card derives its typography from these roles:
+ *   .web-type-kpi-label  → 11px uppercase muted tile/card label
+ *   .web-type-kpi-value  → 28px bold KPI number (tabular-nums; NO mono, NO
+ *                          tracking — those are reserved for SKU/store-code
+ *                          chips so values like "3 h ago" never look broken)
+ *   .web-type-delta      → 12px colored trend line (tabular-nums)
+ *   .web-type-card-title → 14px semibold card title
+ *   .web-type-body       → 13px table/body text
+ * New tiles/cards must reuse these classes — ad hoc font styles are what
+ * produced the original "LAST SYNC 3  h  ago" bug.
+ */
+.web-type-kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--it-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: var(--it-tracking-label);
+  line-height: 1.4;
+}
 
-.web-dashboard-tile {
+.web-type-kpi-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--it-text-primary);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.web-type-delta {
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.4;
+}
+
+.web-type-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--it-text-primary);
+  line-height: 1.4;
+}
+
+.web-type-body {
+  font-size: 13px;
+  color: var(--it-text-primary);
+  line-height: 1.5;
+}
+
+/* ── Card treatment (Task D — identical chrome on every card) ──────────────
+ * KPI tiles, chart panels, table panels, and the activity feed all share:
+ * same surface, border, radius, shadow, and 16px internal padding.
+ */
+.web-dashboard-tile,
+.web-dashboard-chart-panel,
+.web-dashboard-table-panel,
+.web-dashboard-preview {
   background-color: var(--it-card);
   border: 1px solid var(--it-border);
   border-radius: var(--it-r-lg);
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  position: relative;
-  overflow: hidden;
-  transition:
-    border-color var(--it-dur-fast) var(--it-ease),
-    box-shadow var(--it-dur-fast) var(--it-ease);
+  box-shadow: var(--it-shadow-xs);
+  padding: var(--it-sp-4);
 }
 
-.web-dashboard-tile::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 0;
-  width: 3px;
-  background-color: var(--it-green);
-  border-radius: var(--it-r-md) 0 0 var(--it-r-md);
+.web-dashboard-tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--it-sp-2);
+  transition:
+    border-color var(--it-dur-fast) var(--it-ease),
+    box-shadow var(--it-dur-fast) var(--it-ease),
+    transform var(--it-dur-fast) var(--it-ease);
+}
+
+.web-dashboard-tile:hover {
+  border-color: var(--it-border-strong);
+  box-shadow: var(--it-shadow-sm);
+}
+
+/* Base KPI grid: 5-across on wide desktop, wrapping on smaller widths. */
+.web-dashboard-tiles {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--it-sp-4);
+  align-items: stretch;
 }
 
 .web-dashboard-tile__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--it-sp-2);
+  min-height: 24px;
 }
 
+.web-dashboard-tile__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* Tile title → type-scale role (Task B). */
 .web-dashboard-tile__title {
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--it-text-secondary);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--it-tracking-label);
+  line-height: 1.4;
 }
 
+/* KPI value → UI sans with tabular numerals. No mono family, no tracking —
+ * the old mono style here is what rendered "3  h  ago" with broken gaps. */
 .web-dashboard-tile__value {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
   color: var(--it-text-primary);
-  font-family: var(--it-font-mono);
   line-height: 1.1;
-  word-break: break-all;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+  min-height: 31px;
 }
 
 .web-dashboard-tile__pulse {
@@ -572,42 +651,65 @@ body {
   line-height: 1.4;
 }
 
+/* Footer pinned to the tile's bottom edge so equal-height rows never end in
+ * dead air (Task C). Multiple children (bars + caption) stack with an 8px gap. */
 .web-dashboard-tile__footer {
-  font-size: 11px;
-  color: var(--it-text-disabled);
-  font-family: var(--it-font-mono);
-}
-
-.web-top-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  font-size: 13px;
-}
-
-.web-top-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 2px 0;
-}
-
-.web-top-list__name {
-  color: var(--it-text-primary);
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-}
-
-.web-top-list__qty {
-  font-family: var(--it-font-mono);
-  font-weight: 600;
+  margin-top: auto;
+  padding-top: var(--it-sp-2);
+  border-top: 1px solid var(--it-border);
+  font-size: 12px;
   color: var(--it-text-secondary);
-  flex-shrink: 0;
+  line-height: 1.4;
+  min-height: 40px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: var(--it-sp-2);
 }
 
+.web-dashboard-tile__delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.web-dashboard-tile__delta--positive {
+  color: var(--it-green-text);
+}
+
+.web-dashboard-tile__delta--negative {
+  color: var(--it-red-text);
+}
+
+.web-dashboard-tile__delta--neutral {
+  color: var(--it-text-disabled);
+}
+
+/* ── Entrance animations (Task E) — quick staggered fade/slide-in ─────────
+ * 240ms per card with small per-card delays (set inline via animationDelay).
+ * animation-fill-mode: backwards keeps cards invisible until their delay
+ * elapses. Reduced-motion users get instant display via the global override
+ * in tokens.css (duration forced to 0.01ms).
+ */
+.web-anim-card {
+  animation: card-enter 240ms var(--it-ease) backwards;
+}
+
+@keyframes card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Mini bar chart in the receipt tile — bars grow in on load. */
 .web-mini-bars {
   display: flex;
   align-items: flex-end;
@@ -622,10 +724,57 @@ body {
   min-height: 4px;
 }
 
+.web-mini-bars .web-mini-bar {
+  transform-origin: bottom;
+  animation: bar-grow 400ms var(--it-ease) backwards;
+}
+
+@keyframes bar-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+/* Sparkline (Task C tile footers) — line draws in via dashoffset, area fades. */
+.web-sparkline {
+  width: 100%;
+  display: block;
+}
+
+.web-sparkline__line {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation: sparkline-draw 700ms var(--it-ease) 200ms forwards;
+}
+
+@keyframes sparkline-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.web-sparkline__area {
+  opacity: 0;
+  animation: sparkline-fade 400ms var(--it-ease) 600ms forwards;
+}
+
+@keyframes sparkline-fade {
+  to {
+    opacity: 0.12;
+  }
+}
+
 .web-dashboard-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 16px;
+  gap: var(--it-sp-4);
 }
 
 /* ── Toast / notification ────────────────────────────────────────────────── */

@@ -1,18 +1,21 @@
 /**
- * Recent Activity view (Phase 3, Task 2.2).
+ * Recent Activity view - dedicated page.
  *
- * The "Recent Activity" table that previously sat at the top of the unified
- * dashboard now lives here as its own sidebar view. Same columns and behavior
- * as before: Product | Stock | Last Sync | View — with the View action opening
- * the per-product InventoryPanel (per-store inventory + movement history).
+ * Shares its row rendering with the dashboard preview panel via
+ * `RecentActivityList` (single underlying row component), so the format
+ * `product name / {action} · {store} · {±units} / relative time`
+ * can never drift between the two surfaces. The table variant from Phase 3
+ * (Product | Stock | Last Sync | View) is preserved below the feed as the
+ * per-product drill-down ("View" opens the InventoryPanel).
  */
-
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button, DataTable, EmptyState, Spinner, type ColumnDef } from '@invenTory/ui';
 import { Activity, Clock } from 'lucide-react';
-import { searchProducts } from '../services/dashboardService';
-import type { ProductSearchResult } from '../types/dashboard';
+import { getRecentActivity, searchProducts } from '../services/dashboardService';
+import { useResistantQuery } from '../hooks/useResistantQuery';
+import type { ProductSearchResult, RecentActivityResponse } from '../types/dashboard';
 import { InventoryPanel } from '../components/InventoryPanel';
+import { RecentActivityList } from '../components/RecentActivityList';
 
 const RECENT_LIMIT = 20;
 
@@ -21,6 +24,11 @@ export function RecentActivityView(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [recentProducts, setRecentProducts] = useState<ProductSearchResult[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<ProductSearchResult | null>(null);
+  const activityQuery = useResistantQuery<RecentActivityResponse>(
+    () => getRecentActivity(RECENT_LIMIT),
+    [],
+  );
+  const activityItems = activityQuery.data?.data ?? [];
 
   useEffect(() => {
     let cancelled = false;
@@ -29,7 +37,6 @@ export function RecentActivityView(): React.ReactElement {
     searchProducts('', 200)
       .then((data) => {
         if (!cancelled) {
-          // Most recently synced products first (same ordering as before).
           const sorted = [...data.results].sort((a, b) => {
             const aTime = a.last_balance_update ? new Date(a.last_balance_update).getTime() : 0;
             const bTime = b.last_balance_update ? new Date(b.last_balance_update).getTime() : 0;
@@ -125,16 +132,36 @@ export function RecentActivityView(): React.ReactElement {
           <Activity size={22} color="var(--it-green)" aria-hidden="true" />
           <div>
             <h2 className="web-view-title">Recent Activity</h2>
-            <p className="web-view-subtitle">
-              Products with the most recent stock balance updates, across all stores
-            </p>
+            <p className="web-view-subtitle">Latest stock movements across all stores</p>
           </div>
         </div>
       </div>
 
+      <div className="web-dashboard-preview" data-testid="recent-activity-feed">
+        {activityQuery.error ? (
+          <EmptyState
+            variant="error"
+            heading="Failed to load activity"
+            body={activityQuery.error}
+          />
+        ) : activityQuery.loading && activityItems.length === 0 ? (
+          <div className="web-center-spinner" data-testid="recent-feed-loading">
+            <Spinner size="sm" label="Loading recent activity..." />
+          </div>
+        ) : activityItems.length > 0 ? (
+          <RecentActivityList items={activityItems} />
+        ) : (
+          <EmptyState
+            heading="No recent activity"
+            body="Stock movements will appear here."
+            data-testid="recent-feed-empty"
+          />
+        )}
+      </div>
+
       {loading && (
         <div className="web-center-spinner" data-testid="recent-loading">
-          <Spinner size="md" label="Loading recent activity…" />
+          <Spinner size="md" label="Loading recent activity..." />
         </div>
       )}
 

@@ -1,0 +1,59 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Recent Activity - shared row component (dashboard preview + dedicated page) > row structure snapshot (name line and meta line are separate nodes) 1`] = `
+<DocumentFragment>
+  <div
+    class="web-dashboard-preview-list"
+  >
+    <div
+      class="web-dashboard-preview-item"
+      data-testid="activity-item-txn-1"
+    >
+      <span
+        aria-hidden="true"
+        class="web-dashboard-preview-icon"
+      >
+        <svg
+          class="lucide lucide-arrow-down"
+          fill="none"
+          height="14"
+          stroke="var(--it-red)"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          stroke-width="2"
+          viewBox="0 0 24 24"
+          width="14"
+          xmlns="http://www.w3.org/2000/svg"
+        >
+          <path
+            d="M12 5v14"
+          />
+          <path
+            d="m19 12-7 7-7-7"
+          />
+        </svg>
+      </span>
+      <div
+        class="web-dashboard-preview-content"
+      >
+        <div
+          class="web-dashboard-preview-label"
+        >
+          ADH 158L Fridge
+        </div>
+        <div
+          class="web-dashboard-preview-meta"
+        >
+          stock sold · ALGA-MAIN-STORE · −1 units
+        </div>
+      </div>
+      <span
+        class="web-dashboard-preview-time"
+        title="9/12/2026, 11:00:00 AM"
+      >
+        12 h ago
+      </span>
+    </div>
+  </div>
+</DocumentFragment>
+`;

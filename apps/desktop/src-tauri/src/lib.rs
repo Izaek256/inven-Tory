@@ -373,7 +373,7 @@ fn ensure_day_books_tables(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS day_book_entries (
             id                VARCHAR(36)      PRIMARY KEY,
             day_book_id       VARCHAR(36)      NOT NULL REFERENCES day_books(id) ON DELETE CASCADE,
-            transaction_id    VARCHAR(36)      NOT NULL REFERENCES inventory_transactions(transaction_id),
+            transaction_id    VARCHAR(36)      NOT NULL REFERENCES inventory_transactions(transaction_id) ON DELETE CASCADE,
             movement_type     VARCHAR(50)      NOT NULL,
             product_id        VARCHAR(36)      NOT NULL REFERENCES products(id),
             quantity_delta    INTEGER          NOT NULL,
@@ -2682,7 +2682,7 @@ pub mod commands {
         let now = now_iso();
 
         // Read the existing transaction
-        let tx = match conn.query_row(
+        let transaction = match conn.query_row(
             "SELECT quantity_delta, store_id, product_id, stock_bucket, \
              movement_type, sync_status, user_id, device_id \
              FROM inventory_transactions WHERE transaction_id = ?1",
@@ -2708,7 +2708,7 @@ pub mod commands {
             Err(e) => return Err(format!("Failed to query transaction: {}", e)),
         };
 
-        let (quantity_delta, store_id, product_id, stock_bucket, movement_type, sync_status, user_id, device_id) = tx;
+        let (quantity_delta, store_id, product_id, stock_bucket, movement_type, sync_status, user_id, device_id) = transaction;
         let outbox_event_id = format!("EVT-{}", transaction_id);
 
         // Reverse the stock_balances delta (add the negative of the original delta)
@@ -2727,6 +2727,12 @@ pub mod commands {
             ],
         )
         .map_err(|e| format!("Failed to reverse stock balance: {}", e))?;
+
+        conn.execute(
+            "DELETE FROM day_book_entries WHERE transaction_id = ?1",
+            params![transaction_id],
+        )
+        .map_err(|e| format!("Failed to delete day-book entries: {}", e))?;
 
         // Delete the transaction row
         conn.execute(
@@ -2776,12 +2782,6 @@ pub mod commands {
             .map_err(|e| format!("Failed to update outbox event status: {}", e))?;
         }
 
-        // Remove the day_book_entries row for the deleted transaction (non-fatal)
-        let entry_id = format!("DBE-{}", transaction_id);
-        let _ = conn.execute(
-            "DELETE FROM day_book_entries WHERE id = ?1",
-            params![entry_id],
-        );
         // Recompute closing_balance on the day_books row for this store+date (non-fatal)
         let book_date = &now[..10];
         let day_book_id_candidate = format!("DB-{}-{}", store_id, book_date);

@@ -10,6 +10,7 @@ export interface Product {
   alternate_names?: string | null;
   serial_tracking_enabled: boolean;
   is_active: boolean;
+  low_stock_threshold?: number | null;
   created_at: string;
   updated_at: string;
   /** Owning store, if the product belongs to a single store. */

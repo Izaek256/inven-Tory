@@ -1,6 +1,16 @@
 import '@testing-library/jest-dom';
 import { _setMemSession } from './helpers';
 
+// Polyfill ResizeObserver for recharts (not implemented in jsdom)
+const g = globalThis as Record<string, unknown>;
+if (!g.ResizeObserver) {
+  g.ResizeObserver = class ResizeObserver {
+    observe(): void {}
+    unobserve(): void {}
+    disconnect(): void {}
+  };
+}
+
 // Polyfill window.matchMedia for jsdom (not implemented in jsdom)
 Object.defineProperty(window, 'matchMedia', {
   writable: true,

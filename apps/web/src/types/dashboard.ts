@@ -155,3 +155,118 @@ export interface DashboardMetrics {
   cross_store: CrossStoreSummaryMetric;
   receipt_linked_sales: ReceiptSalesDayMetric[];
 }
+
+// ---------------------------------------------------------------------------
+// Phase 4 Analytics Types
+// ---------------------------------------------------------------------------
+
+export interface StockTrendPoint {
+  date: string; // YYYY-MM-DD
+  total_stock_units: number;
+}
+
+export interface StockTrendResponse {
+  data: StockTrendPoint[];
+  date_range: { start: string; end: string };
+}
+
+export interface CategoryDistributionPoint {
+  category: string;
+  count: number;
+  percentage: number;
+}
+
+export interface CategoryDistributionResponse {
+  data: CategoryDistributionPoint[];
+  total_products: number;
+}
+
+export interface StockStatusCategoryRow {
+  category: string;
+  in_stock: number;
+  low_stock: number;
+  out_of_stock: number;
+  total: number;
+}
+
+export interface StockStatusByCategoryResponse {
+  data: StockStatusCategoryRow[];
+}
+
+export interface KPIDelta {
+  metric: string;
+  current_value: number;
+  prior_value: number;
+  delta_absolute: number;
+  delta_percentage: number | null;
+  period_label: string;
+}
+
+export interface KPIDeltasResponse {
+  deltas: KPIDelta[];
+  current_period: { start: string; end: string };
+  prior_period: { start: string; end: string };
+}
+
+export interface MostSoldExtendedProduct {
+  product_id: string;
+  product_name: string;
+  sku: string;
+  category: string;
+  units_sold: number;
+  trend_direction: 'up' | 'down' | 'neutral';
+  trend_percentage: number | null;
+}
+
+export interface MostSoldExtendedResponse {
+  data: MostSoldExtendedProduct[];
+  period: { start: string; end: string };
+}
+
+export type ActivityType =
+  | 'stock_added'
+  | 'stock_sold'
+  | 'transfer_completed'
+  | 'receipt_linked'
+  | 'stock_removed'
+  | 'adjustment'
+  | 'damage'
+  | 'return';
+
+export interface RecentActivityItem {
+  id: string;
+  type: ActivityType;
+  product_id: string;
+  product_name: string;
+  sku: string;
+  store_id: string;
+  store_name: string;
+  quantity: number;
+  occurred_at: string; // ISO-8601
+  reference_number: string | null;
+}
+
+export interface RecentActivityResponse {
+  data: RecentActivityItem[];
+  total: number;
+}
+
+// ---------------------------------------------------------------------------
+// Operations Summary (KPI tiles: Transactions / Returns / Damage)
+// ---------------------------------------------------------------------------
+
+export interface MovementTypeSummary {
+  movement_type: string;
+  count: number;
+  units: number;
+}
+
+export interface OperationsSummaryResponse {
+  total_transactions: number;
+  total_units_moved: number;
+  by_type: MovementTypeSummary[];
+  returns_count: number;
+  returns_units: number;
+  damage_count: number;
+  damage_units: number;
+}

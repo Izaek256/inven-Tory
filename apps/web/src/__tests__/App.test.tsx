@@ -24,8 +24,27 @@ vi.mock('../services/dashboardService', () => ({
   getProductInventory: vi.fn(),
   getProductHistory: vi.fn(),
   getStoreInventory: vi.fn(),
-  listStores: vi.fn(),
+  listStores: vi.fn(async () => []),
   getDashboardMetrics: vi.fn(),
+  getStockTrend: vi.fn(async () => ({ data: [], date_range: { start: '', end: '' } })),
+  getCategoryDistribution: vi.fn(async () => ({ data: [], total_products: 0 })),
+  getStockStatusByCategory: vi.fn(async () => ({ data: [] })),
+  getKPIDeltas: vi.fn(async () => ({
+    deltas: [],
+    current_period: { start: '', end: '' },
+    prior_period: { start: '', end: '' },
+  })),
+  getMostSoldExtended: vi.fn(async () => ({ data: [], period: { start: '', end: '' } })),
+  getRecentActivity: vi.fn(async () => ({ data: [], total: 0 })),
+  getOperationsSummary: vi.fn(async () => ({
+    total_transactions: 0,
+    total_units_moved: 0,
+    by_type: [],
+    returns_count: 0,
+    returns_units: 0,
+    damage_count: 0,
+    damage_units: 0,
+  })),
 }));
 
 import * as apiClient from '../services/apiClient';

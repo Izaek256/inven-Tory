@@ -19,7 +19,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { Box, History, LayoutDashboard, Package, Warehouse, type LucideIcon } from 'lucide-react';
-import { Badge, ThemeToggle } from '@invenTory/ui';
+import { ThemeToggle } from '@invenTory/ui';
 import { clearToken, getToken } from './services/apiClient';
 import { LoginView } from './views/LoginView';
 import { AnalyticsDashboardView } from './views/AnalyticsDashboardView';
@@ -27,7 +27,9 @@ import { RecentActivityView } from './views/RecentActivityView';
 import { ProductsCatalogView } from './views/ProductsCatalogView';
 import { StoreView } from './views/StoreView';
 import { listStores } from './services/dashboardService';
+import { SidebarFooter } from './components/SidebarFooter';
 import './index.css';
+import './styles/dashboard-phase4.css';
 
 type NavView = 'dashboard' | 'recent-activity' | 'products' | 'stores';
 
@@ -154,6 +156,29 @@ function App(): React.ReactElement {
   const [storeListLoading, setStoreListLoading] = useState(false);
   const [storeListError, setStoreListError] = useState<string | null>(null);
   const [me, setMe] = useState<MeData | null>(null);
+  const [isOnline, setIsOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
+  const pendingSyncCount = 0;
+  const [isNarrow, setIsNarrow] = useState(
+    typeof window !== 'undefined' ? window.innerWidth < BOTTOM_NAV_BREAKPOINT : false,
+  );
+
+  useEffect(() => {
+    const handleOnline = (): void => setIsOnline(true);
+    const handleOffline = (): void => setIsOnline(false);
+    const handleResize = (): void => {
+      setIsNarrow(window.innerWidth < BOTTOM_NAV_BREAKPOINT);
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    window.addEventListener('resize', handleResize);
+    return (): void => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   const fetchMe = useCallback(async (): Promise<void> => {
     try {
@@ -233,9 +258,6 @@ function App(): React.ReactElement {
 
         <div className="header-controls">
           <ThemeToggle />
-          <div data-testid="online-badge">
-            <Badge status="ONLINE" label="Connected" />
-          </div>
           <button
             className="web-logout-btn"
             onClick={() => {
@@ -253,13 +275,20 @@ function App(): React.ReactElement {
 
       {/* Body */}
       <div className="app-body">
-        {/* Sidebar on desktop/tablet; bottom nav below the breakpoint */}
-        <SidebarOrBottomNav
-          items={NAV_ITEMS}
-          activeView={currentView}
-          onSelectView={setCurrentView}
-          breakpointPx={BOTTOM_NAV_BREAKPOINT}
-        />
+        <div style={{ display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
+          {/* Sidebar on desktop/tablet; bottom nav below the breakpoint */}
+          <SidebarOrBottomNav
+            items={NAV_ITEMS}
+            activeView={currentView}
+            onSelectView={setCurrentView}
+            breakpointPx={BOTTOM_NAV_BREAKPOINT}
+          />
+
+          {/* Sidebar footer (web only — desktop uses header indicators) */}
+          {currentView === 'dashboard' && !isNarrow && (
+            <SidebarFooter isOnline={isOnline} pendingCount={pendingSyncCount} onSync={null} />
+          )}
+        </div>
 
         {/* Main Content */}
         <main className="app-content" data-testid="web-main-content">

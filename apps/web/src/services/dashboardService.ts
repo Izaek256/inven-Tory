@@ -1,5 +1,5 @@
 /**
- * Dashboard API service — wraps the Issue 16 endpoints.
+ * Dashboard API service — wraps the Issue 16 endpoints + Phase 4 analytics.
  *
  * FR-SRCH-001: global product search
  * FR-SRCH-002/003: per-store quantities and global total
@@ -14,6 +14,13 @@ import type {
   ProductInventoryResponse,
   ProductSearchResponse,
   StoreInventoryResponse,
+  StockTrendResponse,
+  CategoryDistributionResponse,
+  StockStatusByCategoryResponse,
+  KPIDeltasResponse,
+  MostSoldExtendedResponse,
+  RecentActivityResponse,
+  OperationsSummaryResponse,
 } from '../types/dashboard';
 
 export async function searchProducts(
@@ -29,6 +36,70 @@ export async function searchProducts(
 /** Dashboard analytics for the KPI tile grid (Phase 3, Task B). */
 export async function getDashboardMetrics(): Promise<DashboardMetrics> {
   return api.get<DashboardMetrics>('/dashboard/metrics');
+}
+
+/** Stock trend time series (Phase 4, Task C). */
+export async function getStockTrend(
+  startDate?: string,
+  endDate?: string,
+): Promise<StockTrendResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  return api.get<StockTrendResponse>(`/dashboard/stock-trend?${params.toString()}`);
+}
+
+/** Category distribution for donut chart (Phase 4, Task D). */
+export async function getCategoryDistribution(): Promise<CategoryDistributionResponse> {
+  return api.get<CategoryDistributionResponse>('/dashboard/category-distribution');
+}
+
+/** Stock status by category for stacked bar chart (Phase 4, Task E). */
+export async function getStockStatusByCategory(): Promise<StockStatusByCategoryResponse> {
+  return api.get<StockStatusByCategoryResponse>('/dashboard/stock-status-by-category');
+}
+
+/** KPI period-over-period deltas (Phase 4, Task B). */
+export async function getKPIDeltas(
+  startDate?: string,
+  endDate?: string,
+): Promise<KPIDeltasResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  return api.get<KPIDeltasResponse>(`/dashboard/kpi-deltas?${params.toString()}`);
+}
+
+/** Most-sold products with trends (Phase 4, Task F). */
+export async function getMostSoldExtended(
+  startDate?: string,
+  endDate?: string,
+  limit = 10,
+): Promise<MostSoldExtendedResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  return api.get<MostSoldExtendedResponse>(`/dashboard/most-sold-extended?${params.toString()}`);
+}
+
+/** Recent activity feed (Phase 4, Task H). */
+export async function getRecentActivity(limit = 20): Promise<RecentActivityResponse> {
+  return api.get<RecentActivityResponse>(`/dashboard/recent-activity?limit=${limit}`);
+}
+
+/**
+ * Stock-moving operation counts for the selected period, grouped by movement
+ * type — feeds the Transactions / Returns / Damage & Quarantine KPI tiles.
+ */
+export async function getOperationsSummary(
+  startDate?: string,
+  endDate?: string,
+): Promise<OperationsSummaryResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  const qs = params.toString();
+  return api.get<OperationsSummaryResponse>(`/dashboard/operations-summary${qs ? `?${qs}` : ''}`);
 }
 
 export async function getProductInventory(productId: string): Promise<ProductInventoryResponse> {

@@ -811,3 +811,37 @@ body {
   color: var(--it-green-text);
   border-color: var(--it-green);
 }
+
+/* -- Category donut two-column layout (parity with web; chart ~45% / legend ~55%) -- */
+@media (max-width: 560px) {
+  .it-donut-layout {
+    flex-direction: column;
+  }
+  .it-donut-chart {
+    flex: 1 1 auto !important;
+    width: 100%;
+    min-height: 220px;
+  }
+  .it-donut-legend {
+    width: 100%;
+  }
+}
+
+/* -- Desktop KPI tile grid (parity with web Task C) -- */
+.desktop-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 24px;
+  align-items: stretch;
+}
+@media (max-width: 1279px) and (min-width: 768px) {
+  .desktop-kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 767px) {
+  .desktop-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
