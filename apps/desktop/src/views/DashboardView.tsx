@@ -725,11 +725,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           style={{ marginBottom: '16px' }}
           data-testid="dashboard-action-error"
         >
-          <AlertTriangle size={16} aria-hidden="true" />
-          <span>{error}</span>
-          <Button variant="primary" onClick={onRetry} size="sm">
-            Retry
-          </Button>
+          <div
+            data-testid="error-state"
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}
+          >
+            <AlertTriangle size={16} aria-hidden="true" />
+            <span>{error}</span>
+            <Button variant="primary" onClick={onRetry} size="sm">
+              Retry
+            </Button>
+          </div>
         </div>
       )}
 

@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Store, CreateStoreInput, UpdateStoreInput, Device } from '../types/store';
+import * as self from './tauriStoreService';
 
 /**
  * Check if current runtime environment is inside a Tauri shell.
@@ -51,7 +52,7 @@ async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T 
  * Falls back to central API HTTP request when running in browser mode.
  */
 export async function getStores(): Promise<Store[]> {
-  if (isTauriEnvironment()) {
+  if (self.isTauriEnvironment()) {
     try {
       const stores = await invoke<Store[]>('get_stores');
       return stores;
@@ -105,7 +106,7 @@ function _dispatchStoresUpdated(): void {
  * Create a new store record.
  */
 export async function createStore(input: CreateStoreInput): Promise<Store> {
-  if (isTauriEnvironment()) {
+  if (self.isTauriEnvironment()) {
     try {
       const created = await invoke<Store>('create_store', { input });
       // Mirror the new store to the server so a later sync pull won't replace
@@ -138,7 +139,7 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
  * Update existing store name & address (code/id remain immutable).
  */
 export async function updateStore(input: UpdateStoreInput): Promise<Store> {
-  if (isTauriEnvironment()) {
+  if (self.isTauriEnvironment()) {
     try {
       const updated = await invoke<Store>('update_store', { input });
       // Keep the server's store row in sync so renames survive refresh/sync pulls.
@@ -173,7 +174,7 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
  * Activate or deactivate a store location.
  */
 export async function toggleStoreActive(id: string, is_active: boolean): Promise<Store> {
-  if (isTauriEnvironment()) {
+  if (self.isTauriEnvironment()) {
     try {
       const toggled = await invoke<Store>('toggle_store_active', {
         id,
@@ -210,7 +211,7 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
  * The registered device_id is then used in the login flow.
  */
 export async function registerDevice(storeId: string, deviceName: string): Promise<Device> {
-  if (isTauriEnvironment()) {
+  if (self.isTauriEnvironment()) {
     try {
       return await invoke<Device>('register_device', {
         storeId,

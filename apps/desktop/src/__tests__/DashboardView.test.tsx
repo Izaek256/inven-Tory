@@ -464,8 +464,8 @@ describe('DashboardView — Analytics Dashboard', () => {
     });
 
     // Verify that product names are displayed, not raw IDs
-    expect(screen.getByText('Widget Alpha')).toBeInTheDocument();
-    expect(screen.getByText('Gadget Beta')).toBeInTheDocument();
+    expect(screen.getAllByText('Widget Alpha')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('Gadget Beta')[0]).toBeInTheDocument();
     expect(screen.queryByText('PROD-1')).not.toBeInTheDocument();
     expect(screen.queryByText('PROD-2')).not.toBeInTheDocument();
   });
