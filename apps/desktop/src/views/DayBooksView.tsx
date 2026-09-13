@@ -22,6 +22,7 @@ import { Store } from '../types/store';
 import {
   getLocalTransactions,
   getStockBalance,
+  getStockBalancesForStore,
   updateTransaction,
   deleteTransaction,
 } from '../services/tauriTransactionService';
@@ -34,7 +35,15 @@ import {
   type DayBookEntryForSheet,
   type BalanceSheetRow,
 } from '../utils/balanceSheetUtils';
-import { Button, Badge, DataTable, EmptyState, ColumnDef, type BadgeStatus } from '@invenTory/ui';
+import {
+  Button,
+  Badge,
+  DataTable,
+  EmptyState,
+  SearchInput,
+  ColumnDef,
+  type BadgeStatus,
+} from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 const DAYBOOKS_CACHE_PREFIX = 'inven_tory_daybooks_';
@@ -152,17 +161,32 @@ function _buildProductMap(products: { id: string; name: string }[]): Map<string,
   return map;
 }
 
+/** Movement types that update the true stock but are NOT shown as Day Book entries. */
+const DAY_BOOK_HIDDEN_MOVEMENT_TYPES = new Set<string>([
+  'ADJUSTMENT', // Physical Count / recount correction
+  'RETURN',
+  'DAMAGE',
+]);
+
 function _buildLocalDayBooks(
   transactions: InventoryTransaction[],
   storeId: string,
   productMap: Map<string, string>,
+  /** Actual current stock balances from stock_balances table (ground truth).
+   *  Used to anchor the running-balance calculation so that stock seeded via
+   *  server sync (which updates stock_balances directly without creating a
+   *  local inventory_transactions row) is properly reflected. */
+  currentBalances?: Map<string, number>,
 ): { dayBooks: DayBook[]; detailMap: Map<string, DayBookDetail> } {
-  const storeTxns = transactions
+  // All store-scoped transactions, sorted chronologically — includes hidden types so
+  // their quantity_delta is reflected in the running balance, even though they never
+  // become visible Day Book entries (Task A + Phase 3 Task E.5.2).
+  const allStoreTxns = transactions
     .filter((t) => t.store_id === storeId)
     .sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
 
   const byDate = new Map<string, InventoryTransaction[]>();
-  for (const t of storeTxns) {
+  for (const t of allStoreTxns) {
     const d = _toDateStr(t.occurred_at);
     const existing = byDate.get(d) ?? [];
     existing.push(t);
@@ -172,9 +196,35 @@ function _buildLocalDayBooks(
   const dayBooks: DayBook[] = [];
   const detailMap = new Map<string, DayBookDetail>();
 
-  // Carry per-product running totals across days so opening balances are correct.
-  // Key: productId → cumulative quantity_delta from all prior days.
+  // ── Anchor carry-over to actual stock_balances ───────────────────────────
+  // The stock_balances table is updated by the Rust layer on every write AND
+  // by server sync pulls (upsert_stock_balance_from_server).  The local
+  // inventory_transactions log only covers locally-recorded operations; stock
+  // that arrived via sync pull has no corresponding transaction row.
+  //
+  // To avoid running-balance drift we compute the "pre-transaction seed":
+  //   seed[productId] = currentBalance - sum(all local transaction deltas)
+  //
+  // This seed is used as the starting carryOver so that the forward replay
+  // always produces a balance that matches stock_balances at the end.
   const carryOver = new Map<string, number>();
+
+  if (currentBalances && currentBalances.size > 0) {
+    // Sum all transaction deltas per product
+    const totalDeltas = new Map<string, number>();
+    for (const t of allStoreTxns) {
+      totalDeltas.set(t.product_id, (totalDeltas.get(t.product_id) ?? 0) + t.quantity_delta);
+    }
+    // Seed = currentBalance - totalDelta (what the balance was before any local tx)
+    for (const [productId, currentQty] of currentBalances) {
+      const delta = totalDeltas.get(productId) ?? 0;
+      const seed = currentQty - delta;
+      if (seed !== 0) {
+        carryOver.set(productId, seed);
+      }
+    }
+  }
+  // If no currentBalances provided, carryOver starts at 0 (original behaviour)
 
   // Process dates in chronological order so carry-over accumulates correctly.
   const sortedDates = [...byDate.keys()].sort();
@@ -183,18 +233,34 @@ function _buildLocalDayBooks(
     const txns = byDate.get(date)!;
     const id = `local-${storeId}-${date}`;
 
-    // Opening balance for this day = sum of all deltas for each product up to (but not including) today.
-    // We compute a single aggregate opening balance across all products for the DayBook header row.
+    // Visible entries exclude hidden movement types (adjustments, returns, damage).
+
+    // Opening/closing balances reflect the true stock after hidden ops have
+    // already recalibrated the underlying stock. All store-scoped txns
+    // (visible + hidden) feed into carryOver so the ledger math never produces
+    // a balance that ignores a prior adjustment/return/damage.
     const openingBalanceAggregate = [...carryOver.values()].reduce((s, v) => s + v, 0);
 
-    // Per-product running balance starting from carry-over
+    // Per-product running balance starting from carry-over (includes hidden-op deltas).
     const productRunning = new Map<string, number>(carryOver);
 
-    const entries: DayBookEntry[] = txns.map((t) => {
+    // Walk every transaction (visible + hidden) in chronological order and record
+    // the running balance immediately AFTER each visible entry. Hidden ops
+    // (recounts/adjustments/returns/damage) update the running balance too, so a
+    // visible entry that happens later on the same day always reflects the true
+    // per-product stock position.
+    //
+    // The running balance is PER-PRODUCT so that each entry shows the actual
+    // stock position for that specific product. This is critical after a recount
+    // or adjustment — the running balance must reflect the true stock for that
+    // product, not an aggregate across all products.
+    const entries: DayBookEntry[] = [];
+    for (const t of txns) {
       const before = productRunning.get(t.product_id) ?? 0;
       const after = before + t.quantity_delta;
       productRunning.set(t.product_id, after);
-      return {
+      if (DAY_BOOK_HIDDEN_MOVEMENT_TYPES.has(t.movement_type)) continue;
+      entries.push({
         id: t.transaction_id,
         transaction_id: t.transaction_id,
         movement_type: t.movement_type,
@@ -204,10 +270,9 @@ function _buildLocalDayBooks(
         reference_number: t.reference_number,
         reason_code: t.reason_code,
         occurred_at: t.occurred_at,
-        // running_balance is per-product: shows that product's stock level after this entry
         running_balance: after,
-      };
-    });
+      });
+    }
 
     const closingBalanceAggregate = [...productRunning.values()].reduce((s, v) => s + v, 0);
 
@@ -293,6 +358,8 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState<boolean>(false);
+  const [receiptSearch, setReceiptSearch] = useState('');
+  const [receiptMatchTxIds, setReceiptMatchTxIds] = useState<Set<string>>(new Set());
   const [localDetailMap] = useState<Map<string, DayBookDetail>>(new Map());
 
   // Entry-level edit/delete state (for the detail entry table)
@@ -333,35 +400,45 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
       setError(null);
       setIsOffline(false);
 
+      // ── OFFLINE-FIRST: always build from local SQLite first ──────────────
+      // The UI becomes interactive immediately from local data; the server
+      // merge happens in the background and does NOT block or replace local
+      // entries for dates that already exist locally.
       try {
-        const resp = await apiFetch(`/stores/${storeId}/day-books?limit=30&offset=0`);
-        if (!resp.ok) {
-          const body = await resp.json().catch(() => ({ detail: resp.statusText }));
-          const errDetail = (body as { detail?: string }).detail ?? resp.statusText;
-          // 401/403 — authentication issue, guide user to re-authenticate
-          if (resp.status === 401 || resp.status === 403) {
-            throw new Error(
-              `Authentication required. Please log in to view server day books. (${errDetail})`,
-            );
+        const [localTxns, products, currentBalances] = await Promise.all([
+          getLocalTransactions().catch(() => [] as InventoryTransaction[]),
+          getProducts().catch(() => [] as { id: string; name: string }[]),
+          getStockBalancesForStore(storeId).catch(() => new Map<string, number>()),
+        ]);
+        const productMap = _buildProductMap(products);
+        const { dayBooks: localDayBooks, detailMap } = _buildLocalDayBooks(
+          localTxns,
+          storeId,
+          productMap,
+          currentBalances,
+        );
+
+        // Show local data immediately — no spinner wait for server
+        if (localDayBooks.length > 0) {
+          setDayBooks(localDayBooks);
+          _safeWriteCache(_cacheKey(DAYBOOKS_CACHE_PREFIX, storeId), JSON.stringify(localDayBooks));
+          for (const [key, value] of detailMap) {
+            localDetailMap.set(key, value);
           }
-          throw new Error(errDetail);
-        }
-        const data = (await resp.json()) as { day_books: DayBook[] };
-        const serverDayBooks = data.day_books ?? [];
-        setDayBooks(serverDayBooks);
-        _safeWriteCache(_cacheKey(DAYBOOKS_CACHE_PREFIX, storeId), JSON.stringify(serverDayBooks));
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-
-        // Distinguish auth errors from genuine offline/network issues
-        if (errMsg.toLowerCase().includes('authentication required')) {
-          setError(errMsg);
-          setIsOffline(false);
+          setLoading(false);
         } else {
-          setError(errMsg);
-          setIsOffline(true);
+          // No local data — show cache while waiting for server
+          const cached = _safeReadCache(_cacheKey(DAYBOOKS_CACHE_PREFIX, storeId));
+          if (cached) {
+            try {
+              setDayBooks(JSON.parse(cached) as DayBook[]);
+            } catch {
+              // ignore corrupt cache
+            }
+          }
         }
-
+      } catch {
+        // Non-fatal — fall through to server fetch
         const cached = _safeReadCache(_cacheKey(DAYBOOKS_CACHE_PREFIX, storeId));
         if (cached) {
           try {
@@ -370,36 +447,65 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
             // ignore corrupt cache
           }
         }
+      }
 
-        try {
-          const [localTxns, products] = await Promise.all([
-            getLocalTransactions().catch(() => [] as InventoryTransaction[]),
-            getProducts().catch(() => [] as { id: string; name: string }[]),
-          ]);
-          const productMap = _buildProductMap(products);
-          const { dayBooks: localDayBooks, detailMap } = _buildLocalDayBooks(
-            localTxns,
-            storeId,
-            productMap,
-          );
-          if (localDayBooks.length > 0) {
-            setDayBooks((prev) => {
-              const merged = [...localDayBooks];
-              for (const db of prev) {
-                if (!merged.some((m) => m.id === db.id)) {
-                  merged.push(db);
-                }
-              }
-              merged.sort((a, b) => b.book_date.localeCompare(a.book_date));
-              return merged;
-            });
-            for (const [key, value] of detailMap) {
-              localDetailMap.set(key, value);
-            }
+      // ── BACKGROUND SERVER MERGE: append server-only dates ────────────────
+      // Runs after local data is already shown. Only adds dates that have no
+      // local transactions (i.e., entries that exist only on the server from
+      // another device or a previous session before offline mode was available).
+      try {
+        const resp = await apiFetch(`/stores/${storeId}/day-books?limit=30&offset=0`);
+        if (!resp.ok) {
+          const body = await resp
+            .json()
+            .catch(() => ({ detail: resp.statusText }) as { detail?: string });
+          const errDetail = body.detail ?? resp.statusText;
+          if (resp.status === 401 || resp.status === 403) {
+            // Auth error — surface it but keep local data visible
+            setError(
+              `Authentication required. Please log in to view server day books. (${errDetail})`,
+            );
           }
-        } catch {
-          // non-fatal local fallback
+          // Non-2xx but not auth — silently stay with local data (offline / 404)
+          return;
         }
+        const data = (await resp.json()) as { day_books: DayBook[] };
+        const serverDayBooks = data.day_books ?? [];
+
+        // Re-build local books so the merge uses the freshest local state
+        const [localTxns2, products2, currentBalances2] = await Promise.all([
+          getLocalTransactions().catch(() => [] as InventoryTransaction[]),
+          getProducts().catch(() => [] as { id: string; name: string }[]),
+          getStockBalancesForStore(storeId).catch(() => new Map<string, number>()),
+        ]);
+        const productMap2 = _buildProductMap(products2);
+        const { dayBooks: localDayBooks2, detailMap: detailMap2 } = _buildLocalDayBooks(
+          localTxns2,
+          storeId,
+          productMap2,
+          currentBalances2,
+        );
+
+        // Local entries take absolute precedence — server dates are only added
+        // if there is no local transaction for that date.
+        // Normalise book_date to YYYY-MM-DD for comparison (server may return
+        // full ISO datetime strings like "2026-09-12T00:00:00").
+        const merged = [...localDayBooks2];
+        const localDates = new Set(localDayBooks2.map((d) => _toDateStr(d.book_date)));
+        for (const sdb of serverDayBooks) {
+          if (!localDates.has(_toDateStr(sdb.book_date))) {
+            merged.push(sdb);
+          }
+        }
+        merged.sort((a, b) => b.book_date.localeCompare(a.book_date));
+        setDayBooks(merged);
+        _safeWriteCache(_cacheKey(DAYBOOKS_CACHE_PREFIX, storeId), JSON.stringify(merged));
+        for (const [key, value] of detailMap2) {
+          localDetailMap.set(key, value);
+        }
+      } catch {
+        // Server unreachable — local data already shown, mark offline
+        setIsOffline(true);
       } finally {
         setLoading(false);
       }
@@ -409,10 +515,34 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
 
   useEffect(() => {
     if (activeStoreId) {
+      // Clear stale list cache so old mixed-ID entries from previous sessions
+      // can never bleed through into the deduplication logic.
+      try {
+        localStorage.removeItem(_cacheKey(DAYBOOKS_CACHE_PREFIX, activeStoreId));
+      } catch {
+        // ignore
+      }
       setSelectedDayBook(null);
       void loadDayBooks(activeStoreId);
     }
   }, [activeStoreId, loadDayBooks]);
+
+  // Also reload when the global store-switch event fires — this handles the
+  // case where the event fires before the activeStoreId state propagates via
+  // context to this component.
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const storeId = (e as CustomEvent<{ storeId: string }>).detail?.storeId;
+      if (storeId) {
+        setSelectedDayBook(null);
+        void loadDayBooks(storeId);
+      }
+    };
+    window.addEventListener('inven-tory:stores-updated', handler);
+    return (): void => {
+      window.removeEventListener('inven-tory:stores-updated', handler);
+    };
+  }, [loadDayBooks]);
 
   const loadDayBookDetail = useCallback(
     async (dayBookId: string): Promise<void> => {
@@ -420,11 +550,87 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
       setError(null);
       setIsOffline(false);
 
+      // ── OFFLINE-FIRST for local IDs: never hit the server ────────────────
+      // Day books with IDs starting with "local-" are computed entirely from
+      // the local SQLite transaction log.  Fetching them from the server
+      // would always yield 404 because they don't exist there.
+      if (dayBookId.startsWith('local-')) {
+        try {
+          // 1. In-memory map (populated during this session)
+          const inMemory = localDetailMap.get(dayBookId);
+          if (inMemory) {
+            setSelectedDayBook(inMemory);
+            _safeWriteCache(
+              _cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId),
+              JSON.stringify(inMemory),
+            );
+            setLoading(false);
+            return;
+          }
+
+          // 2. Rebuild from local SQLite (covers component remounts)
+          // Extract storeId from the local day book ID: "local-<storeId>-YYYY-MM-DD"
+          // The date is always the last 10 characters (YYYY-MM-DD); storeId is
+          // everything between the leading "local-" prefix and the trailing date segment.
+          const dateSegment = dayBookId.slice(-10); // "YYYY-MM-DD"
+          const storeId = dayBookId.slice(
+            'local-'.length,
+            dayBookId.length - dateSegment.length - 1,
+          );
+
+          const [localTxns, products, currentBalances] = await Promise.all([
+            getLocalTransactions().catch(() => [] as InventoryTransaction[]),
+            getProducts().catch(() => [] as { id: string; name: string }[]),
+            getStockBalancesForStore(storeId).catch(() => new Map<string, number>()),
+          ]);
+          const productMap = _buildProductMap(products);
+          const { detailMap } = _buildLocalDayBooks(
+            localTxns,
+            storeId,
+            productMap,
+            currentBalances,
+          );
+          const rebuilt = detailMap.get(dayBookId);
+          if (rebuilt) {
+            localDetailMap.set(dayBookId, rebuilt);
+            setSelectedDayBook(rebuilt);
+            _safeWriteCache(
+              _cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId),
+              JSON.stringify(rebuilt),
+            );
+            setLoading(false);
+            return;
+          }
+
+          // 3. Last resort: localStorage cache (survives across app restarts)
+          const cachedLocal = _safeReadCache(_cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId));
+          if (cachedLocal) {
+            try {
+              setSelectedDayBook(JSON.parse(cachedLocal) as DayBookDetail);
+              setLoading(false);
+              return;
+            } catch {
+              // ignore corrupt cache
+            }
+          }
+
+          setError('Day book detail not found in local storage.');
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        } finally {
+          setLoading(false);
+        }
+        return;
+      }
+
+      // ── Server-side day book IDs: fetch from server, reconcile with local ─
       try {
         const resp = await apiFetch(`/day-books/${dayBookId}`);
         if (!resp.ok) {
-          const body = await resp.json().catch(() => ({ detail: resp.statusText }));
-          const errDetail = (body as { detail?: string }).detail ?? resp.statusText;
+          const body = await resp
+            .json()
+            .catch(() => ({ detail: resp.statusText }) as { detail?: string });
+          const errDetail = body.detail ?? resp.statusText;
           if (resp.status === 401 || resp.status === 403) {
             throw new Error(
               `Authentication required. Please log in to view day book details. (${errDetail})`,
@@ -433,8 +639,27 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
           throw new Error(errDetail);
         }
         const data = (await resp.json()) as DayBookDetail;
-        setSelectedDayBook(data);
-        _safeWriteCache(_cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId), JSON.stringify(data));
+
+        // Reconcile server payload with local transactions so that entries
+        // deleted locally (but still present on the server until the next sync)
+        // never reappear in the detail view.
+        try {
+          const localTxns = await getLocalTransactions().catch(() => [] as InventoryTransaction[]);
+          const localIds = new Set(localTxns.map((t) => t.transaction_id));
+          const reconciled: DayBookDetail = {
+            ...data,
+            entries: (data.entries ?? []).filter((e) => localIds.has(e.transaction_id)),
+          };
+          setSelectedDayBook(reconciled);
+          _safeWriteCache(
+            _cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId),
+            JSON.stringify(reconciled),
+          );
+        } catch {
+          // If reconciliation fails, fall back to the raw server payload
+          setSelectedDayBook(data);
+          _safeWriteCache(_cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId), JSON.stringify(data));
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         if (errMsg.toLowerCase().includes('authentication required')) {
@@ -606,48 +831,133 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
     });
   }, []);
 
+  // After an entry edit/delete the authoritative local transaction log is the
+  // source of truth. Invalidate the day-book payload caches (so a revisit can't
+  // resurrect removed entries) and rebuild the running balances from scratch.
+  const refreshDetailAfterMutation = useCallback(
+    async (dayBookId: string): Promise<void> => {
+      try {
+        localStorage.removeItem(_cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId));
+      } catch {
+        // ignore
+      }
+      if (!selectedDayBook) return;
+      try {
+        localStorage.removeItem(_cacheKey(DAYBOOKS_CACHE_PREFIX, selectedDayBook.store_id));
+      } catch {
+        // ignore
+      }
+
+      // Always rebuild from local SQLite transactions FIRST so that deletions
+      // and edits are reflected immediately in the UI — even for server-side
+      // day books whose entries still live on the server until the next sync.
+      // Without this, a deleted entry would reappear because the server
+      // still has it.
+      try {
+        const [localTxns, products, currentBalances] = await Promise.all([
+          getLocalTransactions().catch(() => [] as InventoryTransaction[]),
+          getProducts().catch(() => [] as { id: string; name: string }[]),
+          getStockBalancesForStore(selectedDayBook.store_id).catch(() => new Map<string, number>()),
+        ]);
+        const productMap = _buildProductMap(products);
+        const { dayBooks, detailMap } = _buildLocalDayBooks(
+          localTxns,
+          selectedDayBook.store_id,
+          productMap,
+          currentBalances,
+        );
+        if (dayBooks.length > 0) {
+          setDayBooks((prev) => {
+            // Local books are authoritative. Keep any prev entries whose date
+            // is NOT covered by the fresh local rebuild (server-only dates).
+            const localDates = new Set(dayBooks.map((d) => _toDateStr(d.book_date)));
+            const serverOnly = prev.filter((p) => !localDates.has(_toDateStr(p.book_date)));
+            const merged = [...dayBooks, ...serverOnly];
+            merged.sort((a, b) => b.book_date.localeCompare(a.book_date));
+            return merged;
+          });
+        }
+        const rebuilt = detailMap.get(dayBookId);
+        if (rebuilt) {
+          localDetailMap.set(dayBookId, rebuilt);
+          setSelectedDayBook(rebuilt);
+          // Persist the rebuilt detail to localStorage so that deleted/edited
+          // entries stay gone even after the component unmounts and remounts
+          // (e.g. user navigates to Dashboard and back to Day Books).
+          _safeWriteCache(
+            _cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId),
+            JSON.stringify(rebuilt),
+          );
+        }
+      } catch {
+        // Non-fatal — the last known data remains visible.
+      }
+
+      // For server-side day books (id does NOT start with "local-"), also
+      // re-fetch from the server so any server-side changes (e.g. other
+      // users' edits) are eventually reflected. The local rebuild above
+      // already removed any locally-deleted entries.
+      if (!dayBookId.startsWith('local-')) {
+        try {
+          const resp = await apiFetch(`/day-books/${dayBookId}`);
+          if (resp.ok) {
+            const data = (await resp.json()) as DayBookDetail;
+            // Only adopt server data if we don't already have a fresher local
+            // rebuild (local rebuild takes precedence for immediate UX).
+            setSelectedDayBook((prev) => {
+              // If the local rebuild produced data for this day book, keep it.
+              if (localDetailMap.has(dayBookId)) {
+                return localDetailMap.get(dayBookId) ?? prev;
+              }
+              return data;
+            });
+            // CRITICAL: Only write server data to cache if we do NOT have a
+            // local rebuild. The local rebuild reflects deletions/edits that
+            // the server doesn't know about yet. Writing stale server data
+            // here would resurrect deleted entries on the next visit.
+            if (!localDetailMap.has(dayBookId)) {
+              _safeWriteCache(
+                _cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, dayBookId),
+                JSON.stringify(data),
+              );
+            }
+            // Also refresh the day books list from the server
+            const listResp = await apiFetch(
+              `/stores/${selectedDayBook.store_id}/day-books?limit=30&offset=0`,
+            );
+            if (listResp.ok) {
+              const listData = (await listResp.json()) as { day_books: DayBook[] };
+              setDayBooks(listData.day_books ?? []);
+              _safeWriteCache(
+                _cacheKey(DAYBOOKS_CACHE_PREFIX, selectedDayBook.store_id),
+                JSON.stringify(listData.day_books ?? []),
+              );
+            }
+            return;
+          }
+        } catch {
+          // Fall through — local rebuild already shown
+        }
+      }
+    },
+    [selectedDayBook, localDetailMap, apiFetch],
+  );
+
   const handleSaveEntryEdit = useCallback(
     async (entry: DayBookEntry): Promise<void> => {
       if (!selectedDayBook) return;
       const qtyDelta = Number(editEntryValues.quantity_delta ?? entry.quantity_delta);
+      const newReference = String(editEntryValues.reference_number ?? '').trim() || null;
       setIsSavingEntryEdit(true);
       try {
         await updateTransaction({
           transaction_id: entry.transaction_id,
           quantity_delta: qtyDelta,
-          reference_number: String(editEntryValues.reference_number ?? '').trim() || null,
+          reference_number: newReference,
           reason_code: entry.reason_code ?? null,
         });
 
-        setSelectedDayBook((prev) => {
-          if (!prev) return prev;
-
-          const updated = prev.entries.map((e) =>
-            e.id === entry.id
-              ? {
-                  ...e,
-                  quantity_delta: qtyDelta,
-                  reference_number: String(editEntryValues.reference_number ?? '').trim() || null,
-                }
-              : e,
-          );
-
-          const sorted = [...updated].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
-
-          // Rebalance per-product from opening balance (0 for server books where
-          // opening_balance is an aggregate; correct for local books).
-          // We use product-scoped running totals so the Balance column shows the
-          // per-product stock level, not a meaningless cross-product sum.
-          const productRunning = new Map<string, number>();
-          const rebalanced = sorted.map((e) => {
-            const before = productRunning.get(e.product_id) ?? 0;
-            const after = before + e.quantity_delta;
-            productRunning.set(e.product_id, after);
-            return { ...e, running_balance: after };
-          });
-
-          return { ...prev, entries: rebalanced };
-        });
+        await refreshDetailAfterMutation(selectedDayBook.id);
         setSuccessMessage('Entry updated');
         setTimeout(() => setSuccessMessage(null), 3000);
       } catch (err) {
@@ -657,7 +967,7 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
         setEditingEntryId(null);
       }
     },
-    [editEntryValues, selectedDayBook],
+    [editEntryValues, selectedDayBook, refreshDetailAfterMutation],
   );
 
   const handleDeleteEntry = useCallback(
@@ -665,23 +975,23 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
       if (!selectedDayBook) return;
       try {
         await deleteTransaction(entry.transaction_id);
-        setSelectedDayBook((prev) => {
-          if (!prev) return prev;
-          const remaining = prev.entries.filter((e) => e.id !== entry.id);
 
-          const sorted = [...remaining].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at));
+        // Immediately remove the entry from the local detail state so the
+        // deletion is reflected in the UI instantly — even before the server
+        // sync completes. This also prevents the entry from reappearing if
+        // the user navigates away and back before the sync finishes.
+        const updatedEntries = (selectedDayBook.entries ?? []).filter(
+          (e) => e.transaction_id !== entry.transaction_id,
+        );
+        const updatedDetail: DayBookDetail = { ...selectedDayBook, entries: updatedEntries };
+        setSelectedDayBook(updatedDetail);
+        localDetailMap.set(selectedDayBook.id, updatedDetail);
+        _safeWriteCache(
+          _cacheKey(DAYBOOK_DETAIL_CACHE_PREFIX, selectedDayBook.id),
+          JSON.stringify(updatedDetail),
+        );
 
-          // Per-product rebalance (same logic as handleSaveEntryEdit)
-          const productRunning = new Map<string, number>();
-          const rebalanced = sorted.map((e) => {
-            const before = productRunning.get(e.product_id) ?? 0;
-            const after = before + e.quantity_delta;
-            productRunning.set(e.product_id, after);
-            return { ...e, running_balance: after };
-          });
-
-          return { ...prev, entries: rebalanced };
-        });
+        await refreshDetailAfterMutation(selectedDayBook.id);
         setDeletingEntryId(null);
         setSuccessMessage('Entry deleted');
         setTimeout(() => setSuccessMessage(null), 3000);
@@ -691,7 +1001,7 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
         setIsDeletingEntry(false);
       }
     },
-    [selectedDayBook],
+    [selectedDayBook, refreshDetailAfterMutation, localDetailMap],
   );
 
   // ── Copy balance sheet text to clipboard ─────────────────────────────────
@@ -721,6 +1031,35 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
     setCopiedText(true);
     setTimeout(() => setCopiedText(false), 2500);
   }, [balanceSheetText]);
+
+  /** Filter day book entries by receipt number (Task E.1). */
+  const handleReceiptSearch = useCallback((): void => {
+    if (!selectedDayBook || !receiptSearch.trim()) {
+      setReceiptMatchTxIds(new Set());
+      return;
+    }
+    const term = receiptSearch.trim();
+    const matched = new Set<string>();
+    for (const entry of selectedDayBook.entries) {
+      if (entry.reference_number && entry.reference_number.includes(term)) {
+        matched.add(entry.transaction_id);
+      }
+    }
+    setReceiptMatchTxIds(matched);
+  }, [selectedDayBook, receiptSearch]);
+
+  // Re-run the receipt filter whenever the term or the loaded day book changes
+  useEffect(() => {
+    handleReceiptSearch();
+  }, [handleReceiptSearch]);
+
+  // All line items belonging to receipts that match the search term — a single
+  // receipt can cover multiple products/line items, so they surface together.
+  const receiptFilteredEntries = useMemo(() => {
+    if (!selectedDayBook) return [];
+    if (receiptMatchTxIds.size === 0) return selectedDayBook.entries;
+    return selectedDayBook.entries.filter((e) => receiptMatchTxIds.has(e.transaction_id));
+  }, [selectedDayBook, receiptMatchTxIds]);
 
   const formatDate = (dateString: string): string => {
     const date = new Date(dateString);
@@ -1316,11 +1655,69 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
               padding: '24px',
             }}
           >
-            <h3 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '16px' }}>
-              Daily Operations ({selectedDayBook.entries.length} entries)
-            </h3>
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+                marginBottom: '16px',
+                flexWrap: 'wrap',
+              }}
+            >
+              <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>
+                Daily Operations (
+                {receiptSearch.trim()
+                  ? receiptFilteredEntries.length
+                  : selectedDayBook.entries.length}{' '}
+                entries)
+              </h3>
+              <div style={{ flex: 1, minWidth: '220px', maxWidth: '360px', marginLeft: 'auto' }}>
+                <SearchInput
+                  placeholder="Search by receipt number..."
+                  value={receiptSearch}
+                  onChange={(e) => setReceiptSearch(e.target.value)}
+                  data-testid="daybook-receipt-search"
+                />
+              </div>
+              {receiptSearch.trim() && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setReceiptSearch('')}
+                  data-testid="daybook-receipt-search-clear"
+                >
+                  <X size={14} /> Clear
+                </Button>
+              )}
+            </div>
+            {receiptSearch.trim() && receiptMatchTxIds.size === 0 && (
+              <div
+                className="it-toast"
+                style={{ marginBottom: '16px' }}
+                data-testid="daybook-receipt-no-match"
+              >
+                <AlertCircle size={16} aria-hidden="true" />
+                <span>
+                  No line items in this day book match receipt number “{receiptSearch.trim()}”.
+                </span>
+              </div>
+            )}
+            {receiptSearch.trim() && receiptMatchTxIds.size > 0 && (
+              <div
+                className="it-toast it-toast--success"
+                style={{ marginBottom: '16px' }}
+                data-testid="daybook-receipt-match-count"
+              >
+                <CheckCircle size={16} aria-hidden="true" />
+                <span>
+                  {receiptMatchTxIds.size} receipt{receiptMatchTxIds.size > 1 ? 's' : ''} matched —
+                  showing all {receiptFilteredEntries.length} line items.
+                </span>
+              </div>
+            )}
 
-            {selectedDayBook.entries.length === 0 ? (
+            {(receiptSearch.trim() ? receiptFilteredEntries : selectedDayBook.entries).length ===
+            0 ? (
               <EmptyState
                 heading="No operations recorded"
                 body="Stock operations will appear here as they are performed."
@@ -1328,7 +1725,7 @@ export const DayBooksView: React.FC<DayBooksViewProps> = ({ stores }) => {
             ) : (
               <DataTable
                 columns={entryColumns}
-                rows={selectedDayBook.entries}
+                rows={receiptSearch.trim() ? receiptFilteredEntries : selectedDayBook.entries}
                 rowKey={(entry) => entry.id}
                 data-testid="day-book-entries-table"
               />

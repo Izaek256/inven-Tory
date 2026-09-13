@@ -135,7 +135,7 @@ async def seed() -> None:
     from app.core.config import settings  # reads DATABASE_URL from repo-root .env
     from app.core.security import hash_password
     from app.db import Base  # noqa: F401 — ensures all models are registered
-    from app.models.device import Device  # noqa: F401
+    from app.models.device import Device
     from app.models.store import Store
     from app.models.user import User
 

@@ -242,6 +242,161 @@ fn generate_id(prefix: &str) -> String {
     format!("{}-{:X}", prefix, nanos)
 }
 
+/// Upsert a day book entry for a transaction.
+///
+/// Called after every stock movement so the day_books and day_book_entries
+/// tables are always in sync with inventory_transactions + stock_balances.
+///
+/// Logic:
+///   1. Derive the book_date from the transaction's occurred_at (date only, UTC).
+///   2. Get-or-create the day_books row for (store_id, book_date).
+///   3. Insert the day_book_entries row (or replace if the transaction_id already exists).
+///   4. Recompute and update the day_books.closing_balance from stock_balances.
+///
+/// Hidden movement types (ADJUSTMENT, RETURN, DAMAGE) are excluded from
+/// day_book_entries because they don't appear as visible day book lines, but
+/// the closing balance is still updated so it reflects the true stock position.
+fn upsert_day_book_entry(
+    conn: &Connection,
+    store_id: &str,
+    transaction_id: &str,
+    product_id: &str,
+    movement_type: &str,
+    quantity_delta: i32,
+    stock_bucket: &str,
+    reference_number: Option<&str>,
+    reason_code: Option<&str>,
+    occurred_at: &str,
+) -> Result<(), String> {
+    // Ensure tables exist (idempotent)
+    ensure_day_books_tables(conn)?;
+
+    // Date-only portion of occurred_at (first 10 chars = YYYY-MM-DD)
+    let book_date = &occurred_at[..10.min(occurred_at.len())];
+
+    // ── 1. Get or create the day_books row ───────────────────────────────────
+    let day_book_id: String = {
+        let existing: Option<String> = conn
+            .query_row(
+                "SELECT id FROM day_books WHERE store_id = ?1 AND book_date = ?2",
+                rusqlite::params![store_id, book_date],
+                |row| row.get(0),
+            )
+            .ok();
+
+        if let Some(id) = existing {
+            id
+        } else {
+            let new_id = format!("DB-{}-{}", store_id, book_date);
+            let now = now_iso();
+            conn.execute(
+                "INSERT INTO day_books (id, store_id, book_date, opening_balance, closing_balance, \
+                 balance_sheet_generated, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, 0, 0, 0, ?4, ?5)",
+                rusqlite::params![new_id, store_id, book_date, now, now],
+            )
+            .map_err(|e| format!("Failed to create day_books row: {}", e))?;
+            new_id
+        }
+    };
+
+    // ── 2. Insert / replace day_book_entries (only for visible movement types) ─
+    let hidden = matches!(movement_type, "ADJUSTMENT" | "RETURN" | "DAMAGE");
+    if !hidden {
+        let entry_id = format!("DBE-{}", transaction_id);
+        let now = now_iso();
+        conn.execute(
+            "INSERT INTO day_book_entries \
+             (id, day_book_id, transaction_id, movement_type, product_id, quantity_delta, \
+              stock_bucket, reference_number, reason_code, occurred_at, recorded_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11) \
+             ON CONFLICT(id) DO UPDATE SET \
+               quantity_delta = excluded.quantity_delta, \
+               reference_number = excluded.reference_number, \
+               reason_code = excluded.reason_code",
+            rusqlite::params![
+                entry_id,
+                day_book_id,
+                transaction_id,
+                movement_type,
+                product_id,
+                quantity_delta,
+                stock_bucket,
+                reference_number,
+                reason_code,
+                occurred_at,
+                now,
+            ],
+        )
+        .map_err(|e| format!("Failed to upsert day_book_entries row: {}", e))?;
+    }
+
+    // ── 3. Recompute closing_balance = sum of all AVAILABLE stock for this store ─
+    // We use stock_balances (the authoritative projection) rather than replaying
+    // transaction deltas so the closing balance is always exactly correct.
+    let closing: i32 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(quantity), 0) FROM stock_balances \
+             WHERE store_id = ?1 AND stock_bucket = 'AVAILABLE'",
+            rusqlite::params![store_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    let now2 = now_iso();
+    conn.execute(
+        "UPDATE day_books SET closing_balance = ?1, updated_at = ?2 WHERE id = ?3",
+        rusqlite::params![closing, now2, day_book_id],
+    )
+    .map_err(|e| format!("Failed to update day_books closing_balance: {}", e))?;
+
+    Ok(())
+}
+
+fn ensure_day_books_tables(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS day_books (
+            id              VARCHAR(36)      PRIMARY KEY,
+            store_id        VARCHAR(36)      NOT NULL REFERENCES stores(id),
+            book_date       DATETIME         NOT NULL,
+            opening_balance INTEGER          NOT NULL DEFAULT 0,
+            closing_balance INTEGER,
+            balance_sheet_generated BOOLEAN  NOT NULL DEFAULT 0,
+            balance_sheet_generated_at DATETIME,
+            created_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_day_books_store_date
+            ON day_books (store_id, book_date);
+
+        CREATE TABLE IF NOT EXISTS day_book_entries (
+            id                VARCHAR(36)      PRIMARY KEY,
+            day_book_id       VARCHAR(36)      NOT NULL REFERENCES day_books(id) ON DELETE CASCADE,
+            transaction_id    VARCHAR(36)      NOT NULL REFERENCES inventory_transactions(transaction_id) ON DELETE CASCADE,
+            movement_type     VARCHAR(50)      NOT NULL,
+            product_id        VARCHAR(36)      NOT NULL REFERENCES products(id),
+            quantity_delta    INTEGER          NOT NULL,
+            stock_bucket      VARCHAR(50)      NOT NULL DEFAULT 'AVAILABLE',
+            reference_number  VARCHAR(100),
+            reason_code       VARCHAR(50),
+            notes             TEXT,
+            occurred_at       DATETIME         NOT NULL,
+            recorded_at       DATETIME         NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_day_book_entries_day_book
+            ON day_book_entries (day_book_id);
+
+        CREATE INDEX IF NOT EXISTS idx_day_book_entries_transaction
+            ON day_book_entries (transaction_id);
+
+        CREATE INDEX IF NOT EXISTS idx_day_book_entries_product
+            ON day_book_entries (product_id);",
+    )
+    .map_err(|e| format!("Failed to create day_books tables: {}", e))
+}
+
 pub mod commands {
     use super::*;
 
@@ -544,6 +699,65 @@ pub mod commands {
             registered_at: now,
             last_seen_at: None,
         })
+    }
+
+    /// Return the product catalogue scoped to a specific store.
+    ///
+    /// A product is "available for operation" in a store when it already has a
+    /// stock row in that store (present there), or when it has never been
+    /// allocated to any store (fresh catalogue items that the store can receive
+    /// into). `stock_quantity` is computed ONLY from that store's balances.
+    #[tauri::command]
+    pub fn get_products_by_store(store_id: String) -> Result<Vec<Product>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' AND sb.store_id = ?1 THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
+                 FROM products p \
+                 LEFT JOIN stock_balances sb ON sb.product_id = p.id \
+                 GROUP BY p.id \
+                 HAVING SUM(CASE WHEN sb.store_id = ?1 THEN 1 ELSE 0 END) > 0 \
+                     OR COUNT(sb.rowid) = 0 \
+                 ORDER BY p.name ASC"
+            )
+            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+
+        let prod_iter = stmt
+            .query_map(params![store_id], |row| {
+                let st_int: i32 = row.get(9)?;
+                let active_int: i32 = row.get(10)?;
+                let stock_qty: i32 = row.get(13)?;
+                Ok(Product {
+                    id: row.get(0)?,
+                    sku: row.get(1)?,
+                    name: row.get(2)?,
+                    brand: row.get(3)?,
+                    model: row.get(4)?,
+                    category: row.get(5)?,
+                    unit: row.get(6)?,
+                    barcode: row.get(7)?,
+                    alternate_names: row.get(8)?,
+                    serial_tracking_enabled: st_int != 0,
+                    is_active: active_int != 0,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                    stock_quantity: Some(stock_qty),
+                })
+            })
+            .map_err(|e| format!("Failed to query products: {}", e))?;
+
+        let mut products = Vec::new();
+        for prod in prod_iter {
+            let p = prod.map_err(|e| format!("Failed to read product record: {}", e))?;
+            products.push(p);
+        }
+
+        Ok(products)
     }
 
     #[tauri::command]
@@ -999,6 +1213,20 @@ pub mod commands {
         )
         .map_err(|e| format!("Failed to create outbox event: {}", e))?;
 
+        // Update day_books / day_book_entries (non-fatal — best effort)
+        let _ = upsert_day_book_entry(
+            &conn,
+            &input.store_id,
+            &transaction_id,
+            &input.product_id,
+            "RECEIPT",
+            input.quantity,
+            "AVAILABLE",
+            input.reference_number.as_deref(),
+            input.supplier.as_deref(),
+            &now,
+        );
+
         // Return the created transaction
         Ok(InventoryTransaction {
             transaction_id,
@@ -1054,6 +1282,13 @@ pub mod commands {
         // Validate inputs
         if input.quantity <= 0 {
             return Err("Quantity must be greater than zero.".to_string());
+        }
+
+        // Phase 3 (Task F): a receipt number is compulsory for Sale/Issue.
+        // Enforced here (authoritative local write path), in the UI, and
+        // server-side in the ingestion pipeline.
+        if input.reference_number.as_ref().map_or(true, |s| s.trim().is_empty()) {
+            return Err("Receipt number is required for Sale / Issue transactions.".to_string());
         }
 
         ensure_foreign_keys_exist(&conn, &input.user_id, &input.device_id, &input.store_id, &input.product_id)?;
@@ -1145,6 +1380,20 @@ pub mod commands {
         )
         .map_err(|e| format!("Failed to create outbox event: {}", e))?;
 
+        // Update day_books / day_book_entries (non-fatal)
+        let _ = upsert_day_book_entry(
+            &conn,
+            &input.store_id,
+            &transaction_id,
+            &input.product_id,
+            "SALE",
+            quantity_delta,
+            "AVAILABLE",
+            input.reference_number.as_deref(),
+            None,
+            &now,
+        );
+
         // Return the created transaction
         Ok(InventoryTransaction {
             transaction_id,
@@ -1189,6 +1438,45 @@ pub mod commands {
             .unwrap_or(0);
 
         Ok(balance)
+    }
+
+    /// Return all AVAILABLE stock balances for a given store in a single query.
+    ///
+    /// Used by the Day Books view to anchor running-balance calculations against the
+    /// authoritative stock_balances projection rather than replaying transaction deltas
+    /// from zero — which would be wrong if stock was seeded via server sync pulls
+    /// (upsert_stock_balance_from_server) without a corresponding local transaction row.
+    #[tauri::command]
+    pub fn get_stock_balances_for_store(
+        store_id: String,
+    ) -> Result<Vec<serde_json::Value>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT product_id, quantity FROM stock_balances \
+                 WHERE store_id = ?1 AND stock_bucket = 'AVAILABLE'",
+            )
+            .map_err(|e| format!("Failed to prepare statement: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![store_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+            })
+            .map_err(|e| format!("Failed to query stock balances: {}", e))?;
+
+        let mut balances = Vec::new();
+        for row in rows {
+            let (product_id, quantity) = row.map_err(|e| format!("Row error: {}", e))?;
+            balances.push(serde_json::json!({
+                "product_id": product_id,
+                "quantity": quantity,
+            }));
+        }
+
+        Ok(balances)
     }
 
     /// Process customer or supplier returns (FR-MOV-003, Section 13.3).
@@ -1311,6 +1599,20 @@ pub mod commands {
             ],
         )
         .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        // Update day_books / day_book_entries (RETURN is hidden from entries — non-fatal)
+        let _ = upsert_day_book_entry(
+            &conn,
+            &input.store_id,
+            &transaction_id,
+            &input.product_id,
+            "RETURN",
+            quantity_delta,
+            &bucket_upper,
+            input.reference_number.as_deref(),
+            input.reason.as_deref(),
+            &now,
+        );
 
         Ok(InventoryTransaction {
             transaction_id,
@@ -1492,6 +1794,16 @@ pub mod commands {
             params![outbox_id_2, format!("EVT-{}", inflow_tx_id), payload_2, now],
         )
         .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+
+        // Update day_books closing_balance for both transactions (both DAMAGE = hidden — non-fatal)
+        let _ = upsert_day_book_entry(
+            &conn, &input.store_id, &outflow_tx_id, &input.product_id,
+            "DAMAGE", -input.quantity, &from_upper, None, Some(reason_clean.as_str()), &now,
+        );
+        let _ = upsert_day_book_entry(
+            &conn, &input.store_id, &inflow_tx_id, &input.product_id,
+            "DAMAGE", input.quantity, &to_upper, None, Some(reason_clean.as_str()), &now,
+        );
 
         Ok(vec![
             InventoryTransaction {
@@ -2160,6 +2472,21 @@ pub mod commands {
         )
         .map_err(|e| format!("Failed to create outbox event: {}", e))?;
 
+        // Update day_books / day_book_entries (ADJUSTMENT is hidden from entries
+        // but closing_balance is still updated — non-fatal)
+        let _ = upsert_day_book_entry(
+            &conn,
+            &input.store_id,
+            &tx_id,
+            &input.product_id,
+            "ADJUSTMENT",
+            input.quantity_delta,
+            "AVAILABLE",
+            ref_num.as_deref(),
+            Some(reason_clean.as_str()),
+            &now,
+        );
+
         Ok(InventoryTransaction {
             transaction_id: tx_id,
             store_id: input.store_id,
@@ -2232,6 +2559,14 @@ pub mod commands {
         let (old_delta, store_id, product_id, stock_bucket, movement_type, user_id, device_id, _sync_status) = old;
         let delta_diff = input.quantity_delta - old_delta;
 
+        // Phase 3 (Task F): a receipt number is compulsory for Sale/Issue.
+        // Applies to row edits too — a SALE line cannot be committed without one.
+        if movement_type == "SALE"
+            && input.reference_number.as_ref().map_or(true, |s| s.trim().is_empty())
+        {
+            return Err("Receipt number is required for Sale / Issue transactions.".to_string());
+        }
+
         // Update the transaction row (only mutable fields)
         conn.execute(
             "UPDATE inventory_transactions \
@@ -2291,6 +2626,20 @@ pub mod commands {
         )
         .map_err(|e| format!("Failed to update outbox event: {}", e))?;
 
+        // Update day_books / day_book_entries to reflect the edit (non-fatal)
+        let _ = upsert_day_book_entry(
+            &conn,
+            &store_id,
+            &input.transaction_id,
+            &product_id,
+            &movement_type,
+            input.quantity_delta,
+            &stock_bucket,
+            input.reference_number.as_deref(),
+            input.reason_code.as_deref(),
+            &now,
+        );
+
         // Return the updated transaction
         Ok(InventoryTransaction {
             transaction_id: input.transaction_id.clone(),
@@ -2333,7 +2682,7 @@ pub mod commands {
         let now = now_iso();
 
         // Read the existing transaction
-        let tx = match conn.query_row(
+        let transaction = match conn.query_row(
             "SELECT quantity_delta, store_id, product_id, stock_bucket, \
              movement_type, sync_status, user_id, device_id \
              FROM inventory_transactions WHERE transaction_id = ?1",
@@ -2359,7 +2708,7 @@ pub mod commands {
             Err(e) => return Err(format!("Failed to query transaction: {}", e)),
         };
 
-        let (quantity_delta, store_id, product_id, stock_bucket, movement_type, sync_status, user_id, device_id) = tx;
+        let (quantity_delta, store_id, product_id, stock_bucket, movement_type, sync_status, user_id, device_id) = transaction;
         let outbox_event_id = format!("EVT-{}", transaction_id);
 
         // Reverse the stock_balances delta (add the negative of the original delta)
@@ -2378,6 +2727,12 @@ pub mod commands {
             ],
         )
         .map_err(|e| format!("Failed to reverse stock balance: {}", e))?;
+
+        conn.execute(
+            "DELETE FROM day_book_entries WHERE transaction_id = ?1",
+            params![transaction_id],
+        )
+        .map_err(|e| format!("Failed to delete day-book entries: {}", e))?;
 
         // Delete the transaction row
         conn.execute(
@@ -2426,6 +2781,22 @@ pub mod commands {
             )
             .map_err(|e| format!("Failed to update outbox event status: {}", e))?;
         }
+
+        // Recompute closing_balance on the day_books row for this store+date (non-fatal)
+        let book_date = &now[..10];
+        let day_book_id_candidate = format!("DB-{}-{}", store_id, book_date);
+        let closing: i32 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(quantity), 0) FROM stock_balances \
+                 WHERE store_id = ?1 AND stock_bucket = 'AVAILABLE'",
+                params![store_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        let _ = conn.execute(
+            "UPDATE day_books SET closing_balance = ?1, updated_at = ?2 WHERE id = ?3",
+            params![closing, now, day_book_id_candidate],
+        );
 
         Ok(())
     }
@@ -2659,6 +3030,11 @@ pub mod commands {
 
     /// Update the sync_status (and optionally server_accepted_at) on an
     /// inventory_transactions row after a successful push acknowledgement.
+    ///
+    /// If the row no longer exists (e.g. the transaction was deleted locally
+    /// and replaced by a compensating void event), this is treated as a
+    /// successful no-op instead of an error — the void event carries the
+    /// deletion to the server and there is nothing left to mark on this side.
     #[tauri::command]
     pub fn update_transaction_sync_status(
         transaction_id: String,
@@ -2669,7 +3045,7 @@ pub mod commands {
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        let rows_affected = match server_accepted_at {
+        match server_accepted_at {
             Some(ref ts) => conn.execute(
                 "UPDATE inventory_transactions SET sync_status = ?1, server_accepted_at = ?2 \
                  WHERE transaction_id = ?3",
@@ -2683,9 +3059,8 @@ pub mod commands {
         }
         .map_err(|e| format!("Failed to update transaction sync status: {}", e))?;
 
-        if rows_affected == 0 {
-            return Err(format!("Transaction '{}' not found.", transaction_id));
-        }
+        // Rows that were deleted locally (delete_transaction) simply don't exist
+        // anymore — that's expected and not an error.
         Ok(())
     }
 
@@ -2806,11 +3181,50 @@ pub mod commands {
     }
 
     /// Upsert a store from server data (INSERT ... ON CONFLICT DO UPDATE).
+    /// Upsert a store from server data (INSERT ... ON CONFLICT DO UPDATE).
+    ///
+    /// If the incoming server record is an auto-provisioned placeholder
+    /// (name starts with "Auto Store (") and the local row already has a real
+    /// name, the local name/address/code are preserved so user renames and
+    /// locally created store names are never clobbered by the pull loop.
     #[tauri::command]
     pub fn upsert_store_from_server(store: Store) -> Result<Store, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let incoming_is_placeholder = store.name.starts_with("Auto Store (");
+
+        if incoming_is_placeholder {
+            // Check whether the local row already has a real (non-placeholder) name.
+            let local_is_placeholder: bool = conn
+                .query_row(
+                    "SELECT name FROM stores WHERE id = ?1",
+                    params![store.id],
+                    |row| {
+                        let name: String = row.get(0)?;
+                        Ok(name.starts_with("Auto Store ("))
+                    },
+                )
+                .unwrap_or(true); // If the row doesn't exist yet, treat as placeholder (will insert)
+
+            if !local_is_placeholder {
+                // Local store has a real name — do not overwrite it with the
+                // placeholder. Only update is_active and updated_at.
+                conn.execute(
+                    "UPDATE stores SET is_active = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        if store.is_active { 1 } else { 0 },
+                        store.updated_at,
+                        store.id,
+                    ],
+                )
+                .map_err(|e| format!("Failed to update store status: {}", e))?;
+                return Ok(store);
+            }
+            // Both are placeholders — fall through to normal upsert so at least the
+            // row exists with an ID the FK constraints need.
+        }
 
         conn.execute(
             "INSERT INTO stores (id, code, name, address, is_active, created_at, updated_at) \
@@ -3047,6 +3461,16 @@ pub mod commands {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     println!("[TAURI-LOG] Initializing invenTory Desktop Shell...");
+
+    // Initialize local database schema (create tables if they don't exist)
+    if let Ok(db_path) = get_db_path().into_os_string().into_string() {
+        if let Ok(conn) = Connection::open(&db_path) {
+            if let Err(e) = ensure_day_books_tables(&conn) {
+                eprintln!("[TAURI-LOG] Warning: Failed to initialize day_books tables: {}", e);
+            }
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -3058,6 +3482,7 @@ pub fn run() {
             commands::toggle_store_active,
             commands::register_device,
             commands::get_products,
+            commands::get_products_by_store,
             commands::search_products,
             commands::search_products_fts5,
             commands::create_product,
@@ -3067,6 +3492,7 @@ pub fn run() {
             commands::get_stock_balance,
             commands::sell_stock,
             commands::get_stock_balance_for_bucket,
+            commands::get_stock_balances_for_store,
             commands::return_stock,
             commands::move_stock_bucket,
             commands::adjust_stock,

@@ -178,8 +178,16 @@ async function setupAndCommitRow(qty: number = 1): Promise<void> {
     fireEvent.keyDown(qtyCell, { key: 'Enter', code: 'Enter' });
   });
 
-  // Press Enter on Receipt No. to commit
+  // Fill in the receipt number
   const receiptCell = screen.getByTestId('cell-0-reference_number');
+  await waitFor(() => {
+    expect(receiptCell).toBeInTheDocument();
+  });
+  act(() => {
+    fireEvent.change(receiptCell, { target: { value: 'RCP-TEST-001' } });
+  });
+
+  // Press Enter on Receipt No. to commit
   await act(async () => {
     fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
   });
@@ -198,6 +206,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
     vi.spyOn(tauriAuthService, 'getSession').mockResolvedValue(MOCK_SESSION);
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'getProductsByStore').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
       id: 'SB-STORE-A-PROD-001-AVAILABLE',

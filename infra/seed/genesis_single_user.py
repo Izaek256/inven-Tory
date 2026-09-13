@@ -16,7 +16,7 @@ Also creates:
 This script is IDEMPOTENT for the USER row: if the username already exists in
 Postgres, it UPDATEs it rather than duplicating.  For SQLite it does the same.
 
-Use (from repo root d:\inven-Tory, venv activated):
+Use (from repo root d:\\inven-Tory, venv activated):
 
     python infra/seed/genesis_single_user.py --run-migrations
 
@@ -173,7 +173,7 @@ async def _seed_postgres(
 
     from app.core.security import hash_password
     from app.db import Base  # noqa: F401 — model registration
-    from app.models.device import Device  # noqa: F401
+    from app.models.device import Device
     from app.models.store import Store
     from app.models.user import User
 
@@ -556,7 +556,7 @@ def main() -> int:
     print()
     print("  DESKTOP login        → username + password (any device, no reg)")
     print(f"    Username : {vals['username']}")
-    print(f"    (Offline login works because SQLite pin_hash was set.)")
+    print("    (Offline login works because SQLite pin_hash was set.)")
     print()
     return 0
 

@@ -50,7 +50,7 @@ describe('Desktop Shell Application', () => {
     expect(screen.getByTestId('pending-sync-count')).toHaveTextContent('0');
 
     await waitFor(() => {
-      expect(screen.getByTestId('stores-table')).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
     });
   });
 
@@ -58,7 +58,7 @@ describe('Desktop Shell Application', () => {
     renderWithProviders(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('stores-table')).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
     });
 
     expect(screen.getByTestId('nav-dashboard')).toBeInTheDocument();
@@ -98,13 +98,12 @@ describe('Desktop Shell Application', () => {
     renderWithProviders(<App />);
 
     await waitFor(() => {
-      expect(screen.getByTestId('stores-table')).toBeInTheDocument();
+      expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
     });
 
-    expect(screen.getAllByText('ALPHA').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Store Alpha (Main Flagship)').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('BETA').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Store Beta (Downtown)').length).toBeGreaterThan(0);
+    // The Dashboard now shows analytics, not a store table
+    // Store management has moved to Settings
+    expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
   });
 
   it('handles store loading errors gracefully', async () => {

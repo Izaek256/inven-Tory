@@ -66,14 +66,31 @@ async def tables(engine: AsyncEngine) -> AsyncGenerator[None, None]:
         await conn.run_sync(Base.metadata.drop_all)
 
 
+async def _clean_db(session: AsyncSession) -> None:
+    """Delete all rows from every table for test isolation.
+
+    The in-memory SQLite engine is session-scoped and tests call
+    ``db_session.commit()`` at the end of their seed phase, so committed rows
+    persist across tests within the same session.  Without this cleanup,
+    globally-scoped endpoints (like /stock-status-by-category and
+    /most-sold-extended) leak earlier tests' data into later ones.
+    Tables are cleared in reverse FK-dependency order so deletes never
+    violate a constraint.
+    """
+    for table in reversed(Base.metadata.sorted_tables):
+        await session.execute(table.delete())
+    await session.commit()
+
+
 @pytest_asyncio.fixture
 async def db_session(
     engine: AsyncEngine,
     tables: None,
 ) -> AsyncGenerator[AsyncSession, None]:
-    """Yield a fresh async session; roll back after each test."""
+    """Yield a fresh async session; wipe all tables before each test."""
     factory = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     async with factory() as session:
+        await _clean_db(session)
         yield session
         await session.rollback()
 

@@ -1,5 +1,5 @@
 /**
- * Dashboard API service — wraps the Issue 16 endpoints.
+ * Dashboard API service — wraps the Issue 16 endpoints + Phase 4 analytics.
  *
  * FR-SRCH-001: global product search
  * FR-SRCH-002/003: per-store quantities and global total
@@ -9,31 +9,97 @@
 
 import { api } from './apiClient';
 import type {
+  DashboardMetrics,
   ProductHistoryResponse,
   ProductInventoryResponse,
   ProductSearchResponse,
   StoreInventoryResponse,
-  UserCreate,
-  UserRead,
+  StockTrendResponse,
+  CategoryDistributionResponse,
+  StockStatusByCategoryResponse,
+  KPIDeltasResponse,
+  MostSoldExtendedResponse,
+  RecentActivityResponse,
+  OperationsSummaryResponse,
 } from '../types/dashboard';
-
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api/v1').replace(
-  /\/$/,
-  '',
-);
-
-function _authHeader(): HeadersInit {
-  const token =
-    typeof sessionStorage !== 'undefined' ? (sessionStorage.getItem('it_access_token') ?? '') : '';
-  return { Authorization: `Bearer ${token}` };
-}
 
 export async function searchProducts(
   query: string = '',
   limit = 200,
+  scope: 'all-stores' | '' = '',
 ): Promise<ProductSearchResponse> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
+  if (scope) params.set('scope', scope);
   return api.get<ProductSearchResponse>(`/products/search?${params.toString()}`);
+}
+
+/** Dashboard analytics for the KPI tile grid (Phase 3, Task B). */
+export async function getDashboardMetrics(): Promise<DashboardMetrics> {
+  return api.get<DashboardMetrics>('/dashboard/metrics');
+}
+
+/** Stock trend time series (Phase 4, Task C). */
+export async function getStockTrend(
+  startDate?: string,
+  endDate?: string,
+): Promise<StockTrendResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  return api.get<StockTrendResponse>(`/dashboard/stock-trend?${params.toString()}`);
+}
+
+/** Category distribution for donut chart (Phase 4, Task D). */
+export async function getCategoryDistribution(): Promise<CategoryDistributionResponse> {
+  return api.get<CategoryDistributionResponse>('/dashboard/category-distribution');
+}
+
+/** Stock status by category for stacked bar chart (Phase 4, Task E). */
+export async function getStockStatusByCategory(): Promise<StockStatusByCategoryResponse> {
+  return api.get<StockStatusByCategoryResponse>('/dashboard/stock-status-by-category');
+}
+
+/** KPI period-over-period deltas (Phase 4, Task B). */
+export async function getKPIDeltas(
+  startDate?: string,
+  endDate?: string,
+): Promise<KPIDeltasResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  return api.get<KPIDeltasResponse>(`/dashboard/kpi-deltas?${params.toString()}`);
+}
+
+/** Most-sold products with trends (Phase 4, Task F). */
+export async function getMostSoldExtended(
+  startDate?: string,
+  endDate?: string,
+  limit = 10,
+): Promise<MostSoldExtendedResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  return api.get<MostSoldExtendedResponse>(`/dashboard/most-sold-extended?${params.toString()}`);
+}
+
+/** Recent activity feed (Phase 4, Task H). */
+export async function getRecentActivity(limit = 20): Promise<RecentActivityResponse> {
+  return api.get<RecentActivityResponse>(`/dashboard/recent-activity?limit=${limit}`);
+}
+
+/**
+ * Stock-moving operation counts for the selected period, grouped by movement
+ * type — feeds the Transactions / Returns / Damage & Quarantine KPI tiles.
+ */
+export async function getOperationsSummary(
+  startDate?: string,
+  endDate?: string,
+): Promise<OperationsSummaryResponse> {
+  const params = new URLSearchParams();
+  if (startDate) params.set('start_date', startDate);
+  if (endDate) params.set('end_date', endDate);
+  const qs = params.toString();
+  return api.get<OperationsSummaryResponse>(`/dashboard/operations-summary${qs ? `?${qs}` : ''}`);
 }
 
 export async function getProductInventory(productId: string): Promise<ProductInventoryResponse> {
@@ -70,80 +136,4 @@ export async function login(
     password,
     device_id: deviceId,
   });
-}
-
-// ---------------------------------------------------------------------------
-// User management (GLOBAL_ADMIN only — AT-011)
-// ---------------------------------------------------------------------------
-
-/** List all users via FastAPI Users /auth/users. */
-export async function listUsers(): Promise<UserRead[]> {
-  return api.get<UserRead[]>('/auth/users');
-}
-
-/** Get a single user by ID. */
-export async function getUser(userId: number): Promise<UserRead> {
-  return api.get<UserRead>(`/auth/users/${userId}`);
-}
-
-/**
- * Create a new user via our custom admin-only /auth/register endpoint.
- * Requires caller role == GLOBAL_ADMIN.
- */
-export async function createUser(payload: UserCreate): Promise<UserRead> {
-  return api.post<UserRead>('/auth/register', {
-    username: payload.username,
-    email: payload.email,
-    password: payload.password,
-    full_name: payload.full_name ?? null,
-    role: payload.role ?? 'STORE_CLERK',
-    assigned_store_id: payload.assigned_store_id ?? null,
-    is_active: true,
-    is_superuser: payload.role === 'GLOBAL_ADMIN',
-    is_verified: true,
-  });
-}
-
-/** Patch an existing user (FastAPI Users PATCH /auth/users/{id}). */
-export async function updateUser(
-  userId: number,
-  patch: Partial<Pick<UserRead, 'full_name' | 'role' | 'assigned_store_id' | 'is_active'>>,
-): Promise<UserRead> {
-  const resp = await fetch(`${BASE_URL}/auth/users/${userId}`, {
-    method: 'PATCH',
-    headers: {
-      'Content-Type': 'application/json',
-      ..._authHeader(),
-    },
-    body: JSON.stringify(patch),
-  });
-  if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail);
-  }
-  return resp.json() as Promise<UserRead>;
-}
-
-/** Delete a user (FastAPI Users DELETE /auth/users/{id}). */
-export async function deleteUser(userId: number): Promise<void> {
-  const resp = await fetch(`${BASE_URL}/auth/users/${userId}`, {
-    method: 'DELETE',
-    headers: _authHeader(),
-  });
-  if (!resp.ok) {
-    let detail = resp.statusText;
-    try {
-      const body = (await resp.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
-    } catch {
-      /* ignore */
-    }
-    throw new Error(detail);
-  }
 }

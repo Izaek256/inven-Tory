@@ -92,6 +92,7 @@ const MOCK_PRODUCT = {
   barcode: null,
   alternate_names: null,
   reorder_point: null,
+  store_id: 'STORE-A',
   created_at: '2026-08-01T00:00:00Z',
   updated_at: '2026-08-01T00:00:00Z',
 };
@@ -312,7 +313,6 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
       new Error('Insufficient stock. Available quantity: 0. Cannot sell 1 units.'),
     );
-    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
 
     render(<SaleStockView />);
@@ -347,6 +347,12 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     });
 
     const receiptCell = screen.getByTestId('cell-0-reference_number');
+    await waitFor(() => {
+      expect(receiptCell).toBeInTheDocument();
+    });
+    act(() => {
+      fireEvent.change(receiptCell, { target: { value: 'RCP-TEST-001' } });
+    });
     await act(async (): Promise<void> => {
       fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
     });

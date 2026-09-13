@@ -24,7 +24,27 @@ vi.mock('../services/dashboardService', () => ({
   getProductInventory: vi.fn(),
   getProductHistory: vi.fn(),
   getStoreInventory: vi.fn(),
-  listStores: vi.fn(),
+  listStores: vi.fn(async () => []),
+  getDashboardMetrics: vi.fn(),
+  getStockTrend: vi.fn(async () => ({ data: [], date_range: { start: '', end: '' } })),
+  getCategoryDistribution: vi.fn(async () => ({ data: [], total_products: 0 })),
+  getStockStatusByCategory: vi.fn(async () => ({ data: [] })),
+  getKPIDeltas: vi.fn(async () => ({
+    deltas: [],
+    current_period: { start: '', end: '' },
+    prior_period: { start: '', end: '' },
+  })),
+  getMostSoldExtended: vi.fn(async () => ({ data: [], period: { start: '', end: '' } })),
+  getRecentActivity: vi.fn(async () => ({ data: [], total: 0 })),
+  getOperationsSummary: vi.fn(async () => ({
+    total_transactions: 0,
+    total_units_moved: 0,
+    by_type: [],
+    returns_count: 0,
+    returns_units: 0,
+    damage_count: 0,
+    damage_units: 0,
+  })),
 }));
 
 import * as apiClient from '../services/apiClient';
@@ -75,6 +95,15 @@ describe('App — authenticated', () => {
     vi.mocked(apiClient.getToken).mockReturnValue('mock-token');
     vi.mocked(svc.getStoreInventory).mockRejectedValue(new Error('no stores'));
     vi.mocked(svc.searchProducts).mockResolvedValue({ query: '', total: 0, results: [] });
+    vi.mocked(svc.getDashboardMetrics).mockResolvedValue({
+      total_products: 0,
+      total_stock_units: 0,
+      last_sync_at: null,
+      most_sold: [],
+      low_stock: [],
+      cross_store: { products_in_multiple_stores: 0, stores_with_stock: 0, combined_quantity: 0 },
+      receipt_linked_sales: [],
+    });
   });
 
   it('shows the main app container when authenticated', () => {
@@ -88,14 +117,34 @@ describe('App — authenticated', () => {
     expect(screen.getByTestId('web-sidebar')).toBeInTheDocument();
   });
 
-  it('shows unified dashboard by default', () => {
+  it('shows the analytics dashboard by default', async () => {
+    vi.mocked(svc.getDashboardMetrics).mockResolvedValue({
+      total_products: 0,
+      total_stock_units: 0,
+      last_sync_at: null,
+      most_sold: [],
+      low_stock: [],
+      cross_store: { products_in_multiple_stores: 0, stores_with_stock: 0, combined_quantity: 0 },
+      receipt_linked_sales: [],
+    });
     renderApp();
-    expect(screen.getByTestId('unified-dashboard')).toBeInTheDocument();
+    const dashboard = await screen.findByTestId('analytics-dashboard');
+    expect(dashboard).toBeInTheDocument();
   });
 
-  it('shows search input on unified dashboard', () => {
+  it('shows dashboard tiles on analytics view', async () => {
+    vi.mocked(svc.getDashboardMetrics).mockResolvedValue({
+      total_products: 42,
+      total_stock_units: 1200,
+      last_sync_at: new Date().toISOString(),
+      most_sold: [],
+      low_stock: [],
+      cross_store: { products_in_multiple_stores: 0, stores_with_stock: 0, combined_quantity: 0 },
+      receipt_linked_sales: [],
+    });
     renderApp();
-    expect(screen.getByTestId('search-input')).toBeInTheDocument();
+    const tile = await screen.findByTestId('tile-total-products');
+    expect(tile).toBeInTheDocument();
   });
 
   it('navigates to store view via sidebar', async () => {

@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { RotateCcw, X, Check, AlertCircle, Eye, EyeOff, Package } from 'lucide-react';
-import { searchProducts } from '../services/tauriProductService';
+import { searchProducts, getProductsByStore } from '../services/tauriProductService';
 import { returnStock, getStockBalanceForBucket } from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { ReturnStockInput, StockBucket } from '../types/transaction';
@@ -68,12 +68,53 @@ export const ReturnStockView: React.FC = () => {
     void loadSession();
   }, []);
 
+  // Products belonging to the active store (store-scoped; Task E).
+  const [activeStoreProducts, setActiveStoreProducts] = useState<Product[]>([]);
+
+  // Load store-scoped product list. Re-run whenever the active store changes so
+  // the panel never shows stale products from a previously active store (Task E).
+  const loadStoreProducts = useCallback(async (storeIdOverride?: string): Promise<void> => {
+    const targetStoreId = storeIdOverride ?? activeStoreId;
+    if (!targetStoreId) return;
+    try {
+      const products = await getProductsByStore(targetStoreId);
+      setActiveStoreProducts(products);
+    } catch {
+      // Silently handle product load failures
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Initial load on mount
+  useEffect(() => {
+    void loadStoreProducts();
+  }, [loadStoreProducts]);
+
+  // Re-load products when the store changes via the global store-switch event.
+  // Uses the storeId from the event detail to avoid stale-closure bugs where
+  // the activeStoreId captured in the closure is the previous store's ID.
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const storeId = (e as CustomEvent<{ storeId: string }>).detail?.storeId;
+      if (storeId) {
+        void loadStoreProducts(storeId);
+      }
+    };
+    window.addEventListener('inven-tory:stores-updated', handler);
+    return (): void => {
+      window.removeEventListener('inven-tory:stores-updated', handler);
+    };
+  }, [loadStoreProducts]);
+
   useEffect(() => {
     const searchProductsDebounced = setTimeout(async () => {
       if (productQuery.trim()) {
         try {
           const results = await searchProducts(productQuery);
-          setSearchResults(results.filter((p) => p.is_active));
+          // Only show products that belong to the active store.
+          const scopedIds = new Set(activeStoreProducts.map((p) => p.id));
+          const scoped = results.filter((p) => p.is_active && scopedIds.has(p.id));
+          setSearchResults(scoped);
         } catch (_err) {
           // Silently handle product search failures
         }
@@ -83,7 +124,7 @@ export const ReturnStockView: React.FC = () => {
     }, 300);
 
     return (): void => clearTimeout(searchProductsDebounced);
-  }, [productQuery]);
+  }, [productQuery, activeStoreProducts]);
 
   const loadBucketQuantity = async (
     storeId: string,
@@ -203,7 +244,6 @@ export const ReturnStockView: React.FC = () => {
               <h2 className="view-title">Customer & Supplier Returns</h2>
               <p className="view-subtitle">
                 Process stock returns affecting Available, Damaged, or Quarantine buckets
-                (FR-MOV-003, Section 13.3)
               </p>
             </div>
           </div>

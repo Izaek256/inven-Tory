@@ -10,12 +10,12 @@ export type BadgeStatus =
   | 'SENT'
   | 'ACCEPTED'
   | 'SYNCED'
-  // Data freshness (Section 14.4)
+  // Data freshness
   | 'FRESH'
   | 'RECENT'
   | 'STALE'
   | 'VERY_STALE'
-  // Purchase order statuses (Section 8.4)
+  // Purchase order statuses
   | 'OPEN'
   | 'PARTIAL'
   | 'COMPLETE'

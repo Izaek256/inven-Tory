@@ -2,9 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
-import { Badge, ThemeToggle, Button } from '@invenTory/ui';
-import { LogOut, User, Store as StoreIcon, ChevronDown } from 'lucide-react';
+import { Badge, useTheme } from '@invenTory/ui';
+import {
+  Box,
+  LogOut,
+  Store as StoreIcon,
+  ChevronDown,
+  Moon,
+  Sun,
+  Search,
+  UserRound,
+} from 'lucide-react';
 import type { AuthSession } from '../types/auth';
+import { storeColor } from '../utils/storeColors';
+import { GlobalSearchModal } from './GlobalSearchModal';
 
 interface HeaderProps {
   stores: Store[];
@@ -19,7 +30,6 @@ export const Header: React.FC<HeaderProps> = ({
   stores,
   activeStoreId,
   onSelectStore,
-  currentUser,
   onLogout,
 }) => {
   const [isOnline, setIsOnline] = useState<boolean>(
@@ -29,6 +39,13 @@ export const Header: React.FC<HeaderProps> = ({
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string>('');
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+
+  // Theme — delegates to the app-wide ThemeProvider so changes are reflected
+  // across the whole app immediately (data-theme on <html> element).
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
 
   const triggerManualSync = async (): Promise<void> => {
     try {
@@ -79,7 +96,7 @@ export const Header: React.FC<HeaderProps> = ({
     fetchPendingCount();
     const interval = setInterval(fetchPendingCount, 5000);
 
-    // Fetch last sync timestamp on mount and every 5 s (SYNC-009)
+    // Fetch last sync timestamp on mount and every 5 s
     const fetchLastSync = async (): Promise<void> => {
       try {
         const ts = await getLastSyncTimestamp();
@@ -113,14 +130,62 @@ export const Header: React.FC<HeaderProps> = ({
   return (
     <header className="app-header" data-testid="app-header">
       <div className="header-brand">
-        <div className="brand-icon">IT</div>
+        <div className="brand-icon-glyph">
+          <Box size={18} aria-hidden="true" />
+        </div>
         <h1 className="brand-title">invenTory</h1>
         <span className="brand-version">v1.1.0</span>
       </div>
 
       <div className="header-controls">
-        {/* Theme Toggle */}
-        <ThemeToggle />
+        {/* Global cross-store product search (Task G) */}
+        <button
+          className="header-global-search-btn"
+          onClick={() => setIsGlobalSearchOpen(true)}
+          data-testid="global-search-btn"
+          aria-label="Global product search across all stores"
+          title="Global product search across all stores"
+        >
+          <Search size={15} aria-hidden="true" />
+          <span>Search All Stores</span>
+        </button>
+
+        {/* User menu: groups theme toggle + sign out (Task J) */}
+        <div className="header-user-menu">
+          <button
+            className="header-user-trigger"
+            onClick={() => setUserMenuOpen(!userMenuOpen)}
+            data-testid="header-user-trigger"
+            aria-label="User settings"
+          >
+            <UserRound size={15} aria-hidden="true" />
+          </button>
+          {userMenuOpen && (
+            <div className="header-user-dropdown" data-testid="header-user-dropdown">
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  toggleTheme();
+                }}
+                data-testid="header-theme-toggle"
+              >
+                {isDark ? <Sun size={14} /> : <Moon size={14} />}
+                <span>{isDark ? 'Light mode' : 'Dark mode'}</span>
+              </button>
+              <div className="divider" />
+              <button
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  onLogout?.();
+                }}
+                data-testid="header-logout-btn"
+              >
+                <LogOut size={14} />
+                <span>Sign Out</span>
+              </button>
+            </div>
+          )}
+        </div>
 
         {/* Offline / Online Status Badge */}
         <div data-testid="status-indicator">
@@ -158,7 +223,7 @@ export const Header: React.FC<HeaderProps> = ({
           </span>
         </div>
 
-        {/* Last sync timestamp (SYNC-009) */}
+        {/* Last sync timestamp */}
         <div
           className="last-sync-badge"
           data-testid="last-sync-timestamp"
@@ -173,22 +238,25 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Active Store Selector */}
+        {/* Active Store Selector — redesigned: name only + color badge (Task H) */}
         {stores.length > 0 &&
           ((): React.ReactElement => {
             const currentStore = stores.find((s) => s.id === activeStoreId) || stores[0];
+            const currentStoreColor = storeColor(currentStore?.id ?? '');
             return (
               <div className="store-switcher-wrapper" data-testid="store-switcher-wrapper">
-                <div
-                  className="store-switcher-pill"
-                  title={`Active Store: ${currentStore?.name} (${currentStore?.code})`}
-                >
+                <div className="store-switcher-pill" title={`Active Store: ${currentStore?.name}`}>
                   <div className="store-switcher-icon-wrap">
                     <StoreIcon size={14} className="store-switcher-icon" />
                   </div>
                   <div className="store-switcher-info">
-                    <span className="store-switcher-name">{currentStore?.name}</span>
-                    <span className="store-switcher-code">{currentStore?.code}</span>
+                    <span className="store-switcher-name">
+                      <span
+                        className="store-switcher-badge"
+                        style={{ backgroundColor: currentStoreColor }}
+                      />
+                      {currentStore?.name}
+                    </span>
                   </div>
                   <span className="store-switcher-dot" aria-hidden="true" />
                   <ChevronDown size={14} className="store-switcher-chevron" />
@@ -202,48 +270,23 @@ export const Header: React.FC<HeaderProps> = ({
                   data-testid="store-selector"
                   aria-label="Active Store Location"
                 >
-                  {stores.map((store) => (
-                    <option key={store.id} value={store.id}>
-                      {store.name} ({store.code})
+                  {stores.map((store: Store) => (
+                    <option key={store.id} value={store.id} data-store-color={storeColor(store.id)}>
+                      {store.name}
                     </option>
                   ))}
                 </select>
               </div>
             );
           })()}
-
-        {/* Current user identity */}
-        {currentUser && (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '12px',
-              color: 'var(--it-text-secondary)',
-            }}
-            data-testid="current-user-indicator"
-          >
-            <User size={14} aria-hidden="true" />
-            <span>{currentUser.full_name ?? currentUser.username}</span>
-            <Badge status="SENT" label={currentUser.role} />
-          </div>
-        )}
-
-        {/* Logout button */}
-        {onLogout && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onLogout}
-            title="Sign out"
-            data-testid="header-logout-btn"
-          >
-            <LogOut size={14} aria-hidden="true" />
-            <span>Sign Out</span>
-          </Button>
-        )}
       </div>
+
+      {/* Read-only all-stores lookup; never changes the active store (Task G) */}
+      <GlobalSearchModal
+        isOpen={isGlobalSearchOpen}
+        onClose={() => setIsGlobalSearchOpen(false)}
+        stores={stores}
+      />
     </header>
   );
 };

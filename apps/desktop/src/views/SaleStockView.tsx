@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Check, AlertCircle, Eye, EyeOff, ArrowUpCircle } from 'lucide-react';
-import { searchProductsFts5, getProducts } from '../services/tauriProductService';
+import { searchProductsFts5, getProductsByStore } from '../services/tauriProductService';
 import {
   sellStock,
   updateTransaction,
@@ -44,7 +44,8 @@ const FIELDS: GridFieldDef[] = [
     id: 'reference_number',
     type: 'text',
     label: 'Receipt No.',
-    placeholder: 'Optional',
+    placeholder: 'Receipt number (required)',
+    required: true,
   },
 ];
 
@@ -103,11 +104,17 @@ export const SaleStockView: React.FC = () => {
     void loadSession();
   }, []);
 
-  // ── All products (right-panel default) ───────────────────────────────────
+  // ── All products (right-panel default, store-scoped — Task E) ──────────────
 
-  const loadAllProducts = useCallback(async (): Promise<void> => {
+  const loadAllProducts = useCallback(async (storeIdOverride?: string): Promise<void> => {
+    // Drop the previous store's fetch state immediately so switching stores
+    // never shows stale items from the outgoing store.
+    setSearchResults([]);
+    setCommittedTxnIds(new Map());
+    const targetStoreId = storeIdOverride ?? activeStoreId;
+    if (!targetStoreId) return;
     try {
-      const products = await getProducts();
+      const products = await getProductsByStore(targetStoreId);
       const active = products.filter((p) => p.is_active);
 
       const items: SearchResultItem[] = active.map((p) => ({
@@ -132,10 +139,28 @@ export const SaleStockView: React.FC = () => {
     } catch {
       // Silently fail — FTS5 search will still work
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Initial load on mount
   useEffect(() => {
     void loadAllProducts();
+  }, [loadAllProducts]);
+
+  // Re-load products when the store changes via the global store-switch event.
+  // Uses the storeId from the event detail to avoid stale-closure bugs where
+  // the activeStoreId captured in the closure is the previous store's ID.
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const storeId = (e as CustomEvent<{ storeId: string }>).detail?.storeId;
+      if (storeId) {
+        void loadAllProducts(storeId);
+      }
+    };
+    window.addEventListener('inven-tory:stores-updated', handler);
+    return (): void => {
+      window.removeEventListener('inven-tory:stores-updated', handler);
+    };
   }, [loadAllProducts]);
 
   // ── Live search (instant local filter + 100 ms debounced backend FTS5) ─────
@@ -152,7 +177,7 @@ export const SaleStockView: React.FC = () => {
         return;
       }
 
-      // 1. Instant local filter on every keystroke
+      // 1. Instant local filter on every keystroke (already store-scoped via allProducts)
       const localMatches = allProducts.filter(
         (p) =>
           p.label.toLowerCase().includes(q) ||
@@ -165,8 +190,12 @@ export const SaleStockView: React.FC = () => {
       searchTimerRef.current = setTimeout(async () => {
         try {
           const results = await searchProductsFts5(query);
+          // FTS5 spans the whole catalogue — keep only products available in the
+          // active store so the pane never surfaces items from another store.
+          const scopedIds = new Set(allProducts.map((p) => p.id));
+          const scoped = results.filter((p) => p.is_active && scopedIds.has(p.id));
           setSearchResults(
-            results.map((p) => ({
+            scoped.map((p) => ({
               id: p.id,
               label: p.name,
               subtitle: p.model ?? undefined,
@@ -179,12 +208,12 @@ export const SaleStockView: React.FC = () => {
 
           setProductMap((prev) => {
             const next = new Map(prev);
-            results.forEach((p) => next.set(p.id, p));
+            scoped.forEach((p) => next.set(p.id, p));
             return next;
           });
           setNameToId((prev) => {
             const next = new Map(prev);
-            results.forEach((p) => next.set(p.name, p.id));
+            scoped.forEach((p) => next.set(p.name, p.id));
             return next;
           });
         } catch {
@@ -202,7 +231,9 @@ export const SaleStockView: React.FC = () => {
       if (!barcode.trim()) return;
       try {
         const results = await searchProductsFts5(barcode);
-        const exact = results.find((p) => p.barcode === barcode || p.sku === barcode);
+        const scopedIds = new Set(allProducts.map((p) => p.id));
+        const scoped = results.filter((p) => scopedIds.has(p.id));
+        const exact = scoped.find((p) => p.barcode === barcode || p.sku === barcode);
         if (exact) {
           setSearchResults([
             {
@@ -220,7 +251,7 @@ export const SaleStockView: React.FC = () => {
         // Ignore scan errors
       }
     },
-    [],
+    [allProducts],
   );
 
   // ── Row commit (individual, synchronous write to outbox) ─────────────────
@@ -238,6 +269,14 @@ export const SaleStockView: React.FC = () => {
       const productName = String(row.values.product ?? '').trim();
       if (!productName) {
         setError('Please select a product');
+        return;
+      }
+
+      // Phase 3 (Task F): receipt number is compulsory for Sale/Issue.
+      // Block commit with inline-style validation if it's missing.
+      const receiptNumber = String(row.values.reference_number ?? '').trim();
+      if (!receiptNumber) {
+        setError('A receipt number is required for Sale / Issue transactions.');
         return;
       }
 
@@ -261,7 +300,7 @@ export const SaleStockView: React.FC = () => {
         product_id: product.id,
         movement_type: 'SALE',
         quantity: qty,
-        reference_number: String(row.values.reference_number ?? '').trim() || undefined,
+        reference_number: receiptNumber,
         user_id: sessionUserId,
         device_id: sessionDeviceId,
       };
@@ -319,10 +358,16 @@ export const SaleStockView: React.FC = () => {
 
       try {
         const qty = Number(newValues.quantity ?? 1);
+        // Phase 3 (Task F): receipt number is compulsory for SALE edits too.
+        const referenceNumber = String(newValues.reference_number ?? '').trim();
+        if (!referenceNumber) {
+          setError('A receipt number is required for Sale / Issue transactions.');
+          return;
+        }
         await updateTransaction({
           transaction_id: transactionId,
           quantity_delta: -qty, // SALE: negative delta
-          reference_number: String(newValues.reference_number ?? '').trim() || null,
+          reference_number: referenceNumber,
           reason_code: null,
         });
         setSuccess(true);
@@ -380,7 +425,9 @@ export const SaleStockView: React.FC = () => {
           <ArrowUpCircle size={24} color="var(--it-green)" />
           <div>
             <h2 className="view-title">Sale / Issue Stock</h2>
-            <p className="view-subtitle">Record outgoing inventory (FR-MOV-002, Section 13.2)</p>
+            <p className="view-subtitle">
+              Record outgoing inventory to customers, waste, or internal consumption
+            </p>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>

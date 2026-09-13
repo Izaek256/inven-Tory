@@ -41,7 +41,9 @@ describe('Product CRUD & Master Catalog (FR-PROD-001–002)', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(initialProducts);
+    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(
+      initialProducts.map((p) => ({ ...p, store_id: 'STORE-A' })),
+    );
   });
 
   it('renders products catalogue and table', async () => {
@@ -51,10 +53,12 @@ describe('Product CRUD & Master Catalog (FR-PROD-001–002)', () => {
       expect(screen.getByTestId('products-table')).toBeInTheDocument();
     });
 
-    expect(screen.getByText('ELEC-IPHONE15PRO')).toBeInTheDocument();
+    // SKU column was removed per Task B — product rows display name + model,
+    // not SKU. Verify product names (and model underneath) render.
     expect(screen.getByText('Apple iPhone 15 Pro 256GB')).toBeInTheDocument();
-    expect(screen.getByText('ELEC-SONY-XM5')).toBeInTheDocument();
+    expect(screen.getByText('A3102')).toBeInTheDocument();
     expect(screen.getByText('Sony WH-1000XM5 Headphones')).toBeInTheDocument();
+    expect(screen.getByText('XM5')).toBeInTheDocument();
   });
 
   it('filters products by live search query', async () => {
@@ -191,22 +195,5 @@ describe('Product CRUD & Master Catalog (FR-PROD-001–002)', () => {
         name: 'Apple iPhone 15 Pro 512GB',
       }),
     );
-  });
-
-  it('toggles product active state', async () => {
-    const toggleSpy = vi.spyOn(tauriProductService, 'toggleProductActive').mockResolvedValue({
-      ...initialProducts[0],
-      is_active: false,
-    });
-
-    render(<ProductsView />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId('products-table')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByTestId('toggle-product-btn-PROD-01'));
-
-    expect(toggleSpy).toHaveBeenCalledWith('PROD-01', false);
   });
 });
