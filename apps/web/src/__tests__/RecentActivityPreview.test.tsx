@@ -16,7 +16,7 @@ const mockGetRecentActivity = vi.mocked(dashboardService.getRecentActivity);
 function mockAllQueries(overrides: {
   metrics?: DashboardMetrics;
   recentActivity?: RecentActivityResponse;
-}) {
+}): void {
   mockGetDashboardMetrics.mockResolvedValue(overrides.metrics ?? baseMetrics);
   mockGetRecentActivity.mockResolvedValue(overrides.recentActivity ?? { data: [], total: 0 });
   // Other service functions are auto-mocked but must return Promises for the hook.

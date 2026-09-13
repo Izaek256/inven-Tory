@@ -108,15 +108,15 @@ body {
   overflow: hidden;
 }
 
-/* Sidebar — identical to desktop */
+/* Sidebar — refined for Phase 5 design system */
 .app-sidebar {
-  width: 200px;
+  width: 180px;
   background-color: var(--it-surface);
   border-right: 1px solid var(--it-border);
   display: flex;
   flex-direction: column;
-  padding: 12px 8px;
-  gap: 6px;
+  padding: 20px 16px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -124,17 +124,17 @@ body {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 7px 10px;
-  border-radius: var(--it-r-md);
+  padding: 10px 12px;
+  border-radius: var(--it-r-sm);
   color: var(--it-text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
   border: 1px solid transparent;
   background: transparent;
   width: 100%;
   text-align: left;
-  transition: all 0.15s ease;
+  transition: all 0.2s ease;
 }
 
 .nav-item:hover {
@@ -158,8 +158,71 @@ body {
 .app-content {
   flex: 1;
   background-color: var(--it-bg);
-  padding: 16px;
+  padding: 24px;
   overflow-y: auto;
+}
+
+/* ── Activity Toolbar ─────────────────────────────────────────────────── */
+
+.web-activity-toolbar {
+  background-color: var(--it-card);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-md);
+  padding: 12px 16px;
+  margin-bottom: 24px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.web-activity-toolbar__search {
+  flex: 1;
+  min-width: 200px;
+  position: relative;
+}
+
+.web-activity-toolbar__search-icon {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--it-text-secondary);
+}
+
+.web-activity-toolbar__input {
+  width: 100%;
+  padding: 8px 12px 8px 36px;
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-sm);
+  background-color: var(--it-surface);
+  color: var(--it-text-primary);
+  font-size: 13px;
+}
+
+.web-activity-toolbar__input:focus {
+  outline: none;
+  box-shadow: var(--it-focus-ring);
+}
+
+.web-activity-toolbar__filters {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.web-activity-toolbar__select {
+  padding: 8px 12px;
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-sm);
+  background-color: var(--it-surface);
+  color: var(--it-text-primary);
+  font-size: 13px;
+}
+
+.web-activity-toolbar__select:focus {
+  outline: none;
+  box-shadow: var(--it-focus-ring);
 }
 
 /* ── View layout ─────────────────────────────────────────────────────────── */
@@ -179,11 +242,12 @@ body {
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
+  margin-bottom: 24px;
 }
 
 .web-view-title {
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 24px;
+  font-weight: 600;
   color: var(--it-text-primary);
   margin-bottom: 4px;
   display: flex;
@@ -192,7 +256,7 @@ body {
 }
 
 .web-view-subtitle {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--it-text-secondary);
 }
 
@@ -583,6 +647,18 @@ body {
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--it-sp-4);
   align-items: stretch;
+}
+
+.web-dashboard-tile--primary .web-dashboard-tile__value {
+  font-size: 32px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.web-dashboard-tile--secondary .web-dashboard-tile__value {
+  font-size: 24px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .web-dashboard-tile__head {

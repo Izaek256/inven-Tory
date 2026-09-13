@@ -1,4 +1,4 @@
-/* ── Dashboard charts row (Phase 4 / Task D polish pass) ──────────
+/* ── Dashboard charts row (Phase 4 / Task D polish pass + Phase 5 fix) ──────────
  * Card chrome (surface, border, radius, shadow, padding) is shared with the
  * KPI tiles and table panels via the grouped rule in index.css — only layout
  * lives here, so every card on the page renders with identical treatment.
@@ -6,8 +6,9 @@
 
 .web-dashboard-charts-row {
   display: grid;
-  grid-template-columns: 2fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: var(--it-sp-4);
+  min-height: 320px;
 }
 
 .web-dashboard-chart-panel {
@@ -296,7 +297,20 @@
   }
 }
 
-/* ── Responsive dashboard (Phase 4 / Task C grid fill) ───────────── */
+/* ── Responsive dashboard (Phase 4 / Task C grid fill + Phase 5 two-tier) ───── */
+
+/* Desktop: Equal 3x3 grid for 9 tiles */
+@media (min-width: 1280px) {
+  .web-dashboard-tiles {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--it-sp-4);
+  }
+
+  .web-dashboard-tile--primary,
+  .web-dashboard-tile--secondary {
+    grid-column: span 1;
+  }
+}
 
 @media (min-width: 768px) and (max-width: 1279px) {
   .web-dashboard-charts-row {
@@ -307,17 +321,18 @@
     grid-template-columns: 1fr;
   }
 
-  /* Tablet: auto-fill keeps every row visually complete regardless of the
-   * tile count (10 tiles → no ragged row at any intermediate width). */
+  /* Tablet: two-tier still applies but with responsive sizing */
   .web-dashboard-tiles {
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--it-sp-3);
   }
-}
 
-@media (min-width: 1280px) {
-  /* Desktop: 10 tiles = exactly 2 complete rows of 5, equal width (Task C). */
-  .web-dashboard-tiles {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+  .web-dashboard-tile--primary {
+    grid-column: span 1;
+  }
+
+  .web-dashboard-tile--secondary {
+    grid-column: span 1;
   }
 }
 
@@ -330,9 +345,15 @@
     grid-template-columns: 1fr;
   }
 
-  /* Phone (~375px): single column stack is correct here. */
+  /* Phone: single column stack */
   .web-dashboard-tiles {
     grid-template-columns: 1fr;
+    gap: var(--it-sp-3);
+  }
+
+  .web-dashboard-tile--primary,
+  .web-dashboard-tile--secondary {
+    grid-column: span 1;
   }
 
   .web-dashboard-table th,

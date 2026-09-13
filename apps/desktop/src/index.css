@@ -93,6 +93,7 @@ body {
 }
 
 /* Sidebar Styling */
+/* Sidebar Styling */
 .app-sidebar {
   width: 200px;
   background-color: var(--it-surface);
@@ -195,6 +196,14 @@ body {
 .view-subtitle {
   font-size: 13px;
   color: var(--it-text-secondary);
+}
+
+/* Dashboard KPI Grid */
+.desktop-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
 }
 
 .perf-timer-badge {

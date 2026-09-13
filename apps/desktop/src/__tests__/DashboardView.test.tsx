@@ -6,6 +6,18 @@ import { DashboardView } from '../views/DashboardView';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
 import * as tauriSyncService from '../services/tauriSyncService';
+import { ClientSyncState } from '../types/sync';
+import { InventoryTransaction } from '../types/transaction';
+
+// Mock Recharts to avoid width/height warnings in jsdom
+vi.mock('recharts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('recharts')>();
+  return {
+    ...actual,
+    ResponsiveContainer: ({ children }: { children: React.ReactElement }): React.ReactElement =>
+      React.cloneElement(children, { width: 400, height: 300 } as Record<string, unknown>),
+  };
+});
 
 function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
   return render(
@@ -70,7 +82,7 @@ const mockProducts = [
   },
 ];
 
-const mockTransactions = [
+const mockTransactions: InventoryTransaction[] = [
   {
     transaction_id: 'TXN-1',
     store_id: 'STORE-1',
@@ -194,9 +206,8 @@ beforeEach(() => {
       }));
   }
   vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(mockProducts);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   vi.spyOn(tauriTransactionService, 'getLocalTransactions').mockResolvedValue(
-    mockTransactions as any,
+    mockTransactions as InventoryTransaction[],
   );
   vi.spyOn(tauriTransactionService, 'getStockBalancesForStore').mockResolvedValue(new Map());
   vi.spyOn(tauriSyncService, 'getLastSyncTimestamp').mockResolvedValue('2026-09-12T08:00:00Z');
@@ -206,8 +217,7 @@ beforeEach(() => {
     isOnline: true,
     lastOutcome: 'success',
     lastError: null,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  } as any);
+  } as ClientSyncState);
 });
 
 describe('DashboardView — Analytics Dashboard', () => {
@@ -435,5 +445,76 @@ describe('DashboardView — Analytics Dashboard', () => {
       },
       { timeout: 3000 },
     );
+  });
+
+  it('displays product names in Recent Activity, not raw IDs (regression test)', async () => {
+    renderWithProviders(
+      <DashboardView
+        stores={mockStores}
+        loading={false}
+        error={null}
+        onRetry={() => {}}
+        userRole="ADMIN"
+      />,
+    );
+
+    await waitFor(() => {
+      const activityList = screen.getByTestId('recent-activity-list');
+      expect(activityList).toBeInTheDocument();
+    });
+
+    // Verify that product names are displayed, not raw IDs
+    expect(screen.getByText('Widget Alpha')).toBeInTheDocument();
+    expect(screen.getByText('Gadget Beta')).toBeInTheDocument();
+    expect(screen.queryByText('PROD-1')).not.toBeInTheDocument();
+    expect(screen.queryByText('PROD-2')).not.toBeInTheDocument();
+  });
+
+  it('handles deleted products with fallback in Recent Activity', async () => {
+    // Create a transaction for a product that doesn't exist in the products list
+    const transactionWithDeletedProduct: InventoryTransaction = {
+      transaction_id: 'TXN-DELETED',
+      store_id: 'STORE-1',
+      product_id: 'PROD-DELETED',
+      movement_type: 'SALE',
+      stock_bucket: 'AVAILABLE',
+      quantity_delta: -1,
+      occurred_at: new Date(Date.now() - 3600_000).toISOString(),
+      recorded_at: new Date(Date.now() - 3600_000).toISOString(),
+      user_id: 'U1',
+      device_id: 'D1',
+      reference_number: null,
+      reason_code: null,
+      transfer_id: null,
+      purchase_order_id: null,
+      batch_id: null,
+      client_sequence: null,
+      sync_status: 'SYNCED',
+      server_accepted_at: null,
+      original_transaction_id: null,
+    };
+
+    vi.spyOn(tauriTransactionService, 'getLocalTransactions').mockResolvedValueOnce([
+      ...mockTransactions,
+      transactionWithDeletedProduct,
+    ]);
+
+    renderWithProviders(
+      <DashboardView
+        stores={mockStores}
+        loading={false}
+        error={null}
+        onRetry={() => {}}
+        userRole="ADMIN"
+      />,
+    );
+
+    await waitFor(() => {
+      const activityList = screen.getByTestId('recent-activity-list');
+      expect(activityList).toBeInTheDocument();
+    });
+
+    // Verify that the deleted product shows a fallback message
+    expect(screen.getByText(/Unknown Product.*PROD-DELETED/)).toBeInTheDocument();
   });
 });

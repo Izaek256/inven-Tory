@@ -1,12 +1,17 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { ThemeProvider } from '@invenTory/ui';
 import { GlobalSearchModal } from '../components/GlobalSearchModal';
 import { Header } from '../components/Header';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { Store } from '../types/store';
+
+function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
+  return render(<ThemeProvider>{ui}</ThemeProvider>);
+}
 
 const stores: Store[] = [
   { id: 'STORE-MAIN', name: 'Main Store', store_code: 'MAIN' },
@@ -71,7 +76,7 @@ describe('Global cross-store product search (Phase 3, Task G)', () => {
   });
 
   it('renders the cross-store breakdown table with one dynamic column per store', async () => {
-    render(<GlobalSearchModal isOpen onClose={vi.fn()} stores={stores} />);
+    renderWithProviders(<GlobalSearchModal isOpen onClose={vi.fn()} stores={stores} />);
 
     const table = await screen.findByTestId('global-search-results-table');
 
@@ -86,7 +91,7 @@ describe('Global cross-store product search (Phase 3, Task G)', () => {
   });
 
   it('shows per-store quantities and correct totals, with 0 for absent stores', async () => {
-    render(<GlobalSearchModal isOpen onClose={vi.fn()} stores={stores} />);
+    renderWithProviders(<GlobalSearchModal isOpen onClose={vi.fn()} stores={stores} />);
 
     await screen.findByTestId('global-search-results-table');
 
@@ -104,7 +109,7 @@ describe('Global cross-store product search (Phase 3, Task G)', () => {
   });
 
   it('filters by name/SKU/brand/model/category across all stores', async () => {
-    render(<GlobalSearchModal isOpen onClose={vi.fn()} stores={stores} />);
+    renderWithProviders(<GlobalSearchModal isOpen onClose={vi.fn()} stores={stores} />);
 
     await waitFor(() => {
       expect(screen.getByTestId('global-search-results-table')).toBeInTheDocument();
@@ -123,7 +128,9 @@ describe('Global cross-store product search (Phase 3, Task G)', () => {
 
   it('does not change the active store when opened and closed (read-only lookup)', async () => {
     const onSelectStore = vi.fn();
-    render(<Header stores={stores} activeStoreId="STORE-MAIN" onSelectStore={onSelectStore} />);
+    renderWithProviders(
+      <Header stores={stores} activeStoreId="STORE-MAIN" onSelectStore={onSelectStore} />,
+    );
 
     // Open the modal from the header entry point
     fireEvent.click(screen.getByTestId('global-search-btn'));

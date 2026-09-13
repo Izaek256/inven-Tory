@@ -437,6 +437,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       (a, b) => new Date(b.occurred_at).getTime() - new Date(a.occurred_at).getTime(),
     );
     const storeMap = new Map(stores.map((s) => [s.id, s.name]));
+    const productMap = new Map(products.map((p) => [p.id, p.name]));
     return sorted.slice(0, 5).map((t) => {
       let type: ActivityType;
       if (t.movement_type === 'RECEIPT') type = 'stock_added';
@@ -450,7 +451,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         id: t.transaction_id,
         type,
         product_id: t.product_id,
-        product_name: t.product_name ?? t.product_id,
+        product_name:
+          t.product_name ?? productMap.get(t.product_id) ?? `Unknown Product (${t.product_id})`,
         sku: '',
         store_id: t.store_id,
         store_name: storeMap.get(t.store_id) ?? t.store_id,
@@ -459,7 +461,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         reference_number: t.reference_number,
       };
     });
-  }, [transactionsInRange, stores]);
+  }, [transactionsInRange, stores, products]);
 
   const lastSyncTimeStr = lastSyncAt ? _formatRelativeTime(lastSyncAt) : 'Never';
 

@@ -54,6 +54,8 @@ export interface DashboardTileProps {
   loading?: boolean;
   /** Entrance-animation stagger delay in ms (Task E). */
   animDelay?: number;
+  /** Tile variant for two-tier hierarchy: 'primary' (larger) or 'secondary' (compact). */
+  variant?: 'primary' | 'secondary';
 }
 
 function CountUpValue({ value }: { value: number }): React.ReactElement {
@@ -104,10 +106,11 @@ export function DashboardTile({
   testId,
   loading = false,
   animDelay,
+  variant = 'secondary',
 }: DashboardTileProps): React.ReactElement {
   return (
     <div
-      className="web-dashboard-tile web-anim-card"
+      className={`web-dashboard-tile web-anim-card ${variant === 'primary' ? 'web-dashboard-tile--primary' : 'web-dashboard-tile--secondary'}`}
       data-testid={testId}
       style={animDelay ? { animationDelay: `${animDelay}ms` } : undefined}
     >

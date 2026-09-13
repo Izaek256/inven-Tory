@@ -188,17 +188,17 @@ describe('Task B - no stray letter-spacing/mono on KPI values', () => {
 // Task C — KPI grid completeness
 // ---------------------------------------------------------------------------
 
-describe('Task C - tile grid is a complete 2x5 grid of pure KPIs', () => {
+describe('Task C - tile grid is a complete 3x3 grid of pure KPIs', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAll();
   });
 
-  it('renders exactly 10 KPI tiles and no list-style duplicates', async () => {
+  it('renders exactly 9 KPI tiles and no list-style duplicates', async () => {
     render(<AnalyticsDashboardView />);
     const grid = await screen.findByTestId('analytics-tiles');
     await waitFor(() => {
-      expect(grid.querySelectorAll('.web-dashboard-tile').length).toBe(10);
+      expect(grid.querySelectorAll('.web-dashboard-tile').length).toBe(9);
     });
     const titles = Array.from(grid.querySelectorAll('.web-dashboard-tile__title')).map(
       (el) => el.textContent,
@@ -206,14 +206,13 @@ describe('Task C - tile grid is a complete 2x5 grid of pure KPIs', () => {
     expect(titles).toEqual([
       'Total Products',
       'Total Stock Units',
-      'Last Sync',
-      'Cross-Store Products',
-      'Receipt-Linked Sales',
-      'Total Stores',
+      'Active Stores',
       'Units Sold',
       'Transactions',
       'Returns',
+      'Cross-Store Products',
       'Damage & Quarantine',
+      'Last Sync',
     ]);
     // The redundant list tiles must be gone (detailed table cards remain below).
     expect(titles).not.toContain('Most-Sold Products');
@@ -248,7 +247,7 @@ describe('Task C - tile grid is a complete 2x5 grid of pure KPIs', () => {
     await waitFor(
       () => {
         // Mock has 2 stores, 1 inactive → 1 active store shown.
-        expect(value('tile-total-stores')).toBe('1');
+        expect(value('tile-active-stores')).toBe('1');
         expect(value('tile-transactions')).toBe('12');
         expect(value('tile-returns')).toBe('1');
         expect(value('tile-damage')).toBe('5');
@@ -257,7 +256,7 @@ describe('Task C - tile grid is a complete 2x5 grid of pure KPIs', () => {
       { timeout: 3000 },
     );
     expect(
-      grid.querySelector('[data-testid="tile-total-stores"] .web-dashboard-tile__footer')
+      grid.querySelector('[data-testid="tile-active-stores"] .web-dashboard-tile__footer')
         ?.textContent,
     ).toContain('1 inactive');
     expect(

@@ -22,7 +22,6 @@ import {
   Clock,
   Layers,
   Package,
-  ReceiptText,
   RotateCcw,
   Search,
   ShieldAlert,
@@ -50,7 +49,6 @@ import type {
   MostSoldExtendedResponse,
   OperationsSummaryResponse,
   RecentActivityResponse,
-  ReceiptSalesDayMetric,
   StockStatusByCategoryResponse,
   StockTrendResponse,
   CategoryDistributionResponse,
@@ -66,8 +64,8 @@ type StoreListEntry = Awaited<ReturnType<typeof listStores>>[number];
 
 const DATE_RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 days' },
-  { value: 14, label: 'Last 14 days' },
   { value: 30, label: 'Last 30 days' },
+  { value: 90, label: 'Last 90 days' },
 ];
 
 const MOST_SOLD_LIMIT = 5;
@@ -85,17 +83,6 @@ function _formatLastSync(iso: string | null): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours} h ago`;
   return `${Math.floor(hours / 24)} d ago`;
-}
-
-function _receiptSummary(days: ReceiptSalesDayMetric[]): {
-  totalReceipts: number;
-  totalItems: number;
-  avgPerReceipt: number;
-} {
-  const totalReceipts = days.reduce((sum, d) => sum + d.receipt_count, 0);
-  const totalItems = days.reduce((sum, d) => sum + d.items_sold, 0);
-  const avgPerReceipt = totalReceipts > 0 ? totalItems / totalReceipts : 0;
-  return { totalReceipts, totalItems, avgPerReceipt };
 }
 
 interface DateRangeState {
@@ -172,9 +159,6 @@ export function AnalyticsDashboardView(): React.ReactElement {
     cross_store: { products_in_multiple_stores: 0, stores_with_stock: 0, combined_quantity: 0 },
     receipt_linked_sales: [],
   };
-
-  const receipt = _receiptSummary(m.receipt_linked_sales);
-  const last7Days = m.receipt_linked_sales.slice(-7);
 
   const deltasMap = useMemo(() => {
     const map: Record<string, KPIDelta | undefined> = {};
@@ -268,7 +252,7 @@ export function AnalyticsDashboardView(): React.ReactElement {
         </div>
       </div>
 
-      {/* KPI Tiles with deltas — 2 full rows of 5 at desktop width (Task C) */}
+      {/* KPI Tiles — 3x3 equal grid */}
       <div className="web-dashboard-tiles" data-testid="analytics-tiles">
         <DashboardTile
           title="Total Products"
@@ -325,18 +309,74 @@ export function AnalyticsDashboardView(): React.ReactElement {
         />
 
         <DashboardTile
-          title="Last Sync"
-          value={_formatLastSync(m.last_sync_at)}
-          icon={Clock}
-          accent="var(--it-amber, #f59e0b)"
+          title="Active Stores"
+          value={storesQuery.error ? '—' : undefined}
+          numericValue={storesQuery.error ? undefined : activeStoreCount}
+          icon={Store}
           animDelay={80}
-          loading={loading}
+          loading={loading || storesQuery.loading}
           footer={
             <span>
-              {m.last_sync_at ? new Date(m.last_sync_at).toLocaleString() : 'No sync recorded yet'}
+              {storesQuery.error
+                ? 'Store list unavailable'
+                : inactiveStoreCount > 0
+                  ? `${inactiveStoreCount} inactive`
+                  : 'All stores active'}
             </span>
           }
-          testId="tile-last-sync"
+          testId="tile-active-stores"
+        />
+
+        <DashboardTile
+          title="Units Sold"
+          value={unitsSoldValue === null ? '—' : undefined}
+          numericValue={unitsSoldValue ?? undefined}
+          icon={ShoppingCart}
+          accent="var(--it-blue, #3b82f6)"
+          animDelay={120}
+          loading={loading}
+          delta={
+            unitsSoldDelta
+              ? {
+                  label: unitsSoldDelta.period_label,
+                  positive: (unitsSoldDelta.delta_absolute ?? 0) >= 0,
+                }
+              : undefined
+          }
+          footer={<span>{topSeller ? `Top: ${topSeller}` : 'No sales in this period'}</span>}
+          testId="tile-units-sold"
+        />
+
+        <DashboardTile
+          title="Transactions"
+          value={opsSummaryQuery.error ? '—' : undefined}
+          numericValue={opsSummaryQuery.error ? undefined : (ops?.total_transactions ?? 0)}
+          icon={ArrowLeftRight}
+          accent="var(--it-purple, #8b5cf6)"
+          animDelay={160}
+          loading={loading || opsSummaryQuery.loading}
+          footer={<span>{opsSummaryQuery.error ? 'Operations unavailable' : opsFooter}</span>}
+          testId="tile-transactions"
+        />
+
+        <DashboardTile
+          title="Returns"
+          value={opsSummaryQuery.error ? '—' : undefined}
+          numericValue={opsSummaryQuery.error ? undefined : (ops?.returns_count ?? 0)}
+          icon={RotateCcw}
+          accent="var(--it-teal, #14b8a6)"
+          animDelay={200}
+          loading={loading || opsSummaryQuery.loading}
+          footer={
+            <span>
+              {opsSummaryQuery.error
+                ? 'Operations unavailable'
+                : ops && ops.returns_count > 0
+                  ? `${ops.returns_units.toLocaleString()} units returned`
+                  : 'No returns in range'}
+            </span>
+          }
+          testId="tile-returns"
         />
 
         <DashboardTile
@@ -344,7 +384,7 @@ export function AnalyticsDashboardView(): React.ReactElement {
           numericValue={m.cross_store.products_in_multiple_stores}
           icon={Layers}
           accent="var(--it-purple, #8b5cf6)"
-          animDelay={120}
+          animDelay={240}
           loading={loading}
           delta={
             getDelta('Cross-Store Products')
@@ -365,123 +405,12 @@ export function AnalyticsDashboardView(): React.ReactElement {
         />
 
         <DashboardTile
-          title="Receipt-Linked Sales"
-          numericValue={receipt.totalReceipts}
-          icon={ReceiptText}
-          accent="var(--it-teal, #14b8a6)"
-          animDelay={160}
-          loading={loading}
-          delta={
-            getDelta('Receipts')
-              ? {
-                  label: getDelta('Receipts')!.period_label,
-                  positive: (getDelta('Receipts')!.delta_absolute ?? 0) >= 0,
-                }
-              : undefined
-          }
-          footer={
-            <>
-              {last7Days.length > 0 ? (
-                <span className="web-mini-bars" data-testid="receipt-bars">
-                  {last7Days.map((d) => (
-                    <span
-                      key={d.date}
-                      className="web-mini-bar"
-                      title={`${d.date}: ${d.receipt_count} receipts, ${d.items_sold} items`}
-                      style={{ height: `${Math.max(4, Math.min(28, d.receipt_count * 4))}px` }}
-                    />
-                  ))}
-                </span>
-              ) : (
-                <span>No receipt-linked sales in the last 7 days</span>
-              )}
-              <span>
-                {receipt.totalItems.toLocaleString()} items sold · avg{' '}
-                {receipt.avgPerReceipt.toFixed(1)} items/receipt
-              </span>
-            </>
-          }
-          testId="tile-receipt-sales"
-        />
-
-        <DashboardTile
-          title="Total Stores"
-          value={storesQuery.error ? '—' : undefined}
-          numericValue={storesQuery.error ? undefined : activeStoreCount}
-          icon={Store}
-          animDelay={200}
-          loading={loading || storesQuery.loading}
-          footer={
-            <span>
-              {storesQuery.error
-                ? 'Store list unavailable'
-                : inactiveStoreCount > 0
-                  ? `${inactiveStoreCount} inactive`
-                  : 'All stores active'}
-            </span>
-          }
-          testId="tile-total-stores"
-        />
-
-        <DashboardTile
-          title="Units Sold"
-          value={unitsSoldValue === null ? '—' : undefined}
-          numericValue={unitsSoldValue ?? undefined}
-          icon={ShoppingCart}
-          accent="var(--it-blue, #3b82f6)"
-          animDelay={240}
-          loading={loading}
-          delta={
-            unitsSoldDelta
-              ? {
-                  label: unitsSoldDelta.period_label,
-                  positive: (unitsSoldDelta.delta_absolute ?? 0) >= 0,
-                }
-              : undefined
-          }
-          footer={<span>{topSeller ? `Top: ${topSeller}` : 'No sales in this period'}</span>}
-          testId="tile-units-sold"
-        />
-
-        <DashboardTile
-          title="Transactions"
-          value={opsSummaryQuery.error ? '—' : undefined}
-          numericValue={opsSummaryQuery.error ? undefined : (ops?.total_transactions ?? 0)}
-          icon={ArrowLeftRight}
-          accent="var(--it-purple, #8b5cf6)"
-          animDelay={280}
-          loading={loading || opsSummaryQuery.loading}
-          footer={<span>{opsSummaryQuery.error ? 'Operations unavailable' : opsFooter}</span>}
-          testId="tile-transactions"
-        />
-
-        <DashboardTile
-          title="Returns"
-          value={opsSummaryQuery.error ? '—' : undefined}
-          numericValue={opsSummaryQuery.error ? undefined : (ops?.returns_count ?? 0)}
-          icon={RotateCcw}
-          accent="var(--it-teal, #14b8a6)"
-          animDelay={320}
-          loading={loading || opsSummaryQuery.loading}
-          footer={
-            <span>
-              {opsSummaryQuery.error
-                ? 'Operations unavailable'
-                : ops && ops.returns_count > 0
-                  ? `${ops.returns_units.toLocaleString()} units returned`
-                  : 'No returns in range'}
-            </span>
-          }
-          testId="tile-returns"
-        />
-
-        <DashboardTile
           title="Damage & Quarantine"
           value={opsSummaryQuery.error ? '—' : undefined}
           numericValue={opsSummaryQuery.error ? undefined : (ops?.damage_units ?? 0)}
           icon={ShieldAlert}
           accent="var(--it-red, #ef4444)"
-          animDelay={360}
+          animDelay={280}
           loading={loading || opsSummaryQuery.loading}
           footer={
             <span>
@@ -493,6 +422,21 @@ export function AnalyticsDashboardView(): React.ReactElement {
             </span>
           }
           testId="tile-damage"
+        />
+
+        <DashboardTile
+          title="Last Sync"
+          value={_formatLastSync(m.last_sync_at)}
+          icon={Clock}
+          accent="var(--it-amber, #f59e0b)"
+          animDelay={320}
+          loading={loading}
+          footer={
+            <span>
+              {m.last_sync_at ? new Date(m.last_sync_at).toLocaleString() : 'No sync recorded yet'}
+            </span>
+          }
+          testId="tile-last-sync"
         />
       </div>
 
