@@ -191,8 +191,8 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             data-testid="product-sku-input"
             hint={
               isEdit
-                ? 'SKU is unique and immutable once created (FR-PROD-001).'
-                : 'Unique master item identifier (FR-PROD-001).'
+                ? 'SKU is unique and immutable once created.'
+                : 'Unique master item identifier.'
             }
           />
 
@@ -287,7 +287,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
               disabled={submitting}
               data-testid="product-serial-tracking-toggle"
             />
-            <span>Enable Serial Number Tracking (FR-PROD-002)</span>
+            <span>Enable Serial Number Tracking</span>
           </label>
 
           {!isEdit && (

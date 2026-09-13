@@ -132,6 +132,7 @@ describe('ReturnStockView — Issue 08 Acceptance Criteria', (): void => {
     vi.spyOn(tauriAuthService, 'getSession').mockResolvedValue(MOCK_SESSION);
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'getProductsByStore').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriTransactionService, 'getStockBalanceForBucket').mockImplementation(
       async (_storeId: string, _productId: string, bucket: StockBucket) => {
         const qtyMap: Record<StockBucket, number> = {

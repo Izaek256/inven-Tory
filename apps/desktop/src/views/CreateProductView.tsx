@@ -202,9 +202,7 @@ export const CreateProductView: React.FC = () => {
             <Plus size={24} color="var(--it-green)" />
             <div>
               <h2 className="view-title">Create Product</h2>
-              <p className="view-subtitle">
-                Rapid product entry — Model number becomes the SKU (FR-PROD-001)
-              </p>
+              <p className="view-subtitle">Rapid product entry — model number becomes the SKU</p>
             </div>
           </div>
         </div>

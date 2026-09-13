@@ -13,7 +13,7 @@ import { Store } from '../types/store';
 import { Product } from '../types/product';
 import { Transfer, TransferStatus } from '../types/transfer';
 import { getStores } from '../services/tauriStoreService';
-import { searchProducts, getProducts } from '../services/tauriProductService';
+import { searchProducts, getProductsByStore } from '../services/tauriProductService';
 import { getStockBalance } from '../services/tauriTransactionService';
 import {
   getTransfers,
@@ -93,42 +93,68 @@ export const TransferStockView: React.FC = () => {
   // Filter State
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
 
-  // Load stores and transfer history
-  const fetchData = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [fetchedStores, fetchedProducts, fetchedTransfers] = await Promise.all([
-        getStores(),
-        getProducts(),
-        getTransfers(),
-      ]);
-      setStores(fetchedStores);
-      setProducts(fetchedProducts);
-      setTransfers(fetchedTransfers);
+  // Load stores and transfer history; refresh products when the active store changes.
+  const fetchData = useCallback(
+    async (storeIdOverride?: string): Promise<void> => {
+      setLoading(true);
+      setError(null);
+      try {
+        const [fetchedStores, fetchedTransfers] = await Promise.all([getStores(), getTransfers()]);
+        setStores(fetchedStores);
+        setTransfers(fetchedTransfers);
 
-      // Initialize destination store if not already set
-      if (fetchedStores.length >= 2 && !destinationStoreId) {
-        // Pick the first store that isn't the active store as default destination
-        const firstNonActive = fetchedStores.find((s) => s.id !== activeStoreId);
-        if (firstNonActive) {
-          setDestinationStoreId(firstNonActive.id);
+        // Products are store-scoped for the source picker. Refresh whenever
+        // the active store changes, including when the user switches stores.
+        const targetStoreId = storeIdOverride ?? activeStoreId;
+        if (targetStoreId) {
+          const scoped = await getProductsByStore(targetStoreId);
+          setProducts(scoped);
+        } else {
+          setProducts([]);
         }
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-  }, [destinationStoreId, activeStoreId]);
 
+        // Initialize destination store if not already set
+        if (fetchedStores.length >= 2 && !destinationStoreId) {
+          // Pick the first store that isn't the active store as default destination
+          const firstNonActive = fetchedStores.find((s) => s.id !== activeStoreId);
+          if (firstNonActive) {
+            setDestinationStoreId(firstNonActive.id);
+          }
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [destinationStoreId],
+  );
+
+  // Initial load on mount
   useEffect(() => {
-    fetchData();
+    void fetchData();
   }, [fetchData]);
 
-  // Product search autocomplete
+  // Re-load products when the store changes via the global store-switch event.
+  // Uses the storeId from the event detail to avoid stale-closure bugs where
+  // the activeStoreId captured in the closure is the previous store's ID.
   useEffect(() => {
-    if (!searchQuery.trim()) {
+    const handler = (e: Event): void => {
+      const storeId = (e as CustomEvent<{ storeId: string }>).detail?.storeId;
+      if (storeId) {
+        void fetchData(storeId);
+      }
+    };
+    window.addEventListener('inven-tory:stores-updated', handler);
+    return (): void => {
+      window.removeEventListener('inven-tory:stores-updated', handler);
+    };
+  }, [fetchData]);
+
+  // Product search autocomplete — only show products from the active store (Task E).
+  useEffect(() => {
+    if (!searchQuery.trim() || !activeStoreId) {
       setMatchingProducts([]);
       return;
     }
@@ -138,7 +164,10 @@ export const TransferStockView: React.FC = () => {
       try {
         const results = await searchProducts(searchQuery);
         if (isMounted) {
-          setMatchingProducts(results);
+          // Only products available in the active store may be transferred out.
+          const scopedIds = new Set(products.map((p) => p.id));
+          const scoped = results.filter((p) => p.is_active && scopedIds.has(p.id));
+          setMatchingProducts(scoped);
         }
       } catch (err) {
         // eslint-disable-next-line no-console
@@ -151,7 +180,8 @@ export const TransferStockView: React.FC = () => {
       isMounted = false;
       clearTimeout(timer);
     };
-  }, [searchQuery]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchQuery, products]);
 
   // Fetch available stock balance when active store or product changes
   useEffect(() => {
@@ -508,14 +538,13 @@ export const TransferStockView: React.FC = () => {
           <div>
             <h2 className="view-title">Inter-Store Stock Transfers</h2>
             <p className="view-subtitle">
-              Move inventory between stores with linked transaction history (FR-MOV-004, Section 11,
-              AT-005)
+              Move inventory between stores with linked transaction history
             </p>
           </div>
         </div>
         <Button
           variant="secondary"
-          onClick={fetchData}
+          onClick={(): void => void fetchData()}
           disabled={loading}
           data-testid="btn-refresh"
         >

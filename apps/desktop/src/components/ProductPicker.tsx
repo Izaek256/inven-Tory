@@ -27,14 +27,14 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
   const inputRef = useRef<HTMLInputElement>(null);
   const resultsContainerRef = useRef<HTMLDivElement>(null);
 
-  // Auto-focus input element on mount (Keyboard-first / Barcode scanner friendly per Section 18)
+  // Auto-focus input element on mount (Keyboard-first / Barcode scanner friendly)
   useEffect((): void => {
     if (autoFocus && inputRef.current) {
       inputRef.current.focus();
     }
   }, [autoFocus]);
 
-  // Execute live search against local DB data (FR-PROD-003)
+  // Execute live search against local DB data
   useEffect((): (() => void) => {
     let isCancelled = false;
     const fetchResults = async (): Promise<void> => {

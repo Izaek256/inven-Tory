@@ -1,5 +1,5 @@
 /**
- * tauriSyncService — Issue 15 (SYNC-007/008/009/010/011).
+ * tauriSyncService.
  *
  * Implements the client-side push/pull sync engine:
  *
@@ -12,7 +12,7 @@
  *     and upserts the server-side product/store catalogue into local SQLite.
  *
  *     Stores the last-successful-sync timestamp via set_last_sync_timestamp
- *     so the Header can display it (SYNC-009).
+ *     so the Header can display it.
  *
  *   getLastSyncTimestamp()
  *     Returns the ISO string of the last successful sync, or null.
@@ -22,7 +22,7 @@
  *
  *   Background scheduling (startBackgroundSync / stopBackgroundSync):
  *     Runs triggerSync on a configurable interval (default: 30 s).
- *     Never blocks foreground entry — runs in the background (SYNC-007).
+ *     Never blocks foreground entry — runs in the background.
  *
  * Design notes
  * ------------
@@ -59,7 +59,7 @@ export interface SyncConfig {
    * JWT Bearer token for authenticated requests.
    * If omitted, tauriSyncService will attempt to obtain it from tauriAuthService.
    * If null/empty and tauriAuthService returns null (expired offline), sync is
-   * skipped but pending transactions are NOT discarded (Section 21 offline rule).
+   * skipped but pending transactions are NOT discarded (offline rule).
    */
   accessToken?: string;
   /** Maximum number of outbox events per push request (default: 100). */
@@ -190,7 +190,7 @@ async function _setLastSyncTimestamp(timestamp: string): Promise<void> {
 
 /**
  * Returns the ISO timestamp of the last successful sync, or null if none.
- * Feeds the Header's last-sync display (SYNC-009).
+ * Feeds the Header's last-sync display.
  */
 export async function getLastSyncTimestamp(): Promise<string | null> {
   return _getLastSyncTimestamp();
@@ -379,7 +379,7 @@ async function _httpPull(
 }
 
 // ---------------------------------------------------------------------------
-// Main sync runner (SYNC-007)
+// Main sync runner
 // ---------------------------------------------------------------------------
 
 /**
@@ -404,10 +404,10 @@ async function _httpPull(
  * Returns a ClientSyncState snapshot after the run.
  *
  * Guarantees:
- *   - Never blocks foreground entry — caller can fire-and-forget (SYNC-007).
+ *   - Never blocks foreground entry — caller can fire-and-forget.
  *   - Re-entrant guard prevents concurrent runs.
- *   - Batched upload (SYNC-010): up to batchSize events per HTTP call.
- *   - Exponential backoff on retryable errors (SYNC-011) stored in SQLite.
+ *   - Batched upload: up to batchSize events per HTTP call.
+ *   - Exponential backoff on retryable errors stored in SQLite.
  */
 export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> {
   if (_syncInProgress) {
@@ -443,7 +443,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     }
   }
 
-  // Offline-token-expiry guard (Section 21): if we have no token because the
+  // Offline-token-expiry guard: if we have no token because the
   // token expired while offline, skip the sync entirely — but do NOT discard
   // pending transactions.  The outbox continues to queue; sync resumes after
   // re-authentication.
@@ -671,7 +671,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
 /**
  * Start a background sync loop that fires triggerSync on the given interval.
- * Never blocks the foreground thread (SYNC-007).
+ * Never blocks the foreground thread.
  *
  * @param config     Sync configuration (apiBaseUrl, accessToken).
  * @param intervalMs How often to attempt a sync (default: 30 000 ms).

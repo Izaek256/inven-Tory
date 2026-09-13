@@ -1,5 +1,5 @@
 /**
- * Sync-related TypeScript types for Issue 15 (SYNC-007/008/009/010/011).
+ * Sync-related TypeScript types.
  *
  * These types mirror the server-side Pydantic schemas in
  * services/api/app/api/v1/sync.py.

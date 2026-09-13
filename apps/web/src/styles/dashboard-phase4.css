@@ -1,0 +1,364 @@
+/* ── Dashboard charts row (Phase 4 / Task D polish pass + Phase 5 fix) ──────────
+ * Card chrome (surface, border, radius, shadow, padding) is shared with the
+ * KPI tiles and table panels via the grouped rule in index.css — only layout
+ * lives here, so every card on the page renders with identical treatment.
+ */
+
+.web-dashboard-charts-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--it-sp-4);
+  min-height: 320px;
+}
+
+.web-dashboard-chart-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--it-sp-2);
+}
+
+.web-dashboard-chart-title {
+  display: flex;
+  align-items: center;
+  gap: var(--it-sp-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--it-text-primary);
+}
+
+.web-dashboard-chart-panel:nth-child(3) {
+  grid-column: 1 / -1;
+}
+
+/* ── Dashboard tables row (Phase 4 / Task D polish pass) ────────── */
+
+.web-dashboard-tables-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--it-sp-4);
+}
+
+.web-dashboard-table-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--it-sp-2);
+}
+
+.web-dashboard-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--it-sp-2);
+}
+
+.web-dashboard-table-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--it-text-primary);
+}
+
+.web-dashboard-table-link {
+  font-size: 12px;
+  color: var(--it-accent-text);
+  text-decoration: none;
+  font-weight: 500;
+  border-radius: var(--it-r-sm);
+  transition: color var(--it-dur-fast) var(--it-ease);
+}
+
+.web-dashboard-table-link:hover {
+  text-decoration: underline;
+}
+
+.web-dashboard-table-link:focus-visible {
+  outline: none;
+  box-shadow: var(--it-focus-ring);
+}
+
+.web-dashboard-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.web-dashboard-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--it-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: var(--it-tracking-label);
+  padding: var(--it-sp-2);
+  border-bottom: 1px solid var(--it-border);
+}
+
+.web-dashboard-table td {
+  padding: var(--it-sp-2);
+  border-bottom: 1px solid var(--it-border);
+  color: var(--it-text-primary);
+}
+
+/* Interactive feedback: every clickable row acknowledges hover (Task E). */
+.web-dashboard-table tbody tr {
+  transition: background-color var(--it-dur-fast) var(--it-ease);
+}
+
+.web-dashboard-table tbody tr:hover {
+  background-color: var(--it-gray-surface);
+}
+
+.web-dashboard-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ── Recent Activity preview (Phase 4 / Task A fix) ──────────────── */
+
+.web-dashboard-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--it-sp-2);
+}
+
+.web-dashboard-preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--it-sp-2);
+}
+
+.web-dashboard-preview-title {
+  display: flex;
+  align-items: center;
+  gap: var(--it-sp-2);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--it-text-primary);
+}
+
+.web-dashboard-preview-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--it-sp-1);
+}
+
+.web-dashboard-preview-item {
+  display: flex;
+  align-items: center;
+  gap: var(--it-sp-2);
+  padding: var(--it-sp-2);
+  border-radius: var(--it-r-sm);
+  font-size: 13px;
+  transition: background-color var(--it-dur-fast) var(--it-ease);
+}
+
+.web-dashboard-preview-item:hover {
+  background-color: var(--it-gray-surface);
+}
+
+/* Task A root cause was here (by omission): the content wrapper between the
+ * icon and the timestamp had NO rule at all, so its two <span> children
+ * rendered inline and the product name glued onto the detail text
+ * ("…Fridgestock sold"). A flex column makes each line a true block:
+ * the name is always its own visually distinct line with real spacing,
+ * at every viewport width. */
+.web-dashboard-preview-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.web-dashboard-preview-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background-color: var(--it-gray-surface);
+  color: var(--it-text-secondary);
+  flex-shrink: 0;
+}
+
+.web-dashboard-preview-label {
+  color: var(--it-text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-dashboard-preview-meta {
+  font-size: 12px;
+  color: var(--it-text-secondary);
+  font-variant-numeric: tabular-nums;
+  /* Truncate gracefully instead of re-breaking onto the name line. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.web-dashboard-preview-time {
+  font-size: 11px;
+  color: var(--it-text-disabled);
+  flex-shrink: 0;
+}
+
+/* ── Date range select ──────────────────────────────────────────── */
+
+.web-daterange-select {
+  font-size: 12px;
+  padding: 4px 8px;
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-sm);
+  background-color: var(--it-surface);
+  color: var(--it-text-primary);
+  cursor: pointer;
+  font-family: var(--it-font-ui);
+}
+
+.web-daterange-select:focus-visible {
+  outline: none;
+  box-shadow: var(--it-focus-ring);
+}
+
+/* ── Sidebar footer (Phase 4 — web only) ───────────────────────── */
+
+.web-sidebar-footer {
+  margin-top: auto;
+  padding-top: 12px;
+  border-top: 1px solid var(--it-border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--it-text-secondary);
+}
+
+.web-sidebar-footer__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.web-sidebar-footer__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.web-sidebar-footer__dot--online {
+  background-color: var(--it-green);
+}
+
+.web-sidebar-footer__dot--offline {
+  background-color: var(--it-red);
+}
+
+.web-sidebar-footer__pending {
+  font-family: var(--it-font-mono);
+  color: var(--it-amber-text);
+}
+
+.web-sidebar-footer__sync-btn {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: var(--it-r-sm);
+  border: 1px solid var(--it-border);
+  background: transparent;
+  color: var(--it-text-primary);
+  cursor: pointer;
+  transition: all var(--it-dur-fast) var(--it-ease);
+}
+
+.web-sidebar-footer__sync-btn:hover {
+  background-color: var(--it-gray-surface);
+}
+
+/* ── Category donut two-column layout (chart ~45% / legend ~55%) ─── */
+
+/* Narrow viewports: stack the donut above the legend (Phase 4 card→stacked). */
+@media (max-width: 560px) {
+  .it-donut-layout {
+    flex-direction: column;
+  }
+
+  .it-donut-chart {
+    flex: 1 1 auto !important;
+    width: 100%;
+    min-height: 220px;
+  }
+
+  .it-donut-legend {
+    width: 100%;
+  }
+}
+
+/* ── Responsive dashboard (Phase 4 / Task C grid fill + Phase 5 two-tier) ───── */
+
+/* Desktop: Equal 3x3 grid for 9 tiles */
+@media (min-width: 1280px) {
+  .web-dashboard-tiles {
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--it-sp-4);
+  }
+
+  .web-dashboard-tile--primary,
+  .web-dashboard-tile--secondary {
+    grid-column: span 1;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1279px) {
+  .web-dashboard-charts-row {
+    grid-template-columns: 1fr;
+  }
+
+  .web-dashboard-tables-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Tablet: two-tier still applies but with responsive sizing */
+  .web-dashboard-tiles {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--it-sp-3);
+  }
+
+  .web-dashboard-tile--primary {
+    grid-column: span 1;
+  }
+
+  .web-dashboard-tile--secondary {
+    grid-column: span 1;
+  }
+}
+
+@media (max-width: 767px) {
+  .web-dashboard-charts-row {
+    grid-template-columns: 1fr;
+  }
+
+  .web-dashboard-tables-row {
+    grid-template-columns: 1fr;
+  }
+
+  /* Phone: single column stack */
+  .web-dashboard-tiles {
+    grid-template-columns: 1fr;
+    gap: var(--it-sp-3);
+  }
+
+  .web-dashboard-tile--primary,
+  .web-dashboard-tile--secondary {
+    grid-column: span 1;
+  }
+
+  .web-dashboard-table th,
+  .web-dashboard-table td {
+    padding: var(--it-sp-1) var(--it-sp-1);
+    font-size: 12px;
+  }
+}

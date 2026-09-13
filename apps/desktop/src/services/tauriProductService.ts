@@ -109,6 +109,34 @@ export async function searchProductsFts5(query: string): Promise<Product[]> {
   );
 }
 
+/**
+ * Return the active products available for operation in a given store.
+ *
+ * In the Tauri runtime this uses the store-scoped SQL command so products from
+ * other stores are never returned. In browser/test environments it falls back
+ * to a best-effort local filter.
+ */
+export async function getProductsByStore(storeId: string): Promise<Product[]> {
+  if (isTauriEnvironment()) {
+    try {
+      const scoped = await invoke<Product[]>('get_products_by_store', {
+        storeId,
+        store_id: storeId,
+      });
+      return scoped.filter((p) => p.is_active);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriProductService] getProductsByStore failed:', err);
+    }
+  }
+
+  const all = await getProducts();
+  const byStore = all.filter(
+    (p) => p.store_id === storeId || p.store_id === undefined || p.store_id === null,
+  );
+  return byStore.filter((p) => p.is_active);
+}
+
 export async function createProduct(input: CreateProductInput): Promise<Product> {
   if (isTauriEnvironment()) {
     try {

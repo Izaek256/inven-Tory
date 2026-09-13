@@ -877,6 +877,14 @@ def _validate_payload(payload: TransactionPayload) -> str | None:
     if payload.movement_type not in VALID_MOVEMENT_TYPES:
         return f"movement_type must be one of {VALID_MOVEMENT_TYPES}"
 
+    # Phase 3 (Task F): Sale/Issue transactions must carry a receipt number.
+    # reference_number is the wire field for the receipt; it is enforced
+    # server-side here — client-side validation alone is not sufficient.
+    # Legacy rows with a NULL reference_number are left untouched; the
+    # requirement applies to new transactions going forward.
+    if payload.movement_type == "SALE" and not (payload.reference_number or "").strip():
+        return "reference_number is required for SALE transactions"
+
     return None
 
 

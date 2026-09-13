@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Check, AlertCircle, Eye, EyeOff, ArrowDownCircle } from 'lucide-react';
-import { searchProductsFts5, getProducts } from '../services/tauriProductService';
+import { searchProductsFts5, getProductsByStore } from '../services/tauriProductService';
 import {
   receiveStock,
   updateTransaction,
@@ -110,11 +110,16 @@ export const ReceiveStockView: React.FC = () => {
     void loadSession();
   }, []);
 
-  // ── All products (right-panel default) ───────────────────────────────────
+  // ── All products (right-panel default, store-scoped) ─────────────────────
 
-  const loadAllProducts = useCallback(async (): Promise<void> => {
+  const loadAllProducts = useCallback(async (storeIdOverride?: string): Promise<void> => {
+    // Drop the previous store's state so switching stores never shows stale items.
+    setSearchResults([]);
+    setCommittedTxnIds(new Map());
+    const targetStoreId = storeIdOverride ?? activeStoreId;
+    if (!targetStoreId) return;
     try {
-      const products = await getProducts();
+      const products = await getProductsByStore(targetStoreId);
       const active = products.filter((p) => p.is_active);
 
       const items: SearchResultItem[] = active.map((p) => ({
@@ -139,10 +144,28 @@ export const ReceiveStockView: React.FC = () => {
     } catch {
       // Silently fail — FTS5 search will still work
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Initial load on mount
   useEffect(() => {
     void loadAllProducts();
+  }, [loadAllProducts]);
+
+  // Re-load products when the store changes via the global store-switch event.
+  // Uses the storeId from the event detail to avoid stale-closure bugs where
+  // the activeStoreId captured in the closure is the previous store's ID.
+  useEffect(() => {
+    const handler = (e: Event): void => {
+      const storeId = (e as CustomEvent<{ storeId: string }>).detail?.storeId;
+      if (storeId) {
+        void loadAllProducts(storeId);
+      }
+    };
+    window.addEventListener('inven-tory:stores-updated', handler);
+    return (): void => {
+      window.removeEventListener('inven-tory:stores-updated', handler);
+    };
   }, [loadAllProducts]);
 
   // ── Live search (instant local filter + 100 ms debounced backend FTS5) ─────
@@ -172,8 +195,12 @@ export const ReceiveStockView: React.FC = () => {
       searchTimerRef.current = setTimeout(async () => {
         try {
           const results = await searchProductsFts5(query);
+          // FTS5 spans the whole catalogue — keep only products available in the
+          // active store so the pane never surfaces items from another store.
+          const scopedIds = new Set(allProducts.map((p) => p.id));
+          const scoped = results.filter((p) => p.is_active && scopedIds.has(p.id));
           setSearchResults(
-            results.map((p) => ({
+            scoped.map((p) => ({
               id: p.id,
               label: p.name,
               subtitle: p.model ?? undefined,
@@ -186,12 +213,12 @@ export const ReceiveStockView: React.FC = () => {
 
           setProductMap((prev) => {
             const next = new Map(prev);
-            results.forEach((p) => next.set(p.id, p));
+            scoped.forEach((p) => next.set(p.id, p));
             return next;
           });
           setNameToId((prev) => {
             const next = new Map(prev);
-            results.forEach((p) => next.set(p.name, p.id));
+            scoped.forEach((p) => next.set(p.name, p.id));
             return next;
           });
         } catch {
@@ -209,7 +236,9 @@ export const ReceiveStockView: React.FC = () => {
       if (!barcode.trim()) return;
       try {
         const results = await searchProductsFts5(barcode);
-        const exact = results.find((p) => p.barcode === barcode || p.sku === barcode);
+        const scopedIds = new Set(allProducts.map((p) => p.id));
+        const scoped = results.filter((p) => scopedIds.has(p.id));
+        const exact = scoped.find((p) => p.barcode === barcode || p.sku === barcode);
         if (exact) {
           setSearchResults([
             {
@@ -227,7 +256,7 @@ export const ReceiveStockView: React.FC = () => {
         // Ignore scan errors
       }
     },
-    [],
+    [allProducts],
   );
 
   // ── Row commit ────────────────────────────────────────────────────────────

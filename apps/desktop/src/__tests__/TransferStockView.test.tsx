@@ -131,6 +131,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
     vi.spyOn(tauriStoreService, 'getStores').mockResolvedValue(MOCK_STORES);
     vi.spyOn(tauriProductService, 'searchProducts').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue([MOCK_PRODUCT]);
+    vi.spyOn(tauriProductService, 'getProductsByStore').mockResolvedValue([MOCK_PRODUCT]);
     vi.spyOn(tauriTransactionService, 'getStockBalance').mockResolvedValue({
       id: 'SB-STORE-A-PROD-001-AVAILABLE',
       store_id: 'STORE-A',

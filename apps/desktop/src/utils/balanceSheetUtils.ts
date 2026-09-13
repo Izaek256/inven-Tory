@@ -1,5 +1,5 @@
 /**
- * Balance sheet computation utilities for Day Books (Section 4).
+ * Balance sheet computation utilities for Day Books.
  *
  * These functions run entirely client-side. The data model:
  *

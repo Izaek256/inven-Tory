@@ -239,7 +239,7 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
         # Get the admin user ID (should be ID 1 since it's created first)
         admin_user = session.scalar(select(User).where(User.username == "admin"))
         admin_user_id = admin_user.id if admin_user else 1
-        
+
         for store_id, product_id, qty in INITIAL_STOCK:
             if not session.scalar(
                 select(StockBalance).where(

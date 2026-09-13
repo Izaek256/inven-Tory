@@ -17,6 +17,7 @@ from sqlalchemy import text
 
 from app.api.v1 import (
     auth,
+    dashboard,
     day_books,
     devices,
     products,
@@ -158,6 +159,7 @@ async def health_check() -> dict[str, str]:
 API_V1_PREFIX = "/api/v1"
 
 app.include_router(auth.router, prefix=API_V1_PREFIX)
+app.include_router(dashboard.router, prefix=API_V1_PREFIX)
 app.include_router(devices.router, prefix=API_V1_PREFIX)
 app.include_router(sync.router, prefix=API_V1_PREFIX)
 app.include_router(products.router, prefix=API_V1_PREFIX)

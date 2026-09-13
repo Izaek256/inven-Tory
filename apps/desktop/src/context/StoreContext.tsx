@@ -1,5 +1,4 @@
-import { createContext, useContext } from 'react';
-import { useAppState } from '../hooks/useAppState';
+import React, { createContext, useContext } from 'react';
 
 interface StoreContextValue {
   activeStoreId: string | null;
@@ -11,8 +10,17 @@ const StoreContext = createContext<StoreContextValue>({
   setActiveStoreId: () => {},
 });
 
-export const StoreProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { activeStoreId, setActiveStoreId } = useAppState();
+interface StoreProviderProps {
+  children: React.ReactNode;
+  activeStoreId: string | null;
+  setActiveStoreId: (storeId: string | null) => void;
+}
+
+export const StoreProvider: React.FC<StoreProviderProps> = ({
+  children,
+  activeStoreId,
+  setActiveStoreId,
+}) => {
   return (
     <StoreContext.Provider value={{ activeStoreId, setActiveStoreId }}>
       {children}

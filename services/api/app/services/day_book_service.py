@@ -142,15 +142,15 @@ async def generate_balance_sheet(
     """
     Generate a balance sheet for a day book.
 
-    This calculates the closing balance based on all entries in the day book
-    and marks the balance sheet as generated.
+    This calculates the closing balance based on ALL AVAILABLE-bucket
+    transactions for the day (including hidden movement types like
+    ADJUSTMENT, RETURN, DAMAGE) so the balance is correct even when
+    stock was recalibrated by a recount or readjustment.
 
-    Args:
-        db: Database session
-        day_book_id: Day book identifier
-
-    Returns:
-        Dictionary containing balance sheet data
+    Hidden movement types update the underlying stock_balances but are
+    not shown as Day Book entries. They must still be included in the
+    closing balance calculation, otherwise the reported balance would
+    disagree with the true stock position.
     """
     # Get the day book
     result = await db.execute(select(DayBook).where(DayBook.id == day_book_id))
@@ -159,13 +159,21 @@ async def generate_balance_sheet(
     if not day_book:
         raise ValueError(f"Day book {day_book_id} not found")
 
-    # Calculate closing balance (opening + sum of all entries)
-    entries_result = await db.execute(
-        select(func.sum(DayBookEntry.quantity_delta)).where(DayBookEntry.day_book_id == day_book_id)
+    # Calculate closing balance: opening + ALL transaction deltas for the day.
+    # We sum directly from InventoryTransaction (not DayBookEntry) so that
+    # hidden movement types (ADJUSTMENT, RETURN, DAMAGE) are included even
+    # though they don't appear as visible entries in the day book.
+    day_result = await db.execute(
+        select(func.sum(InventoryTransaction.quantity_delta)).where(
+            InventoryTransaction.store_id == day_book.store_id,
+            InventoryTransaction.stock_bucket == "AVAILABLE",
+            func.date(InventoryTransaction.occurred_at) == day_book.book_date.date(),
+            InventoryTransaction.sync_status != "REJECTED",
+        )
     )
-    entries_sum = entries_result.scalar() or 0
+    day_total = day_result.scalar() or 0
 
-    closing_balance = day_book.opening_balance + entries_sum
+    closing_balance = day_book.opening_balance + day_total
 
     # Update day book
     day_book.closing_balance = closing_balance
@@ -260,17 +268,28 @@ async def get_day_book_with_entries(
     if not day_book:
         return None
 
-    # Get entries with product names
+    # Get entries with product names — only RECEIPT and SALE are shown in the
+    # Day Book (what came in / what went out). ADJUSTMENT, RETURN, DAMAGE,
+    # TRANSFER_IN, and TRANSFER_OUT are excluded from the visible ledger but
+    # still update the underlying stock balance correctly.
+    _DAY_BOOK_VISIBLE_TYPES = {"RECEIPT", "SALE"}
+
     entries_result = await db.execute(
         select(DayBookEntry, Product.name)
         .join(Product, DayBookEntry.product_id == Product.id)
-        .where(DayBookEntry.day_book_id == day_book_id)
+        .where(
+            DayBookEntry.day_book_id == day_book_id,
+            DayBookEntry.movement_type.in_(_DAY_BOOK_VISIBLE_TYPES),
+        )
         .order_by(DayBookEntry.occurred_at)
     )
     entries_with_products = list(entries_result.all())
 
-    # Seed per-product opening balances from all AVAILABLE-bucket transactions
-    # that occurred before this day book's date (same store).
+    # Seed per-product opening balances from ALL prior AVAILABLE-bucket
+    # transactions (same store). The Day Book only *displays* RECEIPT/SALE
+    # entries, but the opening/closing balance math must reflect every
+    # operation that touched stock (receives, recounts, returns, damage, etc.)
+    # so the balance is always correct regardless of what's visibly logged.
     product_ids = list({e.product_id for e, _ in entries_with_products})
     product_running: dict[str, int] = {}
     if product_ids:
@@ -293,11 +312,51 @@ async def get_day_book_with_entries(
         for row in prior_result.all():
             product_running[row.product_id] = int(row.prior_sum or 0)
 
+    # Fetch same-day hidden transactions (ADJUSTMENT, RETURN, DAMAGE, TRANSFER_IN,
+    # TRANSFER_OUT) that are NOT visible in the Day Book but still affect stock.
+    # These must be applied to the running balance BEFORE visible entries that
+    # occur later on the same day, so the displayed running_balance reflects
+    # the true stock position after recounts/readjustments.
+    same_day_hidden: list[InventoryTransaction] = []
+    if product_ids:
+        from app.models.inventory_transaction import InventoryTransaction as TxnModel
+
+        same_day_hidden_result = await db.execute(
+            select(TxnModel)
+            .where(
+                TxnModel.store_id == day_book.store_id,
+                TxnModel.product_id.in_(product_ids),
+                TxnModel.stock_bucket == "AVAILABLE",
+                func.date(TxnModel.occurred_at) == day_book.book_date.date(),
+                TxnModel.movement_type.notin_(_DAY_BOOK_VISIBLE_TYPES),
+                TxnModel.sync_status != "REJECTED",
+            )
+            .order_by(TxnModel.occurred_at)
+        )
+        same_day_hidden = list(same_day_hidden_result.scalars().all())
+
     # Calculate running balance for each entry — per product, starting from
-    # that product's cumulative balance before today.
+    # that product's cumulative balance before today plus any same-day hidden
+    # operations (adjustments, returns, damage) that occurred before this entry.
     entries_data = []
 
     for entry, product_name in entries_with_products:
+        # Apply any same-day hidden transactions that occurred before this entry
+        for hidden_tx in same_day_hidden:
+            if (
+                hidden_tx.product_id == entry.product_id
+                and hidden_tx.occurred_at < entry.occurred_at
+            ):
+                product_running[hidden_tx.product_id] = (
+                    product_running.get(hidden_tx.product_id, 0) + hidden_tx.quantity_delta
+                )
+        # Remove applied transactions to avoid double-counting on next entry
+        same_day_hidden = [
+            tx
+            for tx in same_day_hidden
+            if not (tx.product_id == entry.product_id and tx.occurred_at < entry.occurred_at)
+        ]
+
         before = product_running.get(entry.product_id, 0)
         after = before + entry.quantity_delta
         product_running[entry.product_id] = after

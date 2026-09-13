@@ -125,8 +125,8 @@ export const StoreModal: React.FC<StoreModalProps> = ({
           data-testid="store-code-input"
           hint={
             isEdit
-              ? 'Unique store code is immutable after creation (FR-STORE-002).'
-              : 'Unique identifier for local inventory assignment (FR-STORE-002).'
+              ? 'Unique store code is immutable after creation.'
+              : 'Unique identifier for local inventory assignment.'
           }
         />
 

@@ -8,7 +8,7 @@
  *     successful login, so the desktop app can be placed and used on ANY
  *     machine without a separate device-registration step.
  *
- * Offline behavior (Section 21):
+ * Offline behavior:
  *   - When offline with an expired token, users see a banner instead of this
  *     screen — local operations continue and the outbox keeps queuing.
  *   - This screen is only shown when there is NO cached session at all

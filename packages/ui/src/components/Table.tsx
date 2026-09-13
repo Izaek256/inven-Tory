@@ -5,10 +5,15 @@ export type SortDirection = 'asc' | 'desc' | null;
 
 export interface ColumnDef<T> {
   key: string;
-  header: string;
+  header: string | React.ReactElement;
   sortable?: boolean;
   numeric?: boolean; // right-align + JetBrains Mono
   width?: string;
+  minWidth?: string;
+  /** Explicit cell/header alignment; overrides numeric's right-align when set. */
+  align?: 'left' | 'center' | 'right';
+  /** Allow the header text to wrap (word-wrap) instead of staying on one line. */
+  headerWrap?: boolean;
   render?: (row: T) => React.ReactNode;
   accessor?: (row: T) => string | number | boolean | null | undefined;
 }
@@ -68,12 +73,18 @@ export function DataTable<T>({
                   key={col.key}
                   className={[
                     'it-th',
-                    col.numeric ? 'it-th--numeric' : '',
+                    col.numeric && !col.align ? 'it-th--numeric' : '',
+                    col.align ? `it-th--align-${col.align}` : '',
+                    col.headerWrap ? 'it-th--wrap' : '',
                     col.sortable ? 'it-th--sortable' : '',
                   ]
                     .filter(Boolean)
                     .join(' ')}
-                  style={col.width ? { width: col.width } : undefined}
+                  style={
+                    col.width || col.minWidth
+                      ? { width: col.width, minWidth: col.minWidth }
+                      : undefined
+                  }
                   onClick={col.sortable ? (): void => handleSort(col.key) : undefined}
                   aria-sort={
                     sortKey === col.key
@@ -119,7 +130,11 @@ export function DataTable<T>({
                   {columns.map((col) => (
                     <td
                       key={col.key}
-                      className={['it-td', col.numeric ? 'it-td--numeric' : '']
+                      className={[
+                        'it-td',
+                        col.numeric && !col.align ? 'it-td--numeric' : '',
+                        col.align ? `it-td--align-${col.align}` : '',
+                      ]
                         .filter(Boolean)
                         .join(' ')}
                     >
@@ -163,6 +178,9 @@ const CSS = `
   white-space: nowrap;
 }
 .it-th--numeric { text-align: right; }
+.it-th--wrap { white-space: normal; overflow-wrap: anywhere; }
+.it-th--align-center { text-align: center; }
+.it-th--align-right { text-align: right; }
 .it-th--sortable { cursor: pointer; }
 .it-th--sortable:hover { color: var(--it-text-primary); }
 .it-th__inner { display: inline-flex; align-items: center; gap: var(--it-sp-1); }
@@ -185,6 +203,8 @@ const CSS = `
   text-align: right;
   color: var(--it-text-primary);
 }
+.it-td--align-center { text-align: center; }
+.it-td--align-right { text-align: right; }
 .it-td--empty { text-align: center; padding: var(--it-sp-12); }
 .it-table__empty-text { color: var(--it-text-secondary); }
 `;

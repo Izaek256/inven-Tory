@@ -56,6 +56,7 @@ def _tx_item(
     movement_type: str = "RECEIPT",
     stock_bucket: str = "AVAILABLE",
     days_ago: int = 0,
+    reference_number: str | None = None,
 ) -> dict:
     occurred_at = datetime.now(UTC) - timedelta(days=days_ago)
     return {
@@ -68,6 +69,7 @@ def _tx_item(
         "user_id": str(user_id),
         "device_id": device_id,
         "stock_bucket": stock_bucket,
+        "reference_number": reference_number,
     }
 
 
@@ -255,6 +257,7 @@ async def test_at003_pending_events_sync_correct_balance(
             transaction_id=sale_tx_id,
             quantity_delta=-20,
             movement_type="SALE",
+            reference_number="RCP-AT003",
         ),
     ]
 
