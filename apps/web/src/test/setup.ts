@@ -1,6 +1,10 @@
 import '@testing-library/jest-dom';
 import { beforeEach, afterEach, vi } from 'vitest';
 
+// Pin timezone to UTC for consistent date formatting across environments
+// This prevents snapshot failures due to timezone differences (e.g., CI vs local)
+process.env.TZ = 'UTC';
+
 // Polyfill ResizeObserver for recharts (not implemented in jsdom)
 (globalThis as Record<string, unknown>).ResizeObserver =
   (globalThis as Record<string, unknown>).ResizeObserver ??
