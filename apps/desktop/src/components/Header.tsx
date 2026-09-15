@@ -24,6 +24,12 @@ interface HeaderProps {
   interactiveTimeMs?: number | null;
   currentUser?: AuthSession | null;
   onLogout?: () => void;
+  importProgress?: {
+    running: boolean;
+    done: number;
+    total: number;
+    errors: number;
+  } | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeStoreId,
   onSelectStore,
   onLogout,
+  importProgress,
 }) => {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -194,6 +201,43 @@ export const Header: React.FC<HeaderProps> = ({
             label={isOnline ? 'Online' : 'Offline Mode'}
           />
         </div>
+
+        {/* Import Progress Bar — visible whenever a bulk import is running,
+            including the file-parsing phase before the row count is known */}
+        {importProgress && importProgress.running && (
+          <div
+            className="import-progress-container"
+            data-testid="import-progress-container"
+            title={
+              importProgress.total > 0
+                ? `Importing products: ${importProgress.done}/${importProgress.total} (${importProgress.errors} errors)`
+                : 'Reading import file…'
+            }
+          >
+            <div className="import-progress-bar">
+              {importProgress.total > 0 ? (
+                <div
+                  className="import-progress-fill"
+                  style={{
+                    width: `${Math.min(100, (importProgress.done / importProgress.total) * 100)}%`,
+                  }}
+                />
+              ) : (
+                <div className="import-progress-fill import-progress-fill--indeterminate" />
+              )}
+            </div>
+            <span className="import-progress-label">
+              {importProgress.total > 0 ? (
+                <>
+                  {importProgress.done}/{importProgress.total}
+                  {importProgress.errors > 0 && ` (${importProgress.errors} errors)`}
+                </>
+              ) : (
+                'Reading file…'
+              )}
+            </span>
+          </div>
+        )}
 
         {/* Pending Sync Count Badge — clickable to trigger manual sync */}
         <div

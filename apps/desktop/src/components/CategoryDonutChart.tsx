@@ -154,7 +154,8 @@ export function CategoryDonutChart({
                 borderRadius: 'var(--it-r-md)',
                 boxShadow: 'var(--it-shadow-lg)',
               }}
-              formatter={(value: number, name: string) => [value, name]}
+              // @ts-expect-error - @types/recharts missing mixed array type in TooltipFormatter
+              formatter={(value: string | number | number[], name: string) => [String(value), name]}
               labelStyle={{ color: 'var(--it-text-primary)', fontWeight: 500 }}
             />
             {/* No recharts <Legend> — the legend is a plain HTML list below,

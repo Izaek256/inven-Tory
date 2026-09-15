@@ -273,7 +273,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
     // Wait for the debounced backend search to fire (100ms debounce in SaleStockView.tsx)
     await waitFor(
       () => {
-        expect(tauriProductService.searchProductsFts5).toHaveBeenCalledWith('His');
+        expect(tauriProductService.searchProductsFts5).toHaveBeenCalledWith('His', 'STORE-A');
       },
       { timeout: 1000 },
     );

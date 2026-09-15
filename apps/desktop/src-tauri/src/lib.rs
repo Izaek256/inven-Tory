@@ -812,20 +812,23 @@ pub mod commands {
     }
 
     #[tauri::command]
-    pub fn search_products(query: String) -> Result<Vec<Product>, String> {
+    pub fn search_products(query: String, store_id: Option<String>) -> Result<Vec<Product>, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
         let term = format!("%{}%", query.trim().to_lowercase());
 
+        // When store_id is provided, stock_quantity is scoped to that store's
+        // AVAILABLE balance (correct for sale / receiving operations). Without
+        // it the quantity aggregates across all stores (catalogue total).
         let mut stmt = conn
             .prepare(
                 "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
                  p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
                  COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
                  FROM products p \
-                 LEFT JOIN stock_balances sb ON sb.product_id = p.id \
+                 LEFT JOIN stock_balances sb ON sb.product_id = p.id AND sb.store_id = COALESCE(?2, sb.store_id) \
                  WHERE LOWER(p.name) LIKE ?1 OR LOWER(p.sku) LIKE ?1 OR LOWER(COALESCE(p.model, '')) LIKE ?1 \
                     OR LOWER(COALESCE(p.barcode, '')) LIKE ?1 OR LOWER(COALESCE(p.alternate_names, '')) LIKE ?1 \
                  GROUP BY p.id \
@@ -834,7 +837,7 @@ pub mod commands {
             .map_err(|e| format!("Failed to prepare search query: {}", e))?;
 
         let prod_iter = stmt
-            .query_map(params![term], |row| {
+            .query_map(params![term, store_id], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
                 let stock_qty: i32 = row.get(13)?;
@@ -952,6 +955,117 @@ pub mod commands {
             updated_at: now,
             stock_quantity: Some(0),
         })
+    }
+
+    #[derive(Debug, Deserialize, Clone)]
+    pub struct BatchProductItem {
+        pub sku: String,
+        pub name: String,
+        pub brand: Option<String>,
+        pub model: Option<String>,
+        pub category: String,
+        pub unit: Option<String>,
+        pub barcode: Option<String>,
+        pub alternate_names: Option<String>,
+    }
+
+    #[derive(Debug, Serialize)]
+    pub struct BatchProductResult {
+        pub row_index: usize,
+        pub success: bool,
+        pub error: Option<String>,
+        pub product_id: Option<String>,
+        pub sku: Option<String>,
+    }
+
+    #[tauri::command]
+    pub fn create_products_batch(
+        inputs: Vec<BatchProductItem>,
+    ) -> Result<Vec<BatchProductResult>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let now = now_iso();
+
+        let mut results: Vec<BatchProductResult> = Vec::with_capacity(inputs.len());
+
+        // Collect all store IDs so each new product gets a stock_balance row per store.
+        let mut store_stmt = conn
+            .prepare("SELECT id FROM stores WHERE is_active = 1")
+            .map_err(|e| format!("SQL error: {}", e))?;
+        let store_rows: Vec<String> = store_stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("Failed to query stores: {}", e))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(store_stmt);
+        let store_ids = store_rows;
+
+        for (idx, input) in inputs.into_iter().enumerate() {
+            let name_clean = input.name.trim().to_string();
+            let category_clean = input.category.trim().to_string();
+            let unit_clean = input.unit.unwrap_or_else(|| "pcs".to_string()).trim().to_string();
+
+            if name_clean.is_empty() {
+                results.push(BatchProductResult { row_index: idx, success: false, error: Some("Product name cannot be empty.".into()), product_id: None, sku: None });
+                continue;
+            }
+
+            // Check if product with same name already exists (case-insensitive)
+            let existing_name: i32 = conn
+                .query_row("SELECT COUNT(*) FROM products WHERE LOWER(name) = LOWER(?1)", params![name_clean], |r| r.get(0))
+                .unwrap_or(0);
+            if existing_name > 0 {
+                results.push(BatchProductResult { row_index: idx, success: false, error: Some(format!("Product name '{}' already exists.", name_clean)), product_id: None, sku: None });
+                continue;
+            }
+
+            let sku_clean = if input.sku.trim().is_empty() {
+                let cat_prefix: String = category_clean.chars().filter(|c| c.is_alphanumeric()).take(4).collect::<String>().to_uppercase();
+                let prefix = if cat_prefix.is_empty() { "PROD".to_string() } else { cat_prefix };
+                // Include the row's own content in the hash so auto-generated
+                // SKUs stay unique across batches processed within the same
+                // second (each batch is a separate command invocation).
+                let content_hash: u32 = now.as_bytes().iter().map(|&b| b as u32).sum::<u32>()
+                    + name_clean.bytes().map(|b| b as u32).sum::<u32>()
+                    + idx as u32;
+                let rand_val = (content_hash * 17) % 9000 + 1000;
+                format!("{}-{}", prefix, rand_val)
+            } else {
+                input.sku.trim().to_uppercase()
+            };
+
+            // SKU uniqueness check
+            let dup: i32 = conn
+                .query_row("SELECT COUNT(*) FROM products WHERE UPPER(sku) = ?1", params![sku_clean], |r| r.get(0))
+                .unwrap_or(0);
+            if dup > 0 {
+                results.push(BatchProductResult { row_index: idx, success: false, error: Some(format!("SKU '{}' already exists.", sku_clean)), product_id: None, sku: None });
+                continue;
+            }
+
+            let product_id = generate_id("PROD");
+            match conn.execute(
+                "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 1, ?10, ?11)",
+                params![product_id, sku_clean, name_clean, input.brand, input.model, category_clean, unit_clean, input.barcode, input.alternate_names, now, now],
+            ) {
+                Ok(_) => {
+                    // Create stock_balance rows for every active store (default 0)
+                    for sid in &store_ids {
+                        conn.execute(
+                            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, 'AVAILABLE', 0, ?4) ON CONFLICT(store_id, product_id, stock_bucket) DO NOTHING",
+                            params![format!("SB-{}-{}-AVAILABLE", sid, product_id), sid, product_id, now],
+                        ).ok();
+                    }
+                    results.push(BatchProductResult { row_index: idx, success: true, error: None, product_id: Some(product_id), sku: Some(sku_clean) });
+                }
+                Err(e) => {
+                    results.push(BatchProductResult { row_index: idx, success: false, error: Some(format!("Insert failed: {}", e)), product_id: None, sku: None });
+                }
+            }
+        }
+
+        Ok(results)
     }
 
     #[tauri::command]
@@ -2049,7 +2163,7 @@ pub mod commands {
 
         let tx_id = generate_id("TX");
         conn.execute(
-            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'PENDING')",
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER_OUT', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'PENDING')",
             params![
                 tx_id,
                 transfer.source_store_id,
@@ -2084,7 +2198,7 @@ pub mod commands {
             "transaction_id": tx_id,
             "store_id": transfer.source_store_id,
             "product_id": transfer.product_id,
-            "movement_type": "TRANSFER",
+            "movement_type": "TRANSFER_OUT",
             "stock_bucket": "AVAILABLE",
             "quantity_delta": quantity_delta,
             "occurred_at": now,
@@ -2159,7 +2273,7 @@ pub mod commands {
 
         let tx_id = generate_id("TX");
         conn.execute(
-            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'PENDING')",
+            "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER_IN', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'PENDING')",
             params![
                 tx_id,
                 transfer.destination_store_id,
@@ -2194,7 +2308,7 @@ pub mod commands {
             "transaction_id": tx_id,
             "store_id": transfer.destination_store_id,
             "product_id": transfer.product_id,
-            "movement_type": "TRANSFER",
+            "movement_type": "TRANSFER_IN",
             "stock_bucket": "AVAILABLE",
             "quantity_delta": quantity_delta,
             "occurred_at": now,
@@ -2262,7 +2376,7 @@ pub mod commands {
         if transfer.status == "DISPATCHED" || transfer.status == "EXCEPTION" {
             let comp_tx_id = generate_id("TX");
             conn.execute(
-                "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, 'TRANSFER CANCELLED -> Stock Restored', ?10, 'PENDING')",
+                "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, sync_status) VALUES (?1, ?2, ?3, 'TRANSFER_OUT', 'AVAILABLE', ?4, ?5, ?6, ?7, ?8, ?9, 'TRANSFER CANCELLED -> Stock Restored', ?10, 'PENDING')",
                 params![
                     comp_tx_id,
                     transfer.source_store_id,
@@ -2296,7 +2410,7 @@ pub mod commands {
                 "transaction_id": comp_tx_id,
                 "store_id": transfer.source_store_id,
                 "product_id": transfer.product_id,
-                "movement_type": "TRANSFER",
+                "movement_type": "TRANSFER_OUT",
                 "stock_bucket": "AVAILABLE",
                 "quantity_delta": transfer.quantity,
                 "occurred_at": now,
@@ -2900,6 +3014,69 @@ pub mod commands {
             .map_err(|e| format!("Failed to reset sending outbox events: {}", e))?;
         }
 
+        // 1b. Repair legacy outbox events that used movement_type "TRANSFER"
+        //     (invalid on server; should be TRANSFER_OUT or TRANSFER_IN).
+        //     Rewrites the stored JSON payload and the corresponding
+        //     inventory_transactions row so the next push succeeds.
+        if force_sync {
+            let mut repair_stmt = conn
+                .prepare("SELECT id, event_id, payload FROM outbox_events WHERE event_type = 'INVENTORY_TRANSACTION'")
+                .map_err(|e| format!("SQL error preparing repair query: {}", e))?;
+            let repair_rows: Vec<(String, String, String)> = repair_stmt
+                .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .map_err(|e| format!("Failed to query outbox for repair: {}", e))?
+                .filter_map(|r| r.ok())
+                .collect();
+            drop(repair_stmt);
+
+            for (oe_id, _oe_event_id, payload_str) in repair_rows {
+                let parsed: serde_json::Value = match serde_json::from_str(&payload_str) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let mt = match parsed.get("movement_type").and_then(|v| v.as_str()) {
+                    Some(s) => s,
+                    None => continue,
+                };
+                if mt != "TRANSFER" {
+                    continue;
+                }
+                // Determine correct type from reference_number prefix
+                let ref_num = parsed.get("reference_number").and_then(|v| v.as_str()).unwrap_or("");
+                let delta = parsed.get("quantity_delta").and_then(|v| v.as_i64()).unwrap_or(0);
+                let new_mt = if ref_num.starts_with("TRF-RECV-") {
+                    "TRANSFER_IN"
+                } else if ref_num.starts_with("TRF-DISP-") || ref_num.starts_with("TRF-CNCL-") {
+                    "TRANSFER_OUT"
+                } else if delta < 0 {
+                    "TRANSFER_OUT"
+                } else {
+                    "TRANSFER_IN"
+                };
+
+                // Rewrite the outbox payload JSON
+                if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&payload_str) {
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("movement_type".to_string(), serde_json::Value::String(new_mt.to_string()));
+                        if let Ok(new_payload) = serde_json::to_string(&val) {
+                            conn.execute(
+                                "UPDATE outbox_events SET payload = ?1 WHERE id = ?2",
+                                params![new_payload, oe_id],
+                            ).ok();
+                        }
+                    }
+                }
+
+                // Also fix the local inventory_transactions row so the ledger is consistent
+                if let Some(tx_id) = parsed.get("transaction_id").and_then(|v| v.as_str()) {
+                    conn.execute(
+                        "UPDATE inventory_transactions SET movement_type = ?1 WHERE transaction_id = ?2",
+                        params![new_mt, tx_id],
+                    ).ok();
+                }
+            }
+        }
+
         let mut stmt = conn
             .prepare(
                 "SELECT id, event_id, event_type, payload, status, retry_count, \
@@ -3349,7 +3526,7 @@ pub mod commands {
     }
 
     #[tauri::command]
-    pub fn search_products_fts5(query: String) -> Result<Vec<Product>, String> {
+    pub fn search_products_fts5(query: String, store_id: Option<String>) -> Result<Vec<Product>, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
@@ -3385,14 +3562,15 @@ pub mod commands {
                             LIMIT 50 \
                          ) fts \
                          JOIN products p ON p.rowid = fts.rowid \
-                         LEFT JOIN stock_balances sb ON sb.product_id = p.id AND sb.stock_bucket = 'AVAILABLE' \
+                         LEFT JOIN stock_balances sb \
+                            ON sb.product_id = p.id AND sb.stock_bucket = 'AVAILABLE' AND sb.store_id = COALESCE(?2, sb.store_id) \
                          GROUP BY p.id \
                          ORDER BY fts.rank ASC"
                     )
                     .map_err(|e| format!("Failed to prepare FTS5 search query: {}", e))?;
 
                 let prod_iter = stmt
-                    .query_map(params![fts_query], |row| {
+                    .query_map(params![fts_query, store_id], |row| {
                         let st_int: i32 = row.get(9)?;
                         let active_int: i32 = row.get(10)?;
                         let stock_qty: i32 = row.get(13)?;
@@ -3431,7 +3609,7 @@ pub mod commands {
         }
 
         // Fallback to substring LIKE query if FTS5 returned 0 results or encountered an issue
-        search_products(query)
+        search_products(query, store_id)
     }
 
     /// Persist the last-successful-sync timestamp (SYNC-009).
@@ -3486,6 +3664,7 @@ pub fn run() {
             commands::search_products,
             commands::search_products_fts5,
             commands::create_product,
+            commands::create_products_batch,
             commands::update_product,
             commands::toggle_product_active,
             commands::receive_stock,

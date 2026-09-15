@@ -842,3 +842,206 @@ async def test_push_same_product_and_event_twice_is_idempotent(
     )
     assert balance is not None
     assert balance.quantity == 5
+
+
+# ---------------------------------------------------------------------------
+# Regression: desktop-initiated transfers carry a transfer_id that does NOT
+# exist in the central transfers table (the desktop owns the transfer
+# lifecycle and never replicates transfer rows). inventory_transactions must
+# accept the ledger events anyway — the old hard FK to transfers.id rejected
+# every TRANSFER_OUT/TRANSFER_IN with an IntegrityError, leaving the desktop
+# outbox stuck in RETRYABLE_ERROR ("sync no longer working").
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_transfer_events_accepted_without_server_side_transfer_row(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """
+    Push a RECEIPT baseline, then a TRANSFER_OUT at the source store and a
+    TRANSFER_IN at the destination store whose transfer_id refers to a
+    transfer that only exists in the desktop database.
+
+    Both legs must be accepted (previously they were rejected with an
+    "inventory_transactions_transfer_id_fkey" IntegrityError) and the final
+    balances must be zero-sum: source loses 10, destination gains 10.
+    """
+    source = await _seed_store(db_session, code="STORE-MAIN")
+    dest = await _seed_store(db_session, code="STORE-BRANCH")
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, source.id, user.id)
+    product = await _seed_product(db_session)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+    server_unknown_transfer_id = _uid()  # only exists in the desktop DB
+
+    baseline = client.post(
+        "/api/v1/sync/push",
+        json={
+            "events": [
+                _tx_item(
+                    source.id,
+                    product.id,
+                    user.id,
+                    device.id,
+                    movement_type="RECEIPT",
+                    quantity_delta=51,
+                )
+            ]
+        },
+        headers=headers,
+    )
+    assert baseline.status_code == 200
+    assert baseline.json()["accepted_count"] == 1
+
+    transfer = client.post(
+        "/api/v1/sync/push",
+        json={
+            "events": [
+                _tx_item(
+                    source.id,
+                    product.id,
+                    user.id,
+                    device.id,
+                    movement_type="TRANSFER_OUT",
+                    quantity_delta=-10,
+                    reference_number=f"TRF-DISP-{server_unknown_transfer_id}",
+                )
+                | {"transfer_id": server_unknown_transfer_id},
+                _tx_item(
+                    dest.id,
+                    product.id,
+                    user.id,
+                    device.id,
+                    movement_type="TRANSFER_IN",
+                    quantity_delta=10,
+                    reference_number=f"TRF-RECV-{server_unknown_transfer_id}",
+                )
+                | {"transfer_id": server_unknown_transfer_id},
+            ]
+        },
+        headers=headers,
+    )
+    assert transfer.status_code == 200
+    data = transfer.json()
+    assert data["accepted_count"] == 2, f"rejections: {data.get('rejections')}"
+    assert data["rejected_count"] == 0
+
+    async def _balance(store_id: str) -> int:
+        row = (
+            (
+                await db_session.execute(
+                    select(StockBalance).where(
+                        StockBalance.store_id == store_id,
+                        StockBalance.product_id == product.id,
+                        StockBalance.stock_bucket == "AVAILABLE",
+                    )
+                )
+            )
+            .scalars()
+            .first()
+        )
+        return row.quantity if row is not None else 0
+
+    assert await _balance(source.id) == 41  # 51 - 10
+    assert await _balance(dest.id) == 10  # 0 + 10
+
+    ledger = (
+        (
+            await db_session.execute(
+                select(InventoryTransaction.store_id).where(
+                    InventoryTransaction.transfer_id == server_unknown_transfer_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert sorted(ledger) == sorted([source.id, dest.id])
+
+
+@pytest.mark.asyncio
+async def test_resubmit_already_accepted_transaction_returns_accepted(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """
+    Regression: when the ledger already holds a transaction_id (an earlier /
+    concurrent submission won) but the stored SyncReceipt is a stale rejected
+    one, re-pushing the event must return ACCEPTED — not a retryable
+    "Unexpected error: duplicate key … inventory_transactions_pkey" rejection
+    that leaves the client outbox stuck in RETRYABLE_ERROR forever.
+
+    Covers the deadlock seen after the transfer FK migration: the desktop
+    events were durably accepted (balances correct) yet every re-submission
+    collided on the pkey and was mis-labelled a retryable error.
+    """
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    product = await _seed_product(db_session)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+    tx_id = _uid()
+    now = datetime.now(UTC)
+
+    # Simulate an acceptance that happened out-of-band: ledger row exists and
+    # a stale REJECTED receipt (from a prior "duplicate key" failure) lingers.
+    db_session.add(
+        InventoryTransaction(
+            transaction_id=tx_id,
+            store_id=store.id,
+            product_id=product.id,
+            movement_type="RECEIPT",
+            stock_bucket="AVAILABLE",
+            quantity_delta=5,
+            occurred_at=now,
+            recorded_at=now,
+            user_id=user.id,
+            device_id=device.id,
+            sync_status="ACCEPTED",
+            server_accepted_at=now,
+        )
+    )
+    db_session.add(
+        SyncReceipt(
+            transaction_id=tx_id,
+            accepted=False,
+            rejection_reason=(
+                "Unexpected error: duplicate key value violates unique constraint "
+                '"inventory_transactions_pkey"'
+            ),
+            received_at=now,
+            processed_at=now,
+        )
+    )
+    await db_session.commit()
+
+    response = client.post(
+        "/api/v1/sync/push",
+        json={
+            "events": [
+                _tx_item(
+                    store.id,
+                    product.id,
+                    user.id,
+                    device.id,
+                    transaction_id=tx_id,
+                    quantity_delta=5,
+                )
+            ]
+        },
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.json()["accepted_count"] == 1
+    assert response.json()["rejected_count"] == 0
+
+    stored = await db_session.get(SyncReceipt, tx_id)
+    assert stored is not None
+    assert stored.accepted is True
+    assert stored.rejection_reason is None

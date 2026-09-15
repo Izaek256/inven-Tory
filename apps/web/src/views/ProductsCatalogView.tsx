@@ -1,46 +1,44 @@
 /**
- * Web Products view — global (all-stores) product catalogue.
- *
- * Primary table is the cross-store distribution breakdown (Phase 3, Task D):
- *   Product Name | Model | SKU | <Store 1> Qty | ... | <Store N> Qty | Total
- *
- * One dynamic column per store that exists in the system, plus the computed
- * Total. Stores with no stock for a product render a dash, never an empty
- * or broken row. This view is global — it is NOT scoped to a single store.
- * Writes stay store-scoped elsewhere; this table is read-only reference.
- *
- * Below the tablet breakpoint (see index.css @media) the table falls back to
- * a card-per-product layout where each store's quantity is a labeled row.
+ * Products view — corrected spec (scope reduction).
+ * Stores as stacked real names (store name + qty), not short badges.
+ * Columns: Product (name+SKU/model subtitle) | Category | Stores (stacked) | Total Stock | Actions (eye)
+ * No SKU/Brand/Status columns, no pencil/overflow, only eye.
  */
 
 import React, { useEffect, useMemo, useState } from 'react';
-import { Button, DataTable, EmptyState, SearchInput, Spinner, type ColumnDef } from '@invenTory/ui';
-import { Eye, Package, Store as StoreIcon } from 'lucide-react';
+import { Button, EmptyState, Spinner } from '@invenTory/ui';
+import {
+  Eye,
+  Package,
+  Search,
+  SlidersHorizontal,
+  List,
+  LayoutGrid,
+  Plus,
+  Store as StoreIcon,
+} from 'lucide-react';
 import { searchProducts } from '../services/dashboardService';
 import type { ProductSearchResult, StoreQuantity } from '../types/dashboard';
 import { InventoryPanel } from '../components/InventoryPanel';
 
 const CATALOG_LIMIT = 200;
+const PAGE_SIZE = 10;
 
 export interface StoreColumn {
   store_id: string;
   store_name: string;
 }
 
-/** Build one dynamic column per store seen in the results (scales with N). */
 export function deriveStoreColumns(results: ProductSearchResult[]): StoreColumn[] {
   const byId = new Map<string, string>();
   for (const r of results) {
-    for (const sq of r.store_quantities ?? []) {
-      byId.set(sq.store_id, sq.store_name);
-    }
+    for (const sq of r.store_quantities ?? []) byId.set(sq.store_id, sq.store_name);
   }
   return [...byId.entries()]
     .map(([store_id, store_name]) => ({ store_id, store_name }))
     .sort((a, b) => a.store_name.localeCompare(b.store_name));
 }
 
-/** Quantity for one store, or null when the product holds no stock there. */
 export function storeQty(
   storeQuantities: StoreQuantity[] | undefined,
   storeId: string,
@@ -50,19 +48,52 @@ export function storeQty(
   return sq ? sq.quantity : null;
 }
 
-export function ProductsCatalogView(): React.ReactElement {
+function getStatus(total: number, threshold: number | null): 'in' | 'low' | 'out' {
+  if (total === 0) return 'out';
+  if (threshold !== null && total < threshold) return 'low';
+  return 'in';
+}
+
+function StoreBreakdown({ quantities }: { quantities: StoreQuantity[] }): React.ReactElement {
+  if (!quantities.length) return <span className="web-cell-empty">—</span>;
+  return (
+    <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {quantities.map((sq) => (
+        <span
+          key={sq.store_id}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+        >
+          <StoreIcon
+            size={12}
+            aria-hidden="true"
+            style={{ color: 'var(--it-text-secondary)', flexShrink: 0 }}
+          />
+          <span style={{ fontWeight: 600 }}>{sq.store_name}</span>
+          <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--it-text-secondary)' }}>
+            {sq.quantity}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+export function ProductsCatalogView({ topSearch }: { topSearch?: string }): React.ReactElement {
   const [query, setQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [brandFilter, setBrandFilter] = useState('all');
+  const [storeFilter, setStoreFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [allResults, setAllResults] = useState<ProductSearchResult[]>([]);
   const [storeColumns, setStoreColumns] = useState<StoreColumn[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<ProductSearchResult | null>(null);
+  const [page, setPage] = useState(1);
+  const [viewMode, setViewMode] = useState<'list' | 'grid'>('list');
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth < 768 : false,
   );
-  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load full catalogue with cross-store breakdown (Task D backend scope).
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -85,33 +116,64 @@ export function ProductsCatalogView(): React.ReactElement {
     };
   }, []);
 
-  // Client-side search over name/SKU/brand/model/category (same behavior as
-  // the previous dashboard search bar).
-  const filteredResults = useMemo(() => {
-    if (!query.trim()) return allResults;
-    const term = query.toLowerCase();
-    return allResults.filter(
-      (r) =>
-        r.name.toLowerCase().includes(term) ||
-        r.sku.toLowerCase().includes(term) ||
-        (r.brand ?? '').toLowerCase().includes(term) ||
-        (r.model ?? '').toLowerCase().includes(term) ||
-        r.category.toLowerCase().includes(term),
-    );
-  }, [allResults, query]);
-
-  // Responsive: swap table -> card fallback below the tablet breakpoint.
   useEffect(() => {
     const handleResize = (): void => setIsNarrow(window.innerWidth < 768);
     window.addEventListener('resize', handleResize);
     return (): void => window.removeEventListener('resize', handleResize);
   }, []);
 
-  const handleSearch = (value: string): void => {
-    setQuery(value);
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => setQuery(value), 200);
-  };
+  useEffect(() => {
+    if (topSearch !== undefined) setQuery(topSearch);
+  }, [topSearch]);
+
+  const categories = useMemo(
+    () => Array.from(new Set(allResults.map((r) => r.category))).sort(),
+    [allResults],
+  );
+  const brands = useMemo(
+    () => Array.from(new Set(allResults.map((r) => r.brand).filter(Boolean) as string[])).sort(),
+    [allResults],
+  );
+
+  const filteredResults = useMemo(() => {
+    let res = allResults;
+    if (query.trim()) {
+      const term = query.toLowerCase();
+      res = res.filter(
+        (r) =>
+          r.name.toLowerCase().includes(term) ||
+          r.sku.toLowerCase().includes(term) ||
+          (r.brand ?? '').toLowerCase().includes(term) ||
+          (r.model ?? '').toLowerCase().includes(term) ||
+          r.category.toLowerCase().includes(term),
+      );
+    }
+    if (categoryFilter !== 'all') res = res.filter((r) => r.category === categoryFilter);
+    if (brandFilter !== 'all') res = res.filter((r) => r.brand === brandFilter);
+    if (storeFilter !== 'all') {
+      res = res.filter((r) =>
+        r.store_quantities?.some((sq) => sq.store_id === storeFilter && sq.quantity > 0),
+      );
+    }
+    return res;
+  }, [allResults, query, categoryFilter, brandFilter, storeFilter]);
+
+  const total = allResults.length;
+  const inStock = allResults.filter(
+    (r) => getStatus(r.total_quantity ?? 0, r.low_stock_threshold) === 'in',
+  ).length;
+  const lowStock = allResults.filter(
+    (r) => getStatus(r.total_quantity ?? 0, r.low_stock_threshold) === 'low',
+  ).length;
+  const outOfStock = allResults.filter(
+    (r) => getStatus(r.total_quantity ?? 0, r.low_stock_threshold) === 'out',
+  ).length;
+  const pct = (n: number): number => (total ? (n / total) * 100 : 0);
+
+  const totalPages = Math.max(1, Math.ceil(filteredResults.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRows = filteredResults.slice(startIdx, startIdx + PAGE_SIZE);
 
   if (selectedProduct) {
     return (
@@ -123,111 +185,194 @@ export function ProductsCatalogView(): React.ReactElement {
     );
   }
 
-  const columns: ColumnDef<ProductSearchResult>[] = [
-    {
-      key: 'name',
-      header: 'Product Name',
-      sortable: true,
-      accessor: (r) => r.name,
-      render: (r) => (
-        <span className="web-cell-product">
-          <span className="web-cell-product__name">{r.name}</span>
-          <span className="web-cell-product__secondary">{r.brand ?? ''}</span>
-        </span>
-      ),
-    },
-    {
-      key: 'model',
-      header: 'Model',
-      sortable: true,
-      accessor: (r) => r.model ?? '',
-      render: (r) =>
-        r.model ? (
-          <span className="web-cell-mono">{r.model}</span>
-        ) : (
-          <span className="web-cell-empty">—</span>
-        ),
-    },
-    {
-      key: 'sku',
-      header: 'SKU',
-      sortable: true,
-      accessor: (r) => r.sku,
-      render: (r) => <span className="web-cell-mono">{r.sku}</span>,
-    },
-    // Dynamic per-store quantity columns — column count scales with stores.
-    ...storeColumns.map((col): ColumnDef<ProductSearchResult> => ({
-      key: `store-${col.store_id}`,
-      header: col.store_name,
-      numeric: true,
-      accessor: (r) => storeQty(r.store_quantities, col.store_id) ?? 0,
-      render: (r: ProductSearchResult): React.ReactNode => {
-        const qty = storeQty(r.store_quantities, col.store_id);
-        return qty === null ? (
-          <span className="web-cell-empty" data-testid={`store-qty-empty-${r.id}-${col.store_id}`}>
-            —
-          </span>
-        ) : (
-          <span className="web-cell-qty" data-testid={`store-qty-${r.id}-${col.store_id}`}>
-            {qty.toLocaleString()}
-          </span>
-        );
-      },
-    })),
-    {
-      key: 'total_quantity',
-      header: 'Total',
-      numeric: true,
-      sortable: true,
-      accessor: (r) => r.total_quantity ?? 0,
-      render: (r) => (
-        <span className="web-cell-total" data-testid={`total-qty-${r.id}`}>
-          {(r.total_quantity ?? 0).toLocaleString()}
-        </span>
-      ),
-    },
-    {
-      key: 'actions',
-      header: 'Actions',
-      numeric: true,
-      render: (r) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setSelectedProduct(r)}
-          data-testid={`view-product-${r.id}`}
-          title={`View ${r.name}`}
-        >
-          <Eye size={14} aria-hidden="true" />
-          View
-        </Button>
-      ),
-      accessor: (r) => r.id,
-    },
-  ];
-
   return (
     <div className="web-catalog-view" data-testid="products-catalog-view">
-      <div className="web-view-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <Package size={22} color="var(--it-green)" aria-hidden="true" />
+      <div className="prod-header">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span
+            style={{
+              width: 36,
+              height: 36,
+              borderRadius: 10,
+              background: 'rgba(34,197,94,0.14)',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--it-green)',
+            }}
+          >
+            <Package size={20} aria-hidden="true" />
+          </span>
           <div>
-            <h2 className="web-view-title">Products</h2>
-            <p className="web-view-subtitle">
+            <h2 className="prod-header__title">Products</h2>
+            <p className="prod-header__subtitle">
               Global catalogue with per-store stock distribution across {storeColumns.length} store
               {storeColumns.length === 1 ? '' : 's'}
             </p>
           </div>
         </div>
+        <button className="prod-add-btn" data-testid="add-product-btn" onClick={(): void => {}}>
+          <Plus size={16} aria-hidden="true" /> Add Product
+        </button>
       </div>
 
-      <div className="web-search-bar">
-        <SearchInput
-          value={query}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleSearch(e.target.value)}
-          placeholder="Search by name, SKU, brand, model or category…"
-          data-testid="catalog-search"
-        />
+      <div className="prod-summary" data-testid="prod-summary-tiles">
+        <div className="summary-tile" data-testid="summary-total">
+          <div className="summary-tile__head">
+            <span className="summary-tile__icon" style={{ background: 'var(--it-green)' }}>
+              <Package size={18} color="#fff" />
+            </span>
+            <span className="summary-tile__label">Total Products</span>
+          </div>
+          <span className="summary-tile__value">{total.toLocaleString()}</span>
+          <span className="summary-tile__meta">
+            ≈ {(pct(total) || 100).toFixed(1)}% of catalogue
+          </span>
+          <div className="summary-tile__bar">
+            <div
+              className="summary-tile__bar-fill"
+              style={{ width: '100%', background: 'var(--it-green)' }}
+            />
+          </div>
+        </div>
+        <div className="summary-tile" data-testid="summary-instock">
+          <div className="summary-tile__head">
+            <span className="summary-tile__icon" style={{ background: 'var(--it-blue)' }}>
+              <StoreIcon size={18} color="#fff" />
+            </span>
+            <span className="summary-tile__label">In Stock</span>
+          </div>
+          <span className="summary-tile__value">{inStock.toLocaleString()}</span>
+          <span className="summary-tile__meta">{pct(inStock).toFixed(1)}% of total</span>
+          <div className="summary-tile__bar">
+            <div
+              className="summary-tile__bar-fill"
+              style={{ width: `${pct(inStock)}%`, background: 'var(--it-blue)' }}
+            />
+          </div>
+        </div>
+        <div className="summary-tile" data-testid="summary-lowstock">
+          <div className="summary-tile__head">
+            <span className="summary-tile__icon" style={{ background: 'var(--it-amber)' }}>
+              <SlidersHorizontal size={18} color="#fff" />
+            </span>
+            <span className="summary-tile__label">Low Stock</span>
+          </div>
+          <span className="summary-tile__value">{lowStock.toLocaleString()}</span>
+          <span className="summary-tile__meta">{pct(lowStock).toFixed(1)}% of total</span>
+          <div className="summary-tile__bar">
+            <div
+              className="summary-tile__bar-fill"
+              style={{ width: `${pct(lowStock)}%`, background: 'var(--it-amber)' }}
+            />
+          </div>
+        </div>
+        <div className="summary-tile" data-testid="summary-outstock">
+          <div className="summary-tile__head">
+            <span className="summary-tile__icon" style={{ background: 'var(--it-red)' }}>
+              <Package size={18} color="#fff" />
+            </span>
+            <span className="summary-tile__label">Out of Stock</span>
+          </div>
+          <span className="summary-tile__value">{outOfStock.toLocaleString()}</span>
+          <span className="summary-tile__meta">{pct(outOfStock).toFixed(1)}% of total</span>
+          <div className="summary-tile__bar">
+            <div
+              className="summary-tile__bar-fill"
+              style={{ width: `${pct(outOfStock)}%`, background: 'var(--it-red)' }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="prod-filters" data-testid="prod-filters">
+        <div className="prod-filters__search">
+          <Search size={16} aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(e): void => {
+              setQuery(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search products..."
+            data-testid="catalog-search"
+            aria-label="Search products"
+          />
+        </div>
+        <select
+          className="prod-select"
+          value={categoryFilter}
+          onChange={(e): void => {
+            setCategoryFilter(e.target.value);
+            setPage(1);
+          }}
+          data-testid="filter-category"
+        >
+          <option value="all">All Categories</option>
+          {categories.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        <select
+          className="prod-select"
+          value={brandFilter}
+          onChange={(e): void => {
+            setBrandFilter(e.target.value);
+            setPage(1);
+          }}
+          data-testid="filter-brand"
+        >
+          <option value="all">All Brands</option>
+          {brands.map((b) => (
+            <option key={b} value={b}>
+              {b}
+            </option>
+          ))}
+        </select>
+        <select
+          className="prod-select"
+          value={storeFilter}
+          onChange={(e): void => {
+            setStoreFilter(e.target.value);
+            setPage(1);
+          }}
+          data-testid="filter-store"
+        >
+          <option value="all">All Stores</option>
+          {storeColumns.map((c) => (
+            <option key={c.store_id} value={c.store_id}>
+              {c.store_name}
+            </option>
+          ))}
+        </select>
+        <button
+          className="header-icon-btn"
+          aria-label="More filters"
+          style={{ width: 36, height: 36 }}
+          type="button"
+        >
+          <SlidersHorizontal size={16} />
+        </button>
+        <div className="prod-toggle" data-testid="view-toggle">
+          <button
+            className={viewMode === 'list' ? 'active' : ''}
+            onClick={(): void => setViewMode('list')}
+            aria-label="List view"
+            type="button"
+          >
+            <List size={16} />
+          </button>
+          <button
+            className={viewMode === 'grid' ? 'active' : ''}
+            onClick={(): void => setViewMode('grid')}
+            aria-label="Grid view"
+            type="button"
+          >
+            <LayoutGrid size={16} />
+          </button>
+        </div>
       </div>
 
       {loading && (
@@ -235,111 +380,215 @@ export function ProductsCatalogView(): React.ReactElement {
           <Spinner size="md" />
         </div>
       )}
-
       {error && (
         <EmptyState
           variant="error"
           heading="Failed to load catalogue"
           body={error}
-          action={
-            <Button
-              variant="primary"
-              onClick={() => {
-                setLoading(true);
-                setError(null);
-                searchProducts('', CATALOG_LIMIT, 'all-stores')
-                  .then((data) => {
-                    setAllResults(data.results);
-                    setStoreColumns(deriveStoreColumns(data.results));
-                  })
-                  .catch((err: unknown) =>
-                    setError(err instanceof Error ? err.message : String(err)),
-                  )
-                  .finally(() => setLoading(false));
-              }}
-            >
-              Retry
-            </Button>
-          }
           data-testid="catalog-error"
         />
       )}
 
-      {!loading &&
-        !error &&
-        (isNarrow ? (
-          // Card-per-product fallback for phone widths — each store's quantity
-          // is a labeled row inside the card instead of a wide flat table.
-          <div className="web-product-cards" data-testid="catalog-cards">
-            {filteredResults.map((r) => (
-              <div className="web-product-card" key={r.id} data-testid={`catalog-card-${r.id}`}>
-                <div className="web-product-card__head">
-                  <span className="web-cell-product__name">{r.name}</span>
-                  <span className="web-cell-total">{(r.total_quantity ?? 0).toLocaleString()}</span>
-                </div>
-                <div className="web-product-card__meta">
-                  <span className="web-cell-mono">{r.sku}</span>
-                  {r.model && <span className="web-cell-mono">{r.model}</span>}
-                </div>
-                <div className="web-product-card__stores">
-                  {storeColumns.map((col) => {
-                    const qty = storeQty(r.store_quantities, col.store_id);
-                    return (
-                      <div className="web-product-card__store-row" key={col.store_id}>
-                        <span className="web-product-card__store-name">
-                          <StoreIcon size={13} aria-hidden="true" />
-                          {col.store_name}
-                        </span>
-                        <span className="web-cell-qty">
-                          {qty === null ? '—' : qty.toLocaleString()}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setSelectedProduct(r)}
-                  data-testid={`view-product-card-${r.id}`}
+      {!loading && !error && (
+        <>
+          {isNarrow || viewMode === 'grid' ? (
+            <div
+              className="web-product-cards"
+              data-testid="catalog-cards"
+              style={
+                viewMode === 'grid' && !isNarrow
+                  ? { gridTemplateColumns: 'repeat(2, 1fr)', display: 'grid', gap: 12 }
+                  : undefined
+              }
+            >
+              {pageRows.map((r) => (
+                <div
+                  className="web-product-card"
+                  key={r.id}
+                  data-testid={`catalog-card-${r.id}`}
+                  style={{
+                    border: '1px solid var(--it-border)',
+                    borderRadius: 12,
+                    background: 'var(--it-card)',
+                    padding: 12,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 8,
+                  }}
                 >
-                  <Eye size={14} aria-hidden="true" />
-                  View
-                </Button>
-              </div>
-            ))}
-            {filteredResults.length === 0 && (
-              <EmptyState
-                heading="No products found"
-                body="No products match the search criteria."
-                data-testid="catalog-empty"
-              />
-            )}
-          </div>
-        ) : (
-          <div
-            style={{
-              border: '1px solid var(--it-border)',
-              borderRadius: 'var(--it-r-lg)',
-              backgroundColor: 'var(--it-card)',
-              overflow: 'hidden',
-            }}
-          >
-            <DataTable
-              columns={columns}
-              rows={filteredResults}
-              rowKey={(r) => r.id}
-              data-testid="catalog-table"
-              emptySlot={
+                  <div
+                    className="web-product-card__head"
+                    style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}
+                  >
+                    <span style={{ display: 'flex', flexDirection: 'column' }}>
+                      <span className="web-cell-product__name" style={{ fontWeight: 600 }}>
+                        {r.name}
+                      </span>
+                      <span
+                        className="web-cell-mono"
+                        style={{ fontSize: 11, color: 'var(--it-text-secondary)' }}
+                      >
+                        {r.sku}
+                        {r.model ? ` · ${r.model}` : ''} · {r.category}
+                      </span>
+                    </span>
+                    <span className="web-cell-mono" style={{ fontWeight: 700 }}>
+                      {(r.total_quantity ?? 0).toLocaleString()}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <StoreBreakdown quantities={r.store_quantities ?? []} />
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={(): void => setSelectedProduct(r)}
+                      data-testid={`view-product-card-${r.id}`}
+                    >
+                      <Eye size={14} aria-hidden="true" /> View
+                    </Button>
+                  </div>
+                </div>
+              ))}
+              {pageRows.length === 0 && (
                 <EmptyState
                   heading="No products found"
                   body="No products match the search criteria."
                   data-testid="catalog-empty"
                 />
-              }
-            />
+              )}
+            </div>
+          ) : (
+            <div
+              style={{
+                border: '1px solid var(--it-border)',
+                borderRadius: 'var(--it-r-lg)',
+                background: 'var(--it-card)',
+                overflow: 'hidden',
+              }}
+            >
+              <table className="dash-table" data-testid="catalog-table" style={{ width: '100%' }}>
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th>Category</th>
+                    <th>Stores</th>
+                    <th>Total Stock</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageRows.map((r) => (
+                    <tr key={r.id} data-testid={`catalog-row-${r.id}`}>
+                      <td>
+                        <span
+                          className="web-cell-product"
+                          style={{ display: 'flex', flexDirection: 'column', gap: 2 }}
+                        >
+                          <span className="web-cell-product__name" style={{ fontWeight: 600 }}>
+                            {r.name}
+                          </span>
+                          <span
+                            className="web-cell-mono"
+                            style={{ fontSize: 11, color: 'var(--it-text-secondary)' }}
+                          >
+                            {r.sku}
+                            {r.model ? ` · ${r.model}` : ''}
+                          </span>
+                        </span>
+                      </td>
+                      <td>{r.category}</td>
+                      <td>
+                        <StoreBreakdown quantities={r.store_quantities ?? []} />
+                      </td>
+                      <td className="web-cell-mono" style={{ fontWeight: 700 }}>
+                        {(r.total_quantity ?? 0).toLocaleString()}
+                      </td>
+                      <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={(): void => setSelectedProduct(r)}
+                          data-testid={`view-product-${r.id}`}
+                          title={`View ${r.name}`}
+                        >
+                          <Eye size={14} aria-hidden="true" />
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                  {pageRows.length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ padding: 24 }}>
+                        <EmptyState
+                          heading="No products found"
+                          body="No products match the search criteria."
+                          data-testid="catalog-empty"
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="prod-pagination" data-testid="prod-pagination">
+            <span className="prod-pagination__info" data-testid="pagination-info">
+              Showing {filteredResults.length === 0 ? 0 : startIdx + 1}–
+              {Math.min(startIdx + PAGE_SIZE, filteredResults.length)} of {filteredResults.length}{' '}
+              products
+            </span>
+            <div className="prod-pagination__pages">
+              <button
+                className="prod-page-btn"
+                disabled={safePage <= 1}
+                onClick={(): void => setPage((p) => Math.max(1, p - 1))}
+                data-testid="page-prev"
+                type="button"
+              >
+                ‹
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1)
+                .slice(0, 7)
+                .map((n) => (
+                  <button
+                    key={n}
+                    className={`prod-page-btn ${n === safePage ? 'active' : ''}`}
+                    onClick={(): void => setPage(n)}
+                    data-testid={`page-${n}`}
+                    type="button"
+                  >
+                    {n}
+                  </button>
+                ))}
+              {totalPages > 7 && (
+                <span style={{ padding: '0 4px', color: 'var(--it-text-secondary)' }}>…</span>
+              )}
+              {totalPages > 7 && (
+                <button
+                  className={`prod-page-btn ${totalPages === safePage ? 'active' : ''}`}
+                  onClick={(): void => setPage(totalPages)}
+                  data-testid={`page-${totalPages}`}
+                  type="button"
+                >
+                  {totalPages}
+                </button>
+              )}
+              <button
+                className="prod-page-btn"
+                disabled={safePage >= totalPages}
+                onClick={(): void => setPage((p) => Math.min(totalPages, p + 1))}
+                data-testid="page-next"
+                type="button"
+              >
+                ›
+              </button>
+            </div>
           </div>
-        ))}
+        </>
+      )}
     </div>
   );
 }

@@ -24,6 +24,7 @@
     "npm": ">=10.0.0"
   },
   "devDependencies": {
+    "jsdom": "^24.1.0",
     "typescript": "^5.5.0"
   }
 }

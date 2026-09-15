@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.device import Device
@@ -175,6 +176,59 @@ def _make_rejected_receipt(transaction_id: str, reason: str) -> SyncReceipt:
         received_at=now,
         processed_at=now,
     )
+
+
+def _is_inventory_transactions_pkey_collision(exc: Exception) -> bool:
+    """
+    True when ``exc`` is a duplicate-key error on ``inventory_transactions``'s
+    primary key (``transaction_id``).
+
+    transaction_id is the SYNC-003 idempotency key. A PK collision therefore
+    means the ledger ALREADY holds this transaction — it was accepted by an
+    earlier (possibly concurrent) submission. ``ingest_batch`` must treat that
+    as the authoritative accepted signal instead of surfacing a retryable
+    "Unexpected error", otherwise the desktop keeps re-pushing an acknowledged
+    event forever (outbox stuck in RETRYABLE_ERROR).
+    """
+    return isinstance(exc, IntegrityError) and "inventory_transactions_pkey" in str(exc)
+
+
+async def _ensure_accepted_receipt(
+    transaction_id: str,
+    db: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> SyncReceipt:
+    """
+    Return (and persist) an ACCEPTED SyncReceipt for ``transaction_id``.
+
+    Used when a duplicate submission collides on the inventory_transactions
+    primary key: the ledger row was already committed, so the event is durably
+    accepted. Any stale rejected receipt for the same id is flipped to
+    accepted to match the append-only guarantee.
+    """
+    now = _now_utc()
+
+    async def _persist(session: AsyncSession) -> SyncReceipt:
+        existing = await session.get(SyncReceipt, transaction_id)
+        if existing is not None:
+            existing.accepted = True
+            existing.rejection_reason = None
+            existing.processed_at = now
+            return existing
+        receipt = _make_accepted_receipt(transaction_id)
+        session.add(receipt)
+        return receipt
+
+    if session_factory is not None:
+        async with session_factory() as s:
+            receipt = await _persist(s)
+            await s.flush()
+            await s.commit()
+        return receipt
+
+    receipt = await _persist(db)
+    await db.flush()
+    return receipt
 
 
 # ---------------------------------------------------------------------------
@@ -474,7 +528,14 @@ async def _ingest_transaction_impl(
         await _rb()
         raise
     if not store_exists:
-        target_code = payload.store_id[:40].upper()
+        # Derive code from suffix after STORE- prefix to stay consistent with
+        # manual store creation (id STORE-{CODE}, code {CODE}). Using the full
+        # store_id as code produced orphan stores like STORE-ALGA-KATWE-MUSISI
+        # with code STORE-ALGA-KATWE-MUSISI instead of ALGA-KATWE-MUSISI,
+        # causing the 3-vs-4 store count mismatch.
+        raw_id = payload.store_id.strip()
+        suffix = raw_id[6:] if raw_id.upper().startswith("STORE-") else raw_id
+        target_code = suffix[:20].upper().strip() or raw_id[:20].upper()
         with db.no_autoflush:
             existing_code_owner = await db.scalar(
                 select(Store.id).where(Store.code == target_code).limit(1)
@@ -482,11 +543,11 @@ async def _ingest_transaction_impl(
         if existing_code_owner:
             import uuid
 
-            target_code = f"{target_code[:30]}-{uuid.uuid4().hex[:8]}".upper()
+            target_code = f"{target_code[:12]}-{uuid.uuid4().hex[:8]}".upper()
         auto_store = Store(
             id=payload.store_id,
             code=target_code,
-            name=f"Auto Store ({payload.store_id[:30]})",
+            name=f"Auto Store ({suffix[:30] or payload.store_id[:30]})",
             is_active=True,
         )
         db.add(auto_store)
@@ -715,6 +776,23 @@ async def ingest_batch(
                     receipt = await ingest_transaction(payload, item_session)
                     await item_session.commit()
             except Exception as exc:  # noqa: BLE001
+                if _is_inventory_transactions_pkey_collision(exc):
+                    # Already durably in the ledger (earlier/concurrent
+                    # submission) — reply accepted so the client stops
+                    # re-pushing an acknowledged event.
+                    try:
+                        receipt = await _ensure_accepted_receipt(
+                            payload.transaction_id, db, session_factory
+                        )
+                    except Exception as receipt_error:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to persist accepted receipt for tx_id=%s: %s",
+                            payload.transaction_id,
+                            receipt_error,
+                        )
+                        receipt = _make_accepted_receipt(payload.transaction_id)
+                    receipts_by_index[original_idx] = receipt
+                    continue
                 rejection_text = f"Unexpected error: {exc!s}"
                 try:
                     async with session_factory() as receipt_session:
@@ -755,6 +833,23 @@ async def ingest_batch(
                     receipt = await ingest_transaction(payload, db)
                 receipts_by_index[original_idx] = receipt
             except Exception as exc:  # noqa: BLE001
+                if _is_inventory_transactions_pkey_collision(exc):
+                    # Already durably in the ledger (earlier/concurrent
+                    # submission) — reply accepted so the client stops
+                    # re-pushing an acknowledged event.
+                    await _rb_sess(db)
+                    try:
+                        receipt = await _ensure_accepted_receipt(payload.transaction_id, db)
+                    except Exception as receipt_error:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to persist accepted receipt for tx_id=%s: %s",
+                            payload.transaction_id,
+                            receipt_error,
+                        )
+                        await _rb_sess(db)
+                        receipt = _make_accepted_receipt(payload.transaction_id)
+                    receipts_by_index[original_idx] = receipt
+                    continue
                 now = _now_utc()
                 rejection_text = f"Unexpected error: {exc!s}"
                 await _rb_sess(db)

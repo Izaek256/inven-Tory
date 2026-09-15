@@ -126,7 +126,7 @@ export function CategoryDonutChart({
       <div
         data-testid="donut-chart-area"
         className="it-donut-chart"
-        style={{ position: 'relative', flex: '0 0 45%', height: '100%' }}
+        style={{ position: 'relative', flex: '0 0 58%', height: '100%' }}
       >
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
@@ -134,8 +134,8 @@ export function CategoryDonutChart({
               data={formattedData}
               cx="50%"
               cy="50%"
-              innerRadius={64}
-              outerRadius={96}
+              innerRadius={58}
+              outerRadius={88}
               paddingAngle={2}
               dataKey="count"
               nameKey="category"
@@ -212,7 +212,7 @@ export function CategoryDonutChart({
           display: 'flex',
           flexDirection: 'column',
           gap: 8,
-          flex: '1 1 55%',
+          flex: '1 1 42%',
           minWidth: 0,
           maxHeight: '100%',
           overflowY: 'auto',

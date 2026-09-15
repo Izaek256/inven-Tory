@@ -81,18 +81,26 @@ export function StockStatusStackedBarChart({
               borderRadius: 'var(--it-r-md)',
               boxShadow: 'var(--it-shadow-lg)',
             }}
-            labelFormatter={(label: string) => {
-              const item = formattedData.find((d) => d.category === label);
-              return item?.fullCategory || label;
+            // @ts-expect-error - @types/recharts generic types are too restrictive for labelFormatter
+            labelFormatter={(label: string | number): React.ReactNode => {
+              const labelStr = String(label);
+              const item = formattedData.find((d) => d.category === labelStr);
+              return item?.fullCategory || labelStr;
             }}
-            formatter={(value: number, name: string) => {
-              const labels: Record<string, string> = {
-                inStock: 'In Stock',
-                lowStock: 'Low Stock',
-                outOfStock: 'Out of Stock',
-              };
-              return [value, labels[name] || name];
-            }}
+            // @ts-expect-error - @types/recharts generic types are too restrictive for formatter
+            formatter={(
+              value: string | number | Array<string | number>,
+              name: string,
+            ): React.ReactNode => [
+              String(value),
+              (
+                {
+                  inStock: 'In Stock',
+                  lowStock: 'Low Stock',
+                  outOfStock: 'Out of Stock',
+                } as Record<string, string>
+              )[name] || name,
+            ]}
           />
           <Legend
             layout="horizontal"

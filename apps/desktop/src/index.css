@@ -85,6 +85,52 @@ body {
   gap: 16px;
 }
 
+/* Bulk import progress indicator (persists in header while import runs) */
+.import-progress-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-md);
+  background-color: var(--it-card);
+}
+
+.import-progress-bar {
+  width: 110px;
+  height: 6px;
+  border-radius: 3px;
+  background-color: var(--it-border);
+  overflow: hidden;
+}
+
+.import-progress-fill {
+  height: 100%;
+  background-color: var(--it-green);
+  transition: width 0.2s ease;
+}
+
+.import-progress-fill--indeterminate {
+  width: 40%;
+  animation: import-progress-slide 1.2s ease-in-out infinite;
+}
+
+@keyframes import-progress-slide {
+  0% {
+    margin-left: -40%;
+  }
+  100% {
+    margin-left: 100%;
+  }
+}
+
+.import-progress-label {
+  font-size: 11px;
+  color: var(--it-text-secondary);
+  font-family: var(--it-font-mono);
+  white-space: nowrap;
+}
+
 /* Layout Body */
 .app-body {
   display: flex;
@@ -102,6 +148,58 @@ body {
   flex-direction: column;
   padding: 12px 8px;
   gap: 6px;
+  transition:
+    width 0.2s ease,
+    padding 0.2s ease;
+}
+
+.app-sidebar--collapsed {
+  width: 60px;
+  padding: 12px 4px;
+}
+
+.app-sidebar--collapsed .nav-item {
+  justify-content: center;
+  padding: 7px 0;
+}
+
+.app-sidebar--collapsed .nav-more-toggle {
+  justify-content: center;
+  padding: 7px 0;
+}
+
+.app-sidebar--collapsed .nav-more-group {
+  display: none;
+}
+
+.app-sidebar--collapsed .sidebar-collapse-toggle {
+  justify-content: center;
+  padding: 7px 0;
+}
+
+.sidebar-collapse-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--it-r-md);
+  color: var(--it-text-secondary);
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  margin-top: auto;
+  transition: all 0.15s ease;
+}
+
+.sidebar-collapse-toggle:hover {
+  background-color: var(--it-gray-surface);
+  color: var(--it-text-primary);
+}
+
+.sidebar-collapse-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--it-focus-ring);
 }
 
 .nav-item {
