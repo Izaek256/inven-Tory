@@ -65,7 +65,9 @@ export function StockTrendChart({
             tick={{ fill: 'var(--it-text-secondary)', fontSize: 11 }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(1)}k` : val)}
+            tickFormatter={(val: number): string =>
+              val >= 1000 ? `${(val / 1000).toFixed(1)}k` : String(val)
+            }
           />
           <Tooltip
             contentStyle={{
@@ -75,7 +77,11 @@ export function StockTrendChart({
               boxShadow: 'var(--it-shadow-lg)',
             }}
             labelStyle={{ color: 'var(--it-text-primary)', fontWeight: 500 }}
-            formatter={(value: number) => [value.toLocaleString(), 'Total Stock Units']}
+            // @ts-expect-error - @types/recharts generic types are too restrictive for formatter
+            formatter={(value: string | number | Array<string | number>): React.ReactNode => [
+              String(value).toLocaleString(),
+              'Total Stock Units',
+            ]}
           />
           <Line
             type="monotone"

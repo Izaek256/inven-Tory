@@ -67,8 +67,11 @@ export async function dispatchTransfer(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<Transfer>('dispatch_transfer', {
+        transferId,
         transfer_id: transferId,
+        userId,
         user_id: userId,
+        deviceId,
         device_id: deviceId,
       });
       _triggerAutoSync();
@@ -97,8 +100,11 @@ export async function receiveTransfer(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<Transfer>('receive_transfer', {
+        transferId,
         transfer_id: transferId,
+        userId,
         user_id: userId,
+        deviceId,
         device_id: deviceId,
       });
       _triggerAutoSync();
@@ -127,8 +133,11 @@ export async function cancelTransfer(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<Transfer>('cancel_transfer', {
+        transferId,
         transfer_id: transferId,
+        userId,
         user_id: userId,
+        deviceId,
         device_id: deviceId,
       });
       _triggerAutoSync();
@@ -152,6 +161,7 @@ export async function markTransferException(transferId: string, notes?: string):
   if (isTauriEnvironment()) {
     try {
       return await invoke<Transfer>('mark_transfer_exception', {
+        transferId,
         transfer_id: transferId,
         notes,
       });

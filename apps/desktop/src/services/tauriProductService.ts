@@ -2,6 +2,25 @@ import { invoke } from '@tauri-apps/api/core';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
 import { isTauriEnvironment } from './tauriStoreService';
 
+export interface BatchProductInput {
+  sku: string;
+  name: string;
+  brand?: string;
+  model?: string;
+  category: string;
+  unit?: string;
+  barcode?: string;
+  alternate_names?: string;
+}
+
+export interface BatchProductResult {
+  row_index: number;
+  success: boolean;
+  error: string | null;
+  product_id: string | null;
+  sku: string | null;
+}
+
 async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T | null> {
   try {
     const { getAccessToken } = await import('./tauriAuthService');
@@ -59,13 +78,13 @@ export async function getProducts(): Promise<Product[]> {
   );
 }
 
-export async function searchProducts(query: string): Promise<Product[]> {
+export async function searchProducts(query: string, storeId?: string | null): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product[]>('search_products_fts5', { query });
+      return await invoke<Product[]>('search_products_fts5', { query, storeId });
     } catch {
       try {
-        return await invoke<Product[]>('search_products', { query });
+        return await invoke<Product[]>('search_products', { query, storeId });
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[TauriProductService] searchProducts failed:', err);
@@ -82,17 +101,20 @@ export async function searchProducts(query: string): Promise<Product[]> {
   );
 }
 
-export async function searchProductsFts5(query: string): Promise<Product[]> {
+export async function searchProductsFts5(
+  query: string,
+  storeId?: string | null,
+): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
-      const results = await invoke<Product[]>('search_products_fts5', { query });
+      const results = await invoke<Product[]>('search_products_fts5', { query, storeId });
       if (results && results.length > 0) {
         return results;
       }
-      return await invoke<Product[]>('search_products', { query });
+      return await invoke<Product[]>('search_products', { query, storeId });
     } catch {
       try {
-        return await invoke<Product[]>('search_products', { query });
+        return await invoke<Product[]>('search_products', { query, storeId });
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[TauriProductService] searchProductsFts5 failed:', err);
@@ -201,4 +223,22 @@ export async function toggleProductActive(id: string, is_active: boolean): Promi
   throw new Error(
     '[TauriProductService] toggleProductActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
   );
+}
+
+export async function createProductsBatch(
+  inputs: BatchProductInput[],
+): Promise<BatchProductResult[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<BatchProductResult[]>('create_products_batch', {
+        inputs,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[TauriProductService] createProductsBatch failed:', err);
+      throw new Error(String(err));
+    }
+  }
+
+  throw new Error('[TauriProductService] createProductsBatch() requires the Tauri runtime.');
 }

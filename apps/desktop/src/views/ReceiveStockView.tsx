@@ -194,7 +194,7 @@ export const ReceiveStockView: React.FC = () => {
       // 2. Debounced backend search for authoritative SQLite DB results
       searchTimerRef.current = setTimeout(async () => {
         try {
-          const results = await searchProductsFts5(query);
+          const results = await searchProductsFts5(query, activeStoreId);
           // FTS5 spans the whole catalogue — keep only products available in the
           // active store so the pane never surfaces items from another store.
           const scopedIds = new Set(allProducts.map((p) => p.id));
@@ -226,7 +226,7 @@ export const ReceiveStockView: React.FC = () => {
         }
       }, 100);
     },
-    [allProducts],
+    [allProducts, activeStoreId],
   );
 
   // ── Barcode scan ─────────────────────────────────────────────────────────
@@ -235,7 +235,7 @@ export const ReceiveStockView: React.FC = () => {
     async (barcode: string, _rowIndex: number): Promise<void> => {
       if (!barcode.trim()) return;
       try {
-        const results = await searchProductsFts5(barcode);
+        const results = await searchProductsFts5(barcode, activeStoreId);
         const scopedIds = new Set(allProducts.map((p) => p.id));
         const scoped = results.filter((p) => scopedIds.has(p.id));
         const exact = scoped.find((p) => p.barcode === barcode || p.sku === barcode);
@@ -256,7 +256,7 @@ export const ReceiveStockView: React.FC = () => {
         // Ignore scan errors
       }
     },
-    [allProducts],
+    [allProducts, activeStoreId],
   );
 
   // ── Row commit ────────────────────────────────────────────────────────────

@@ -238,4 +238,191 @@ describe('CreateProductView — Phase 1 Task B', (): void => {
     });
     expect(screen.queryByTestId('create-product-error')).not.toBeInTheDocument();
   });
+
+  // -------------------------------------------------------------------------
+  // Bulk import — Bulk product import (v1.1.0)
+  // -------------------------------------------------------------------------
+
+  it('renders the bulk import section with template definition table', (): void => {
+    render(<CreateProductView />);
+    const section = screen.getByTestId('bulk-import-section');
+    expect(section).toBeInTheDocument();
+    expect(screen.getByTestId('import-template-table')).toBeInTheDocument();
+    const table = screen.getByTestId('import-template-table');
+    // Required columns documented
+    expect(table).toHaveTextContent('Product Name');
+    expect(table).toHaveTextContent('Model / SKU');
+    // Optional columns documented
+    expect(table).toHaveTextContent('Brand');
+    expect(table).toHaveTextContent('Barcode');
+    // File input accepts csv/xlsx
+    const input = screen.getByTestId('import-file-input') as HTMLInputElement;
+    expect(input.accept).toContain('.csv');
+    expect(input.accept).toContain('.xlsx');
+  });
+
+  it('imports a CSV file by calling createProductsBatch with parsed rows', async (): Promise<void> => {
+    const batchSpy = vi.spyOn(tauriProductService, 'createProductsBatch').mockResolvedValue([
+      { row_index: 0, success: true, error: null, product_id: 'PROD-IMP-1', sku: 'IMPORTED-1' },
+      { row_index: 1, success: true, error: null, product_id: 'PROD-IMP-2', sku: 'IMPORTED-2' },
+    ]);
+
+    render(<CreateProductView />);
+
+    // Simulate selecting a CSV file
+    const csvContent =
+      'name,model,brand\nImported One,IMPORTED-1,Acme\nImported Two,IMPORTED-2,Acme\n';
+    const file = new File([csvContent], 'products.csv', { type: 'text/csv' });
+    const input = screen.getByTestId('import-file-input') as HTMLInputElement;
+
+    await act(async (): Promise<void> => {
+      fireEvent.change(input, { target: { files: [file] } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor((): void => {
+      expect(batchSpy).toHaveBeenCalled();
+    });
+
+    const args = batchSpy.mock.calls[0][0];
+    expect(args).toHaveLength(2);
+    expect(args[0]).toMatchObject({ name: 'Imported One', model: 'IMPORTED-1', sku: 'IMPORTED-1' });
+    expect(args[1]).toMatchObject({ name: 'Imported Two', model: 'IMPORTED-2', sku: 'IMPORTED-2' });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('import-result')).toHaveTextContent('2 products created');
+    });
+    // Imported rows appear in the Recently Created table
+    expect(screen.getByTestId('recently-created-table')).toHaveTextContent('IMPORTED-1');
+    expect(screen.getByTestId('recently-created-table')).toHaveTextContent('Imported One');
+  });
+
+  it('maps template-table headers ("Product Name", "Model / SKU") to name/model', async (): Promise<void> => {
+    const batchSpy = vi
+      .spyOn(tauriProductService, 'createProductsBatch')
+      .mockResolvedValue([
+        { row_index: 0, success: true, error: null, product_id: 'PROD-TPL-1', sku: 'TPL-1' },
+      ]);
+
+    render(<CreateProductView />);
+
+    // Headers exactly as documented in the template table — previously these
+    // were silently ignored, so every row failed with "name cannot be empty".
+    const csvContent =
+      'Product Name,Model / SKU,Brand,Category\nTemplate Widget,TPL-1,Acme,Electronics\n';
+    const file = new File([csvContent], 'template.csv', { type: 'text/csv' });
+    const input = screen.getByTestId('import-file-input') as HTMLInputElement;
+
+    await act(async (): Promise<void> => {
+      fireEvent.change(input, { target: { files: [file] } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor((): void => {
+      expect(batchSpy).toHaveBeenCalled();
+    });
+
+    const args = batchSpy.mock.calls[0][0];
+    expect(args).toHaveLength(1);
+    expect(args[0]).toMatchObject({
+      name: 'Template Widget',
+      model: 'TPL-1',
+      sku: 'TPL-1',
+      brand: 'Acme',
+      category: 'Electronics',
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('import-result')).toHaveTextContent('1 products created');
+    });
+  });
+
+  it('lists per-row skip reasons when rows are rejected', async (): Promise<void> => {
+    vi.spyOn(tauriProductService, 'createProductsBatch').mockResolvedValue([
+      { row_index: 0, success: true, error: null, product_id: 'PROD-A', sku: 'A-1' },
+      {
+        row_index: 1,
+        success: false,
+        error: "Product name 'Beta' already exists.",
+        product_id: null,
+        sku: null,
+      },
+    ]);
+
+    render(<CreateProductView />);
+
+    const csvContent = 'name,model\nAlpha,A-1\nBeta,B-1\n';
+    const file = new File([csvContent], 'dupes.csv', { type: 'text/csv' });
+    const input = screen.getByTestId('import-file-input') as HTMLInputElement;
+
+    await act(async (): Promise<void> => {
+      fireEvent.change(input, { target: { files: [file] } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('import-result')).toHaveTextContent(/1 created, 1 rows skipped/);
+    });
+
+    const details = screen.getByTestId('import-skipped-details');
+    expect(details).toHaveTextContent('Row 3');
+    expect(details).toHaveTextContent("Product name 'Beta' already exists.");
+  });
+
+  it('rejects files without a "name" or "model" header column', async (): Promise<void> => {
+    const batchSpy = vi.spyOn(tauriProductService, 'createProductsBatch');
+
+    render(<CreateProductView />);
+
+    const csvContent = 'foo,bar\n1,2\n';
+    const file = new File([csvContent], 'bad.csv', { type: 'text/csv' });
+    const input = screen.getByTestId('import-file-input') as HTMLInputElement;
+
+    await act(async (): Promise<void> => {
+      fireEvent.change(input, { target: { files: [file] } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('import-error')).toHaveTextContent(/headers do not include/i);
+    });
+    expect(batchSpy).not.toHaveBeenCalled();
+  });
+
+  it('imports rows with duplicates skipped and surfaces a summary', async (): Promise<void> => {
+    vi.spyOn(tauriProductService, 'createProductsBatch').mockResolvedValue([
+      { row_index: 0, success: true, error: null, product_id: 'PROD-A', sku: 'A-1' },
+      { row_index: 1, success: false, error: 'SKU already exists.', product_id: null, sku: null },
+    ]);
+
+    render(<CreateProductView />);
+
+    const csvContent = 'name,model\nAlpha,A-1\nBeta,B-1\n';
+    const file = new File([csvContent], 'dupes.csv', { type: 'text/csv' });
+    const input = screen.getByTestId('import-file-input') as HTMLInputElement;
+
+    await act(async (): Promise<void> => {
+      fireEvent.change(input, { target: { files: [file] } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('import-result')).toHaveTextContent(/1 created, 1 rows skipped/);
+    });
+  });
+
+  it('rejects unsupported file extensions with a clear message', async (): Promise<void> => {
+    render(<CreateProductView />);
+    const txt = new File(['hello'], 'products.txt', { type: 'text/plain' });
+    const input = screen.getByTestId('import-file-input') as HTMLInputElement;
+
+    await act(async (): Promise<void> => {
+      fireEvent.change(input, { target: { files: [txt] } });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    await waitFor((): void => {
+      expect(screen.getByTestId('import-error')).toHaveTextContent(/unsupported file type/i);
+    });
+  });
 });

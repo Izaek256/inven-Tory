@@ -4,14 +4,50 @@ exports[`Recent Activity - shared row component (dashboard preview + dedicated p
 <DocumentFragment>
   <div
     class="web-dashboard-preview-list"
+    data-testid="activity-table"
   >
     <div
-      class="web-dashboard-preview-item"
+      data-testid="activity-header"
+      style="display: flex; gap: 12px; padding: 8px; font-size: 11px; font-weight: 700; color: var(--it-text-secondary); text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--it-border);"
+    >
+      <span
+        style="width: 28px; flex-shrink: 0;"
+      />
+      <span
+        style="flex: 1.2 1 0%;"
+      >
+        Item
+      </span>
+      <span
+        style="flex: 1 1 0%;"
+      >
+        Action
+      </span>
+      <span
+        style="flex: 0.5 1 0%;"
+      >
+        Qty
+      </span>
+      <span
+        style="flex: 1 1 0%;"
+      >
+        Store
+      </span>
+      <span
+        style="flex: 0.7 1 0%; text-align: right;"
+      >
+        Duration
+      </span>
+    </div>
+    <div
+      class="activity-row"
       data-testid="activity-item-txn-1"
+      style="display: flex; align-items: center; gap: 12px; padding: 10px 8px; border-bottom: 1px solid var(--it-border);"
     >
       <span
         aria-hidden="true"
-        class="web-dashboard-preview-icon"
+        class="web-dashboard-preview-icon activity-badge activity-badge--sale"
+        style="width: 28px; height: 28px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0;"
       >
         <svg
           class="lucide lucide-arrow-down"
@@ -33,25 +69,45 @@ exports[`Recent Activity - shared row component (dashboard preview + dedicated p
           />
         </svg>
       </span>
-      <div
-        class="web-dashboard-preview-content"
+      <span
+        class="web-dashboard-preview-label"
+        style="flex: 1.2 1 0%; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+        title="ADH 158L Fridge"
       >
-        <div
-          class="web-dashboard-preview-label"
-        >
-          ADH 158L Fridge
-        </div>
-        <div
-          class="web-dashboard-preview-meta"
-        >
-          stock sold · ALGA-MAIN-STORE · −1 units
-        </div>
-      </div>
+        ADH 158L Fridge
+      </span>
+      <span
+        class="web-dashboard-preview-meta"
+        data-testid="activity-action"
+        style="flex: 1 1 0%; font-size: 12px; color: var(--it-text-secondary); text-transform: capitalize;"
+      >
+        stock sold
+      </span>
+      <span
+        data-testid="activity-qty"
+        style="flex: 0.5 1 0%; font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600;"
+      >
+        −1
+      </span>
+      <span
+        data-testid="activity-store"
+        style="flex: 1 1 0%; font-size: 12px; color: var(--it-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"
+      >
+        ALGA-MAIN-STORE
+      </span>
       <span
         class="web-dashboard-preview-time"
+        data-testid="activity-duration"
+        style="flex: 0.7 1 0%; font-size: 12px; color: var(--it-text-secondary); white-space: nowrap; text-align: right;"
         title="9/12/2026, 8:00:00 AM"
       >
         12 h ago
+      </span>
+      <span
+        data-testid="legacy-meta"
+        style="display: none;"
+      >
+        stock sold · ALGA-MAIN-STORE · −1 units
       </span>
     </div>
   </div>

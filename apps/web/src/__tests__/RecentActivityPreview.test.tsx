@@ -100,23 +100,30 @@ describe('Recent Activity preview — row detail regression', () => {
 
     render(<AnalyticsDashboardView />);
 
-    // Wait for the async query to resolve and the preview to populate.
     const preview = await screen.findByTestId('recent-activity-preview');
 
     expect(await screen.findByText('ADH 158L Fridge')).toBeInTheDocument();
 
-    const rows = preview.querySelectorAll('.web-dashboard-preview-item');
+    const rows = preview.querySelectorAll('[data-testid^="activity-item-"]');
     expect(rows.length).toBe(2);
 
-    const row0Meta = rows[0].querySelector('.web-dashboard-preview-meta');
-    expect(row0Meta?.textContent).toContain('stock sold');
-    expect(row0Meta?.textContent).toContain('ALGA-MAIN-STORE');
-    expect(row0Meta?.textContent).toContain('−1 units');
+    const row0 = rows[0];
+    expect(row0.querySelector('[data-testid="activity-action"]')?.textContent).toContain(
+      'stock sold',
+    );
+    expect(row0.querySelector('[data-testid="activity-store"]')?.textContent).toContain(
+      'ALGA-MAIN-STORE',
+    );
+    expect(row0.querySelector('[data-testid="activity-qty"]')?.textContent).toContain('1');
 
-    const row1Meta = rows[1].querySelector('.web-dashboard-preview-meta');
-    expect(row1Meta?.textContent).toContain('stock added');
-    expect(row1Meta?.textContent).toContain('WEST-DEPOT');
-    expect(row1Meta?.textContent).toContain('+5 units');
+    const row1 = rows[1];
+    expect(row1.querySelector('[data-testid="activity-action"]')?.textContent).toContain(
+      'stock added',
+    );
+    expect(row1.querySelector('[data-testid="activity-store"]')?.textContent).toContain(
+      'WEST-DEPOT',
+    );
+    expect(row1.querySelector('[data-testid="activity-qty"]')?.textContent).toContain('5');
   });
 
   it('shows relative time (not absolute datetime) as the visible timestamp', async () => {

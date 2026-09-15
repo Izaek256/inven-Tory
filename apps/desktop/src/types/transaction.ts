@@ -1,5 +1,14 @@
 export type MovementType =
-  'RECEIPT' | 'SALE' | 'RETURN' | 'TRANSFER' | 'ADJUSTMENT' | 'DAMAGE' | 'COUNT' | 'OTHER';
+  | 'RECEIPT'
+  | 'SALE'
+  | 'RETURN'
+  | 'TRANSFER'
+  | 'TRANSFER_IN'
+  | 'TRANSFER_OUT'
+  | 'ADJUSTMENT'
+  | 'DAMAGE'
+  | 'COUNT'
+  | 'OTHER';
 
 export interface InventoryTransaction {
   transaction_id: string;

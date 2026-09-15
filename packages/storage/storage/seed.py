@@ -60,12 +60,6 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
                 "name": "Store Gamma (Suburban)",
                 "address": "880 Mall Boulevard, North Suburbs",
             },
-            {
-                "id": "STORE-DELTA",
-                "code": "DELTA",
-                "name": "Store Delta (Airport Hub)",
-                "address": "Terminal 2, Metro Airport",
-            },
         ]
 
         for s in stores_data:

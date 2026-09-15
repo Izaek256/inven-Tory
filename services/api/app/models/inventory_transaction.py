@@ -49,9 +49,12 @@ class InventoryTransaction(Base):
     )
     reference_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     reason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    transfer_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("transfers.id"), nullable=True, index=True
-    )
+    # transfer_id is a client-generated correlation ID (desktop owns the
+    # transfers lifecycle). No FK to the central transfers table: desktop
+    # transfers are never replicated server-side, so a hard FK would reject
+    # every TRANSFER_OUT/TRANSFER_IN event during sync (0006 migration drops
+    # the constraint on existing databases).
+    transfer_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     # Section 16.1 additions
     purchase_order_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

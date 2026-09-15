@@ -12,14 +12,29 @@ import type {
 
 // Recharts' ResponsiveContainer cannot measure dimensions in jsdom (renders 0×0),
 // so the chart content never mounts. Mock it to render with fixed dimensions.
-vi.mock('recharts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('recharts')>();
-  return {
-    ...actual,
-    ResponsiveContainer: ({ children }: { children: React.ReactElement }): React.ReactElement =>
-      React.cloneElement(children, { width: 400, height: 300 } as Record<string, unknown>),
-  };
-});
+vi.mock('recharts', () => ({
+  ResponsiveContainer: ({ children }: { children: React.ReactElement }): React.ReactElement =>
+    React.cloneElement(children, { width: 400, height: 300 } as Record<string, unknown>),
+  LineChart: ({ children }: { children: React.ReactNode }): React.ReactElement => (
+    <div data-testid="line-chart">{children}</div>
+  ),
+  Line: (): React.ReactElement => <line />,
+  XAxis: (): React.ReactElement => <g />,
+  YAxis: (): React.ReactElement => <g />,
+  CartesianGrid: (): React.ReactElement => <g />,
+  Tooltip: (): React.ReactElement => <g />,
+  Legend: (): React.ReactElement => <g />,
+  PieChart: ({ children }: { children: React.ReactNode }): React.ReactElement => (
+    <div data-testid="pie-chart">{children}</div>
+  ),
+  Pie: (): React.ReactElement => <g />,
+  Cell: (): React.ReactElement => <g />,
+  BarChart: ({ children }: { children: React.ReactNode }): React.ReactElement => (
+    <div data-testid="bar-chart">{children}</div>
+  ),
+  Bar: (): React.ReactElement => <rect />,
+  ReferenceLine: (): React.ReactElement => <line />,
+}));
 
 describe('StockTrendChart', () => {
   const mockData: StockTrendPoint[] = [

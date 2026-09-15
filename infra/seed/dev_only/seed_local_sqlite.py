@@ -66,12 +66,6 @@ DEV_STORES = [
         "name": "Store Gamma (Suburban)",
         "address": "880 Mall Boulevard, North Suburbs",
     },
-    {
-        "id": "STORE-DELTA",
-        "code": "DELTA",
-        "name": "Store Delta (Airport Hub)",
-        "address": "Terminal 2, Metro Airport",
-    },
 ]
 
 # Dev-only identity cache entries (no passwords — see schema note above).

@@ -16,7 +16,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError as SAIntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.device import Device
@@ -428,6 +430,52 @@ async def test_ingest_batch_duplicate_in_batch(db_session: AsyncSession) -> None
     )
     assert balance is not None
     assert balance.quantity == 8
+
+
+async def test_ingest_batch_pkey_collision_returns_accepted(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Regression: a duplicate submission whose INSERT collides on the
+    inventory_transactions primary key must produce an ACCEPTED receipt, not a
+    retryable "Unexpected error" rejection.
+
+    transaction_id is the idempotency key (SYNC-003): a PK collision means the
+    ledger already holds the transaction (an earlier / concurrent submission
+    was accepted). Returning a retryable rejection left the desktop outbox
+    stuck in RETRYABLE_ERROR forever (seen with transfer events after the real
+    FK integrity error was fixed).
+    """
+    from asyncpg.exceptions import UniqueViolationError
+
+    from app.services import ingestion as ing
+
+    store, user, device, product = await _seed_base(db_session)
+    tid = _uid()
+    p = _payload(store.id, product.id, user.id, device.id, transaction_id=tid, quantity_delta=7)
+
+    async def _crash_transaction_on_duplicate(payload: ing.TransactionPayload, db: object) -> None:
+        raise SAIntegrityError(
+            "INSERT INTO inventory_transactions (...)",
+            {},
+            UniqueViolationError(
+                'duplicate key value violates unique constraint "inventory_transactions_pkey" '
+                f"Key (transaction_id)=({tid}) already exists."
+            ),
+        )
+
+    monkeypatch.setattr(ing, "ingest_transaction", _crash_transaction_on_duplicate)
+    receipts = await ing.ingest_batch([p], db_session)
+
+    assert len(receipts) == 1
+    assert receipts[0].transaction_id == tid
+    assert receipts[0].accepted is True
+
+    stored = await db_session.get(SyncReceipt, tid)
+    assert stored is not None
+    assert stored.accepted is True
+    assert stored.rejection_reason is None
 
 
 # ---------------------------------------------------------------------------

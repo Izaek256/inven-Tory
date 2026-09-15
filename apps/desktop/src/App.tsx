@@ -125,6 +125,7 @@ export function App(): React.ReactElement {
   const [deviceId, setDeviceId] = useState<string>('');
 
   const { currentView, setCurrentView, activeStoreId, setActiveStoreId } = useAppState();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -135,6 +136,14 @@ export function App(): React.ReactElement {
     storeName: string;
     storeCode: string;
   }>({ active: false, storeName: '', storeCode: '' });
+
+  // Import progress state (global so it persists across view switches)
+  const [importProgress, setImportProgress] = useState<{
+    running: boolean;
+    done: number;
+    total: number;
+    errors: number;
+  } | null>(null);
 
   // ---------------------------------------------------------------------------
   // Auth bootstrap
@@ -384,7 +393,12 @@ export function App(): React.ReactElement {
       case 'physical_count':
         return <PhysicalCountAdjustmentView userRole={currentUserRole} />;
       case 'create_product':
-        return <CreateProductView />;
+        return (
+          <CreateProductView
+            importProgress={importProgress}
+            setImportProgress={setImportProgress}
+          />
+        );
       case 'day_books':
         return <DayBooksView stores={stores} />;
       case 'transactions':
@@ -435,10 +449,16 @@ export function App(): React.ReactElement {
         interactiveTimeMs={interactiveTimeMs}
         currentUser={session}
         onLogout={handleLogout}
+        importProgress={importProgress}
       />
       <div className="app-body">
         {authState !== 'loading' && authState !== 'unauthenticated' && (
-          <Sidebar currentView={currentView} onNavigate={setCurrentView} />
+          <Sidebar
+            currentView={currentView}
+            onNavigate={setCurrentView}
+            collapsed={sidebarCollapsed}
+            onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+          />
         )}
         <main className="app-content">
           {authState === 'expired_offline' && session && (
