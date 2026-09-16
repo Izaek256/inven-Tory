@@ -34,24 +34,30 @@ export async function searchProducts(
 }
 
 /** Dashboard analytics for the KPI tile grid (Phase 3, Task B). */
-export async function getDashboardMetrics(): Promise<DashboardMetrics> {
-  return api.get<DashboardMetrics>('/dashboard/metrics');
+export async function getDashboardMetrics(storeId?: string | null): Promise<DashboardMetrics> {
+  const qs = storeId ? `?store_id=${encodeURIComponent(storeId)}` : '';
+  return api.get<DashboardMetrics>(`/dashboard/metrics${qs}`);
 }
 
 /** Stock trend time series (Phase 4, Task C). */
 export async function getStockTrend(
   startDate?: string,
   endDate?: string,
+  storeId?: string | null,
 ): Promise<StockTrendResponse> {
   const params = new URLSearchParams();
   if (startDate) params.set('start_date', startDate);
   if (endDate) params.set('end_date', endDate);
+  if (storeId) params.set('store_id', storeId);
   return api.get<StockTrendResponse>(`/dashboard/stock-trend?${params.toString()}`);
 }
 
 /** Category distribution for donut chart (Phase 4, Task D). */
-export async function getCategoryDistribution(): Promise<CategoryDistributionResponse> {
-  return api.get<CategoryDistributionResponse>('/dashboard/category-distribution');
+export async function getCategoryDistribution(
+  storeId?: string | null,
+): Promise<CategoryDistributionResponse> {
+  const qs = storeId ? `?store_id=${encodeURIComponent(storeId)}` : '';
+  return api.get<CategoryDistributionResponse>(`/dashboard/category-distribution${qs}`);
 }
 
 /** Stock status by category for stacked bar chart (Phase 4, Task E). */
@@ -63,10 +69,12 @@ export async function getStockStatusByCategory(): Promise<StockStatusByCategoryR
 export async function getKPIDeltas(
   startDate?: string,
   endDate?: string,
+  storeId?: string | null,
 ): Promise<KPIDeltasResponse> {
   const params = new URLSearchParams();
   if (startDate) params.set('start_date', startDate);
   if (endDate) params.set('end_date', endDate);
+  if (storeId) params.set('store_id', storeId);
   return api.get<KPIDeltasResponse>(`/dashboard/kpi-deltas?${params.toString()}`);
 }
 
@@ -75,16 +83,23 @@ export async function getMostSoldExtended(
   startDate?: string,
   endDate?: string,
   limit = 10,
+  storeId?: string | null,
 ): Promise<MostSoldExtendedResponse> {
   const params = new URLSearchParams({ limit: String(limit) });
   if (startDate) params.set('start_date', startDate);
   if (endDate) params.set('end_date', endDate);
+  if (storeId) params.set('store_id', storeId);
   return api.get<MostSoldExtendedResponse>(`/dashboard/most-sold-extended?${params.toString()}`);
 }
 
 /** Recent activity feed (Phase 4, Task H). */
-export async function getRecentActivity(limit = 20): Promise<RecentActivityResponse> {
-  return api.get<RecentActivityResponse>(`/dashboard/recent-activity?limit=${limit}`);
+export async function getRecentActivity(
+  limit = 20,
+  storeId?: string | null,
+): Promise<RecentActivityResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (storeId) params.set('store_id', storeId);
+  return api.get<RecentActivityResponse>(`/dashboard/recent-activity?${params.toString()}`);
 }
 
 /**
@@ -94,10 +109,12 @@ export async function getRecentActivity(limit = 20): Promise<RecentActivityRespo
 export async function getOperationsSummary(
   startDate?: string,
   endDate?: string,
+  storeId?: string | null,
 ): Promise<OperationsSummaryResponse> {
   const params = new URLSearchParams();
   if (startDate) params.set('start_date', startDate);
   if (endDate) params.set('end_date', endDate);
+  if (storeId) params.set('store_id', storeId);
   const qs = params.toString();
   return api.get<OperationsSummaryResponse>(`/dashboard/operations-summary${qs ? `?${qs}` : ''}`);
 }
@@ -120,10 +137,21 @@ export async function getStoreInventory(storeId: string): Promise<StoreInventory
   return api.get<StoreInventoryResponse>(`/stores/${storeId}/inventory`);
 }
 
-export async function listStores(): Promise<
+export async function listStores(
+  includePlaceholders = false,
+): Promise<
   Array<{ id: string; code: string; name: string; address?: string | null; is_active: boolean }>
 > {
-  return api.get('/stores');
+  const stores =
+    await api.get<
+      Array<{ id: string; code: string; name: string; address?: string | null; is_active: boolean }>
+    >('/stores');
+  // Never surface auto-provisioned "Auto Store (...)" placeholders (created by
+  // sync ingestion for unknown store ids) as real stores/tabs. The server
+  // excludes them by default too — this is defense in depth so a stale or
+  // proxied server can never render a phantom store tab.
+  if (includePlaceholders) return stores;
+  return stores.filter((s) => !s.name.startsWith('Auto Store ('));
 }
 
 export async function login(

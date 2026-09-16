@@ -41,6 +41,7 @@ import type {
 } from '../types/dashboard';
 import type { InventoryTransaction } from '../types/transaction';
 import type { Product } from '../types/product';
+import { useActiveStore } from '../context/StoreContext';
 
 interface DashboardViewProps {
   stores: Store[];
@@ -102,6 +103,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onRetry,
   userRole = 'ADMIN',
 }) => {
+  const { activeStoreId } = useActiveStore();
   const [products, setProducts] = useState<Product[]>([]);
   const [transactions, setTransactions] = useState<InventoryTransaction[]>([]);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
@@ -120,20 +122,36 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const loadLocalData = useCallback(async (): Promise<void> => {
     setDataLoading(true);
     setSyncError(null);
-    let firstError: string | null = null;
+    // The three reads are independent — run them concurrently instead of
+    // sequentially so analytics mounts in roughly one round-trip, not three.
+    const [prodsSettled, txnsSettled, syncSettled] = await Promise.allSettled([
+      getProducts(),
+      getLocalTransactions(),
+      getLastSyncTimestamp(),
+    ]);
     try {
-      const prods = await getProducts().catch((err) => {
-        if (!firstError) firstError = err instanceof Error ? err.message : String(err);
-        return [] as Product[];
-      });
-      const txns = await getLocalTransactions().catch((err) => {
-        if (!firstError) firstError = err instanceof Error ? err.message : String(err);
-        return [] as InventoryTransaction[];
-      });
-      const syncTime = await getLastSyncTimestamp().catch(() => null as string | null);
-      setProducts(prods);
-      setTransactions(txns);
-      setLastSyncAt(syncTime);
+      let firstError: string | null = null;
+      if (prodsSettled.status === 'fulfilled') {
+        setProducts(prodsSettled.value);
+      } else {
+        setProducts([]);
+        firstError =
+          prodsSettled.reason instanceof Error
+            ? prodsSettled.reason.message
+            : String(prodsSettled.reason);
+      }
+      if (txnsSettled.status === 'fulfilled') {
+        setTransactions(txnsSettled.value);
+      } else {
+        setTransactions([]);
+        if (!firstError) {
+          firstError =
+            txnsSettled.reason instanceof Error
+              ? txnsSettled.reason.message
+              : String(txnsSettled.reason);
+        }
+      }
+      setLastSyncAt(syncSettled.status === 'fulfilled' ? syncSettled.value : null);
       if (firstError) setSyncError(firstError);
     } catch (err) {
       setSyncError(err instanceof Error ? err.message : String(err));
@@ -145,11 +163,25 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const loadStockBalances = useCallback(async (): Promise<void> => {
     if (!stores.length) return;
     try {
+      // Store-scoped (default): one indexed query for the active store only.
+      // This is also the performance fix — the old path fanned out one
+      // query per store and summed everything even when a single store's
+      // data was all the view needed.
+      const targetStores = activeStoreId ? stores.filter((s) => s.id === activeStoreId) : stores;
+      const perStore = await Promise.all(
+        (targetStores.length ? targetStores : stores).map((store) =>
+          getStockBalancesForStore(store.id)
+            .catch(() => new Map<string, number>())
+            .then((balances) => ({ storeId: store.id, balances })),
+        ),
+      );
+      if (activeStoreId) {
+        const scoped = perStore.find((r) => r.storeId === activeStoreId);
+        setStockBalances(new Map(scoped?.balances ?? []));
+        return;
+      }
       const allBalances = new Map<string, number>();
-      for (const store of stores) {
-        const balances = await getStockBalancesForStore(store.id).catch(
-          () => new Map<string, number>(),
-        );
+      for (const { balances } of perStore) {
         for (const [pid, qty] of balances) {
           allBalances.set(pid, (allBalances.get(pid) ?? 0) + qty);
         }
@@ -158,7 +190,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     } catch {
       // Non-fatal — analytics will use product.stock_quantity as fallback
     }
-  }, [stores]);
+  }, [stores, activeStoreId]);
 
   useEffect(() => {
     void loadLocalData();
@@ -195,14 +227,57 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     }
   }, [loadLocalData, loadStockBalances]);
 
+  // ── Store scoping ──────────────────────────────────────────────────
+  // The analytics view follows the currently active store: transactions are
+  // filtered to that store, balances are fetched for that store only (see
+  // loadStockBalances), and catalogue memos operate on the products stocked
+  // there. Unscoped (no active store), everything aggregates globally as
+  // before. Scoping also bounds what is queried and rendered, which is the
+  // main load-time win on large datasets.
+  const scopedTransactions = useMemo(
+    () => (activeStoreId ? transactions.filter((t) => t.store_id === activeStoreId) : transactions),
+    [transactions, activeStoreId],
+  );
+
+  // Products stocked in the active store (presence of a balance row).
+  // When stockBalances is still loading (empty), fall back to products with
+  // stock_quantity > 0 to avoid showing an empty dashboard during initial load.
+  const scopedProducts = useMemo(
+    () =>
+      activeStoreId
+        ? products.filter(
+            (p) =>
+              stockBalances.has(p.id) || (stockBalances.size === 0 && (p.stock_quantity ?? 0) > 0),
+          )
+        : products,
+    [products, stockBalances, activeStoreId],
+  );
+
+  // Quantity lookup honoring the scope. Unscoped, products without a balance
+  // row fall back to the catalogue-wide stock_quantity; scoped, absence of a
+  // row means zero in this store — never the global total.
+  // During initial load when stockBalances is empty, fall back to stock_quantity
+  // to ensure tiles display data while balances are being fetched.
+  const qtyOf = useCallback(
+    (p: Product): number => {
+      const balanced = stockBalances.get(p.id);
+      if (balanced !== undefined) return balanced;
+      // When stockBalances is empty (still loading), use stock_quantity as fallback
+      // even in scoped mode to show data during initial load
+      if (stockBalances.size === 0) return p.stock_quantity ?? 0;
+      return activeStoreId ? 0 : (p.stock_quantity ?? 0);
+    },
+    [stockBalances, activeStoreId],
+  );
+
   const productsInRange = useMemo(
-    () => products.filter((p) => _inDateRange(p.created_at, dateRange)),
-    [products, dateRange],
+    () => scopedProducts.filter((p) => _inDateRange(p.created_at, dateRange)),
+    [scopedProducts, dateRange],
   );
 
   const transactionsInRange = useMemo(
-    () => transactions.filter((t) => _inDateRange(t.occurred_at, dateRange)),
-    [transactions, dateRange],
+    () => scopedTransactions.filter((t) => _inDateRange(t.occurred_at, dateRange)),
+    [scopedTransactions, dateRange],
   );
 
   const transactionsPriorRange = useMemo(() => {
@@ -214,15 +289,20 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       start: priorStart.toISOString().slice(0, 10),
       end: priorEnd.toISOString().slice(0, 10),
     };
-    return transactions.filter((t) => _inDateRange(t.occurred_at, priorRange));
-  }, [transactions, dateRange]);
+    return scopedTransactions.filter((t) => _inDateRange(t.occurred_at, priorRange));
+  }, [scopedTransactions, dateRange]);
 
   const totalStockUnits = useMemo(
-    () => products.reduce((sum, p) => sum + (p.stock_quantity ?? 0), 0),
-    [products],
+    () =>
+      activeStoreId
+        ? scopedProducts.reduce((sum, p) => sum + (stockBalances.get(p.id) ?? 0), 0)
+        : products.reduce((sum, p) => sum + (p.stock_quantity ?? 0), 0),
+    [products, scopedProducts, stockBalances, activeStoreId],
   );
 
   const productsInMultipleStores = useMemo(() => {
+    // Single-store scope has no cross-store dimension by definition.
+    if (activeStoreId) return 0;
     const productStores = new Map<string, Set<string>>();
     for (const store of stores) {
       for (const p of products) {
@@ -237,7 +317,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       if (storeIds.size > 1) count++;
     }
     return count;
-  }, [products, stores, stockBalances]);
+  }, [products, stores, stockBalances, activeStoreId]);
 
   const receiptLinkedSales = useMemo(() => {
     return transactionsInRange.filter(
@@ -322,7 +402,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       const key = d.toISOString().slice(0, 10);
       byDate.set(key, 0);
     }
-    for (const t of transactions) {
+    for (const t of scopedTransactions) {
       const key = t.occurred_at.slice(0, 10);
       if (byDate.has(key)) {
         byDate.set(key, byDate.get(key)! + Math.max(0, t.quantity_delta));
@@ -331,14 +411,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return Array.from(byDate.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([date, total]) => ({ date, total_stock_units: Math.max(0, total + totalStockUnits) }));
-  }, [transactions, dateRange, totalStockUnits]);
+  }, [scopedTransactions, dateRange, totalStockUnits]);
 
   const categoryDistribution = useMemo((): CategoryDistributionPoint[] => {
     const byCategory = new Map<string, number>();
-    for (const p of products) {
+    for (const p of scopedProducts) {
       byCategory.set(p.category, (byCategory.get(p.category) ?? 0) + 1);
     }
-    const total = products.length || 1;
+    const total = scopedProducts.length || 1;
     return Array.from(byCategory.entries())
       .map(([category, count]) => ({
         category,
@@ -346,17 +426,17 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         percentage: Math.round((count / total) * 1000) / 10,
       }))
       .sort((a, b) => b.count - a.count);
-  }, [products]);
+  }, [scopedProducts]);
 
   const stockStatusByCategory = useMemo((): StockStatusCategoryRow[] => {
     const byCategory = new Map<string, { in: number; low: number; out: number; total: number }>();
-    for (const p of products) {
+    for (const p of scopedProducts) {
       const cat = p.category;
       if (!byCategory.has(cat)) {
         byCategory.set(cat, { in: 0, low: 0, out: 0, total: 0 });
       }
       const entry = byCategory.get(cat)!;
-      const totalQty = stockBalances.get(p.id) ?? p.stock_quantity ?? 0;
+      const totalQty = qtyOf(p);
       const cls = _classifyStock(totalQty, p.low_stock_threshold);
       if (cls === 'in') entry.in++;
       else if (cls === 'low') entry.low++;
@@ -370,7 +450,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       out_of_stock: vals.out,
       total: vals.total,
     }));
-  }, [products, stockBalances]);
+  }, [scopedProducts, qtyOf]);
 
   const mostSoldProducts = useMemo((): MostSoldProduct[] => {
     const salesByProduct = new Map<string, number>();
@@ -413,13 +493,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [transactionsInRange, transactionsPriorRange, products]);
 
   const lowStockAlerts = useMemo(() => {
-    return products
+    return scopedProducts
       .filter((p) => {
-        const totalQty = stockBalances.get(p.id) ?? p.stock_quantity ?? 0;
+        const totalQty = qtyOf(p);
         return p.low_stock_threshold != null && totalQty <= p.low_stock_threshold;
       })
       .map((p) => {
-        const totalQty = stockBalances.get(p.id) ?? p.stock_quantity ?? 0;
+        const totalQty = qtyOf(p);
         return {
           product_id: p.id,
           product_name: p.name,
@@ -430,7 +510,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       })
       .sort((a, b) => a.current_stock - b.current_stock)
       .slice(0, 5);
-  }, [products, stockBalances]);
+  }, [scopedProducts, qtyOf]);
 
   const recentActivity = useMemo((): RecentActivityItem[] => {
     const sorted = [...transactionsInRange].sort(
@@ -464,6 +544,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   }, [transactionsInRange, stores, products]);
 
   const lastSyncTimeStr = lastSyncAt ? _formatRelativeTime(lastSyncAt) : 'Never';
+  const activeStore = activeStoreId ? stores.find((s) => s.id === activeStoreId) : undefined;
 
   const kpiTiles = useMemo(() => {
     const fmtDelta = (
@@ -472,6 +553,23 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       absolute: d.delta_absolute > 0 ? `+${d.delta_absolute}` : `${d.delta_absolute}`,
       percentage: d.delta_percentage != null ? `${d.delta_percentage}% vs last week` : null,
     });
+    // Scoped view swaps the meaningless single-store Cross-Store tile for
+    // Low Stock Items (web dashboard parity).
+    const scopeTile = activeStoreId
+      ? {
+          key: 'low-stock',
+          label: 'Low Stock Items',
+          value: dataLoading ? '...' : String(lowStockAlerts.length),
+          delta: null,
+          dataTestId: 'kpi-low-stock',
+        }
+      : {
+          key: 'cross-store',
+          label: 'Cross-Store Distribution',
+          value: dataLoading ? '...' : String(productsInMultipleStores),
+          delta: fmtDelta(kpiDeltas[2]),
+          dataTestId: 'kpi-cross-store',
+        };
     return [
       {
         key: 'total-products',
@@ -494,13 +592,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         delta: null,
         dataTestId: 'kpi-last-sync',
       },
-      {
-        key: 'cross-store',
-        label: 'Cross-Store Distribution',
-        value: dataLoading ? '...' : String(productsInMultipleStores),
-        delta: fmtDelta(kpiDeltas[2]),
-        dataTestId: 'kpi-cross-store',
-      },
+      scopeTile,
       {
         key: 'receipt-sales',
         label: 'Receipt-Linked Sales',
@@ -517,6 +609,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     productsInMultipleStores,
     receiptLinkedSales,
     kpiDeltas,
+    activeStoreId,
+    lowStockAlerts,
   ]);
 
   const mostSoldColumns: ColumnDef<MostSoldProduct>[] = [
@@ -647,7 +741,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <div>
             <h2 className="view-title">Analytics Dashboard</h2>
             <p className="view-subtitle">
-              Inventory analytics powered by local SQLite (offline-first)
+              {activeStore
+                ? `Live overview of ${activeStore.name}`
+                : 'Live overview of your stock, sales and stores'}
             </p>
           </div>
         </div>
@@ -758,7 +854,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <EmptyState
           variant="loading"
           heading="Loading analytics"
-          body="Reading from local SQLite database..."
+          body="Loading your inventory data..."
           data-testid="dashboard-loading"
         />
       )}

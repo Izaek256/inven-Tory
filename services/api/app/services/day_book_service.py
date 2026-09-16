@@ -9,7 +9,7 @@ This service handles:
 """
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,11 +37,12 @@ async def get_or_create_day_book(
     # Normalize to start of day
     book_date_normalized = book_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
-    # Try to find existing day book
+    # Try to find existing day book (index-friendly range on book_date)
     result = await db.execute(
         select(DayBook).where(
             DayBook.store_id == store_id,
-            func.date(DayBook.book_date) == book_date_normalized.date(),
+            DayBook.book_date >= book_date_normalized,
+            DayBook.book_date < book_date_normalized + timedelta(days=1),
         )
     )
     day_book = result.scalars().first()
@@ -163,11 +164,17 @@ async def generate_balance_sheet(
     # We sum directly from InventoryTransaction (not DayBookEntry) so that
     # hidden movement types (ADJUSTMENT, RETURN, DAMAGE) are included even
     # though they don't appear as visible entries in the day book.
+    # Index-friendly range: [book_date, book_date + 1 day) instead of
+    # `func.date(occurred_at) == book_date.date()` so occurred_at indexes
+    # can be used.
+    day_start = day_book.book_date
+    day_end = day_start + timedelta(days=1)
     day_result = await db.execute(
         select(func.sum(InventoryTransaction.quantity_delta)).where(
             InventoryTransaction.store_id == day_book.store_id,
             InventoryTransaction.stock_bucket == "AVAILABLE",
-            func.date(InventoryTransaction.occurred_at) == day_book.book_date.date(),
+            InventoryTransaction.occurred_at >= day_start,
+            InventoryTransaction.occurred_at < day_end,
             InventoryTransaction.sync_status != "REJECTED",
         )
     )
@@ -327,7 +334,8 @@ async def get_day_book_with_entries(
                 TxnModel.store_id == day_book.store_id,
                 TxnModel.product_id.in_(product_ids),
                 TxnModel.stock_bucket == "AVAILABLE",
-                func.date(TxnModel.occurred_at) == day_book.book_date.date(),
+                TxnModel.occurred_at >= day_book.book_date,
+                TxnModel.occurred_at < day_book.book_date + timedelta(days=1),
                 TxnModel.movement_type.notin_(_DAY_BOOK_VISIBLE_TYPES),
                 TxnModel.sync_status != "REJECTED",
             )

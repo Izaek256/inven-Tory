@@ -58,7 +58,7 @@ export async function getStores(): Promise<Store[]> {
       return stores;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriStoreService] Error invoking get_stores IPC command:', err);
+      console.error('[StoreService] Error invoking get_stores IPC command:', err);
       throw new Error(`Failed to load stores from database: ${String(err)}`);
     }
   }
@@ -68,9 +68,7 @@ export async function getStores(): Promise<Store[]> {
     return apiStores;
   }
 
-  throw new Error(
-    '[TauriStoreService] getStores() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[StoreService] getStores() requires the desktop app runtime.');
 }
 
 /**
@@ -109,30 +107,31 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
   if (self.isTauriEnvironment()) {
     try {
       const created = await invoke<Store>('create_store', { input });
-      // Mirror the new store to the server so a later sync pull won't replace
-      // the real name with an auto-provisioned "Auto Store (...)" placeholder.
-      void _pushStoreToApi('POST', '/stores', input);
+      // Mirror the new store to the server with the deterministic ID so the
+      // server uses the same ID and avoids creating duplicate "Auto Store" entries.
+      const payload = { ...input, id: created.id };
+      void _pushStoreToApi('POST', '/stores', payload);
       _dispatchStoresUpdated();
       return created;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriStoreService] Error invoking create_store:', err);
+      console.error('[StoreService] Error invoking create_store:', err);
       throw new Error(String(err));
     }
   }
 
+  // For web/browser fallback, we need to generate the deterministic ID
+  const payload = { ...input, id: `STORE-${input.code.trim().toUpperCase()}` };
   const created = await _fetchApi<Store>('/stores', {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify(payload),
   });
   if (created) {
     _dispatchStoresUpdated();
     return created;
   }
 
-  throw new Error(
-    '[TauriStoreService] createStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[StoreService] createStore() requires the desktop app runtime.');
 }
 
 /**
@@ -151,7 +150,7 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
       return updated;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriStoreService] Error invoking update_store:', err);
+      console.error('[StoreService] Error invoking update_store:', err);
       throw new Error(String(err));
     }
   }
@@ -165,9 +164,7 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
     return updated;
   }
 
-  throw new Error(
-    '[TauriStoreService] updateStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[StoreService] updateStore() requires the desktop app runtime.');
 }
 
 /**
@@ -186,7 +183,7 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
       return toggled;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriStoreService] Error invoking toggle_store_active:', err);
+      console.error('[StoreService] Error invoking toggle_store_active:', err);
       throw new Error(String(err));
     }
   }
@@ -200,9 +197,7 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
     return toggled;
   }
 
-  throw new Error(
-    '[TauriStoreService] toggleStoreActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[StoreService] toggleStoreActive() requires the desktop app runtime.');
 }
 
 /**
@@ -221,7 +216,7 @@ export async function registerDevice(storeId: string, deviceName: string): Promi
       });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriStoreService] Error invoking register_device:', err);
+      console.error('[StoreService] Error invoking register_device:', err);
       throw new Error(String(err));
     }
   }
@@ -232,7 +227,5 @@ export async function registerDevice(storeId: string, deviceName: string): Promi
   });
   if (device) return device;
 
-  throw new Error(
-    '[TauriStoreService] registerDevice() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[StoreService] registerDevice() requires the desktop app runtime.');
 }

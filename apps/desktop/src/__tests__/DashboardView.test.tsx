@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, ToastProvider } from '@invenTory/ui';
+import { StoreProvider } from '../context/StoreContext';
 import { DashboardView } from '../views/DashboardView';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
@@ -531,5 +532,83 @@ describe('DashboardView — Analytics Dashboard', () => {
 
     // Verify that the deleted product shows a fallback message
     expect(screen.getByText(/Unknown Product.*PROD-DELETED/)).toBeInTheDocument();
+  });
+});
+
+describe('DashboardView — active-store scoping', () => {
+  function renderScoped(activeStoreId: string | null): void {
+    render(
+      <ThemeProvider>
+        <ToastProvider>
+          <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={() => {}}>
+            <DashboardView
+              stores={mockStores}
+              loading={false}
+              error={null}
+              onRetry={() => {}}
+              userRole="ADMIN"
+            />
+          </StoreProvider>
+        </ToastProvider>
+      </ThemeProvider>,
+    );
+  }
+
+  it('fetches balances for the active store only', async () => {
+    const balancesSpy = vi.spyOn(tauriTransactionService, 'getStockBalancesForStore');
+    renderScoped('STORE-1');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(balancesSpy).toHaveBeenCalledWith('STORE-1');
+    });
+    expect(balancesSpy).not.toHaveBeenCalledWith('STORE-2');
+  });
+
+  it('scopes tiles and subtitle to the active store', async () => {
+    // STORE-1 holds PROD-1 (50 units) and PROD-2 (3 units).
+    vi.spyOn(tauriTransactionService, 'getStockBalancesForStore').mockImplementation(
+      async (storeId: string) =>
+        storeId === 'STORE-1'
+          ? new Map([
+              ['PROD-1', 50],
+              ['PROD-2', 3],
+            ])
+          : new Map(),
+    );
+    // Fresh creation dates so the in-range product count is deterministic.
+    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(
+      mockProducts.map((p) => ({ ...p, created_at: new Date().toISOString() })),
+    );
+    renderScoped('STORE-1');
+
+    // Scoped subtitle names the store.
+    await waitFor(() => {
+      expect(screen.getByText('Live overview of Store Alpha')).toBeInTheDocument();
+    });
+    // Scoped totals: 2 products, 53 units (waits for the scoped balance load).
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-products')).toHaveTextContent('2');
+    });
+    expect(screen.getByTestId('kpi-total-stock')).toHaveTextContent('53');
+    // Cross-store tile is replaced by Low Stock in scoped view.
+    expect(screen.getByTestId('kpi-low-stock')).toBeInTheDocument();
+    expect(screen.queryByTestId('kpi-cross-store')).not.toBeInTheDocument();
+    // Recent activity excludes STORE-2's receipt (Cable Gamma).
+    await waitFor(() => {
+      expect(screen.getByTestId('recent-activity-list')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Cable Gamma')).not.toBeInTheDocument();
+  });
+
+  it('aggregates globally without an active store', async () => {
+    renderScoped(null);
+
+    await waitFor(() => {
+      expect(screen.getByText('Live overview of your stock, sales and stores')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('kpi-cross-store')).toBeInTheDocument();
   });
 });

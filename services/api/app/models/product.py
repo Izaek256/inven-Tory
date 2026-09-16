@@ -50,4 +50,6 @@ class Product(Base):
         # Section 16.2 indexes
         Index("ix_products_sku", "sku", unique=True),
         Index("ix_products_low_stock_threshold", "low_stock_threshold"),
+        # Perf: /sync/pull delta filtering and updated_at ordering.
+        Index("ix_products_updated_at", "updated_at"),
     )

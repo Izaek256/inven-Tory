@@ -9,8 +9,12 @@ added in the next issue.  This module already wires up the async engine so that
 Issue 13 tables (users, devices, sessions) are managed from day one.
 """
 
+import logging
+import time
 from collections.abc import AsyncGenerator
+from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -20,6 +24,8 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
@@ -61,13 +67,53 @@ def build_engine(database_url: str | None = None) -> AsyncEngine:
         extra["pool_size"] = 10
         extra["max_overflow"] = 20
 
-    return create_async_engine(
+    engine = create_async_engine(
         url,
         echo=echo,
         future=True,
         pool_pre_ping=True,
         **extra,
     )
+    _install_slow_query_logging(engine)
+    return engine
+
+
+# ---------------------------------------------------------------------------
+# Slow query observability
+# ---------------------------------------------------------------------------
+
+_SLOW_QUERY_ATTR = "_inven_slow_query_started"
+
+
+def _install_slow_query_logging(engine: AsyncEngine) -> None:
+    """
+    Attach before/after cursor event listeners to the engine's sync machinery
+    so any SQL statement that exceeds ``settings.slow_query_threshold_ms`` is
+    logged at WARNING with its statement text.  A threshold of 0 disables the
+    feature entirely (cheap no-op at runtime).
+    """
+    threshold = getattr(settings, "slow_query_threshold_ms", 0)
+    if not threshold or threshold <= 0:
+        return
+
+    def _on_before(
+        conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
+    ) -> None:
+        setattr(conn, _SLOW_QUERY_ATTR, time.monotonic())
+
+    def _on_after(
+        conn: Any, cursor: Any, statement: str, parameters: Any, context: Any, executemany: bool
+    ) -> None:
+        started = getattr(conn, _SLOW_QUERY_ATTR, None)
+        if started is None:
+            return
+        elapsed_ms = (time.monotonic() - started) * 1000
+        if elapsed_ms >= threshold:
+            stmt = " ".join(str(statement).split())
+            logger.warning("SLOW_QUERY %dms: %s", int(elapsed_ms), stmt[:2000])
+
+    event.listen(engine.sync_engine, "before_cursor_execute", _on_before)
+    event.listen(engine.sync_engine, "after_cursor_execute", _on_after)
 
 
 def build_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:

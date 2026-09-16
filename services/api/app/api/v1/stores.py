@@ -88,6 +88,7 @@ class StoreListItem(BaseModel):
 
 
 class CreateStoreRequest(BaseModel):
+    id: str | None = None
     code: str
     name: str
     address: str | None = None
@@ -144,12 +145,16 @@ class StoreInventoryResponse(BaseModel):
 async def list_stores(
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
+    include_placeholders: bool = False,
 ) -> list[StoreListItem]:
     """
     Return a list of all stores with basic information.
     Requires authentication.
+    By default, excludes auto-provisioned "Auto Store" placeholders.
     """
     stmt = select(Store).order_by(Store.code)
+    if not include_placeholders:
+        stmt = stmt.where(~Store.name.startswith("Auto Store ("))
     result = await db.execute(stmt)
     stores = result.scalars().all()
 
@@ -179,6 +184,8 @@ async def create_store(
     """
     Create a new store with the given code, name, and optional address.
     Validates that the code is unique (409 on duplicate).
+    Accepts an optional client-provided ID (e.g., "STORE-{CODE}") for
+    deterministic ID alignment with the desktop app.
     """
     # Check for duplicate code
     existing = await db.execute(select(Store).where(Store.code == request.code))
@@ -190,8 +197,15 @@ async def create_store(
 
     import uuid
 
+    # Use client-provided ID if it follows the deterministic pattern
+    # and matches the code, otherwise generate a UUID
+    store_id = request.id
+    expected_id = f"STORE-{request.code}"
+    if not store_id or not store_id.startswith("STORE-") or store_id != expected_id:
+        store_id = str(uuid.uuid4())
+
     store = Store(
-        id=str(uuid.uuid4()),
+        id=store_id,
         code=request.code,
         name=request.name,
         address=request.address,

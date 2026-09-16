@@ -196,4 +196,42 @@ describe('Product CRUD & Master Catalog (FR-PROD-001–002)', () => {
       }),
     );
   });
+
+  it('sends explicit null when an optional field is cleared during edit', async () => {
+    const updateSpy = vi.spyOn(tauriProductService, 'updateProduct').mockResolvedValue({
+      ...initialProducts[0],
+      brand: null,
+      barcode: null,
+    });
+
+    render(<ProductsView />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('products-table')).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId('edit-product-btn-PROD-01'));
+    expect(screen.getByTestId('product-modal')).toBeInTheDocument();
+
+    // Clearing brand/barcode must serialize as null (clear on save), not as
+    // an omitted key (which silently preserves the stale value on PATCH).
+    fireEvent.change(screen.getByTestId('product-brand-input'), {
+      target: { value: '   ' },
+    });
+    fireEvent.change(screen.getByTestId('product-barcode-input'), {
+      target: { value: '' },
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('product-modal-submit'));
+    });
+
+    expect(updateSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: 'PROD-01',
+        brand: null,
+        barcode: null,
+      }),
+    );
+  });
 });

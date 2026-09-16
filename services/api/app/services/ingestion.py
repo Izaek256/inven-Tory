@@ -529,10 +529,7 @@ async def _ingest_transaction_impl(
         raise
     if not store_exists:
         # Derive code from suffix after STORE- prefix to stay consistent with
-        # manual store creation (id STORE-{CODE}, code {CODE}). Using the full
-        # store_id as code produced orphan stores like STORE-ALGA-KATWE-MUSISI
-        # with code STORE-ALGA-KATWE-MUSISI instead of ALGA-KATWE-MUSISI,
-        # causing the 3-vs-4 store count mismatch.
+        # manual store creation (id STORE-{CODE}, code {CODE}).
         raw_id = payload.store_id.strip()
         suffix = raw_id[6:] if raw_id.upper().startswith("STORE-") else raw_id
         target_code = suffix[:20].upper().strip() or raw_id[:20].upper()
@@ -541,21 +538,55 @@ async def _ingest_transaction_impl(
                 select(Store.id).where(Store.code == target_code).limit(1)
             )
         if existing_code_owner:
+            # A store with this code already exists — check if it's an
+            # auto-provisioned placeholder that we can replace.
+            existing_store = await db.get(Store, existing_code_owner)
+            if existing_store and existing_store.name.startswith("Auto Store ("):
+                # Replace the placeholder with a new store using the correct
+                # deterministic ID. Delete the old placeholder first to avoid
+                # PK conflict, then insert the new one.
+                await db.delete(existing_store)
+                await db.flush()
+                existing_code_owner = None
+            else:
+                # Real store exists with this code — create alias store with
+                # UUID-suffixed code to satisfy FK without duplicating the real store
+                pass  # Fall through to alias creation
+        else:
+            existing_code_owner = None
+        if not existing_code_owner:
+            # No existing store with this code (or replaced placeholder) —
+            # create new store with derived code
+            auto_store = Store(
+                id=payload.store_id,
+                code=target_code,
+                name=f"Auto Store ({suffix[:30] or payload.store_id[:30]})",
+                is_active=True,
+            )
+            db.add(auto_store)
+            try:
+                await db.flush()
+            except Exception:
+                await _rb()
+                raise
+        else:
+            # Existing real store with this code — create alias store with
+            # UUID-suffixed code to satisfy FK without duplicating the real store
             import uuid
 
-            target_code = f"{target_code[:12]}-{uuid.uuid4().hex[:8]}".upper()
-        auto_store = Store(
-            id=payload.store_id,
-            code=target_code,
-            name=f"Auto Store ({suffix[:30] or payload.store_id[:30]})",
-            is_active=True,
-        )
-        db.add(auto_store)
-        try:
-            await db.flush()
-        except Exception:
-            await _rb()
-            raise
+            alias_code = f"{target_code[:12]}-{uuid.uuid4().hex[:8]}".upper()
+            auto_store = Store(
+                id=payload.store_id,
+                code=alias_code,
+                name=f"Auto Store ({suffix[:30] or payload.store_id[:30]})",
+                is_active=True,
+            )
+            db.add(auto_store)
+            try:
+                await db.flush()
+            except Exception:
+                await _rb()
+                raise
 
     existing_prod = None
     try:
@@ -994,23 +1025,20 @@ async def _upsert_stock_balance(
     Atomically increment (or create) the stock_balances row for
     (store_id, product_id, stock_bucket).
 
-    Uses a SELECT-then-UPDATE/INSERT approach rather than raw SQL UPSERT so the
-    code works with both PostgreSQL (production) and SQLite (test fixtures).
-    Both paths run within the caller's transaction, so there is no race window
-    in a properly serialised transaction.
+    Uses a portable native UPSERT so PostgreSQL and SQLite share one code
+    path. PostgreSQL uses ``INSERT ... ON CONFLICT ... DO UPDATE``; SQLite
+    (used by test fixtures) uses ``INSERT ... ON CONFLICT ... DO UPDATE``
+    too, which SQLAlchemy supports via ``sqlite.insert``. Both backends
+    implement the same conflict-on-unique-key semantics, so there is no
+    SELECT-then-UPDATE race window and no separate round-trip per event.
     """
-    with db.no_autoflush:
-        stmt = select(StockBalance).where(
-            StockBalance.store_id == store_id,
-            StockBalance.product_id == product_id,
-            StockBalance.stock_bucket == stock_bucket,
-        )
-        result = await db.execute(stmt)
-    balance: StockBalance | None = result.scalars().first()
-
     now = _now_utc()
-    if balance is None:
-        balance = StockBalance(
+
+    # Pick the dialect-specific insert builder that supports on_conflict.
+    if db.bind and db.bind.dialect.name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(StockBalance).values(
             id=str(uuid.uuid4()),
             store_id=store_id,
             product_id=product_id,
@@ -1018,7 +1046,30 @@ async def _upsert_stock_balance(
             quantity=delta,
             updated_at=now,
         )
-        db.add(balance)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["store_id", "product_id", "stock_bucket"],
+            set_={
+                "quantity": StockBalance.quantity + delta,
+                "updated_at": now,
+            },
+        )
     else:
-        balance.quantity += delta
-        balance.updated_at = now
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(StockBalance).values(
+            id=str(uuid.uuid4()),
+            store_id=store_id,
+            product_id=product_id,
+            stock_bucket=stock_bucket,
+            quantity=delta,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_stock_balances_store_product_bucket",
+            set_={
+                "quantity": StockBalance.quantity + delta,
+                "updated_at": now,
+            },
+        )
+
+    await db.execute(stmt)

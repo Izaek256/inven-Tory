@@ -2,6 +2,7 @@ import React, { useState, useCallback, useRef } from 'react';
 import { Trash2, Check, AlertCircle, Plus, Upload, FileSpreadsheet } from 'lucide-react';
 import { createProduct, createProductsBatch } from '../services/tauriProductService';
 import type { BatchProductResult } from '../services/tauriProductService';
+import { triggerSync } from '../services/tauriSyncService';
 import { CreateProductInput } from '../types/product';
 import { LinearGridEntry, GridFieldDef, DataTable } from '@invenTory/ui';
 import type { ColumnDef } from '@invenTory/ui';
@@ -440,6 +441,16 @@ export const CreateProductView: React.FC<CreateProductViewProps> = ({
 
         if (createdRows.length > 0) {
           setSessionRows((prev) => [...prev, ...createdRows]);
+
+          // Push the newly imported products to the server immediately.  The
+          // forced sync also uploads the full local catalogue, so products
+          // imported before they were queued in the outbox are repaired too.
+          const envBaseUrl =
+            typeof import.meta !== 'undefined'
+              ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+              : undefined;
+          const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+          void triggerSync({ apiBaseUrl, force: true }).catch(() => undefined);
         }
 
         const msg =

@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     sync_retry_max: int = 5
     sync_retry_backoff_base_seconds: int = 2
 
+    # ── Performance / observability ────────────────────────────────────────────
+    # Log any API request or SQL statement that takes longer than this many
+    # milliseconds.  Set to 0 to disable slow-query logging entirely.
+    slow_query_threshold_ms: int = 500
+
     @field_validator("environment")
     @classmethod
     def validate_environment(cls, v: str) -> str:

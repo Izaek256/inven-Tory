@@ -27,8 +27,9 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_user, get_db, require_permission
+from app.api.deps import get_current_user, get_db, require_global_admin, require_permission
 from app.core.permissions import Permission
+from app.models.audit_event import AuditEvent
 from app.models.inventory_transaction import InventoryTransaction
 from app.models.product import Product
 from app.models.stock_balance import StockBalance
@@ -293,6 +294,18 @@ async def update_product(
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
+    # Capture old values for audit log
+    old_values = {
+        "name": product.name,
+        "brand": product.brand,
+        "model": product.model,
+        "category": product.category,
+        "unit": product.unit,
+        "barcode": product.barcode,
+        "alternate_names": product.alternate_names,
+        "serial_tracking_enabled": product.serial_tracking_enabled,
+    }
+
     product.name = request.name
     product.brand = request.brand
     product.model = request.model
@@ -303,6 +316,38 @@ async def update_product(
     product.serial_tracking_enabled = request.serial_tracking_enabled
     await db.commit()
     await db.refresh(product)
+
+    # Write audit log entry
+    import json
+    import uuid
+    from datetime import UTC, datetime
+
+    audit = AuditEvent(
+        id=str(uuid.uuid4()),
+        actor_user_id=str(_user.id),
+        actor_device_id=None,
+        event_type="PRODUCT_UPDATED",
+        entity_type="Product",
+        entity_id=product.id,
+        detail=json.dumps(
+            {
+                "old_values": old_values,
+                "new_values": {
+                    "name": product.name,
+                    "brand": product.brand,
+                    "model": product.model,
+                    "category": product.category,
+                    "unit": product.unit,
+                    "barcode": product.barcode,
+                    "alternate_names": product.alternate_names,
+                    "serial_tracking_enabled": product.serial_tracking_enabled,
+                },
+            }
+        ),
+        occurred_at=datetime.now(UTC),
+    )
+    db.add(audit)
+    await db.commit()
 
     return ProductListItem(
         id=product.id,
@@ -339,12 +384,57 @@ async def patch_product(
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
+    # Capture old values for audit log
+    old_values = {
+        "name": product.name,
+        "brand": product.brand,
+        "model": product.model,
+        "category": product.category,
+        "unit": product.unit,
+        "barcode": product.barcode,
+        "alternate_names": product.alternate_names,
+        "serial_tracking_enabled": product.serial_tracking_enabled,
+    }
+
     update_data = request.model_dump(exclude_unset=True)
     for field, value in update_data.items():
         setattr(product, field, value)
 
     await db.commit()
     await db.refresh(product)
+
+    # Write audit log entry
+    import json
+    import uuid
+    from datetime import UTC, datetime
+
+    new_values = {
+        "name": product.name,
+        "brand": product.brand,
+        "model": product.model,
+        "category": product.category,
+        "unit": product.unit,
+        "barcode": product.barcode,
+        "alternate_names": product.alternate_names,
+        "serial_tracking_enabled": product.serial_tracking_enabled,
+    }
+    audit = AuditEvent(
+        id=str(uuid.uuid4()),
+        actor_user_id=str(_user.id),
+        actor_device_id=None,
+        event_type="PRODUCT_UPDATED",
+        entity_type="Product",
+        entity_id=product.id,
+        detail=json.dumps(
+            {
+                "old_values": old_values,
+                "new_values": new_values,
+            }
+        ),
+        occurred_at=datetime.now(UTC),
+    )
+    db.add(audit)
+    await db.commit()
 
     return ProductListItem(
         id=product.id,
@@ -380,9 +470,35 @@ async def toggle_product_active(
     if product is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Product not found")
 
+    # Capture old value for audit log
+    old_active = product.is_active
+
     product.is_active = request.is_active
     await db.commit()
     await db.refresh(product)
+
+    # Write audit log entry
+    import json
+    import uuid
+    from datetime import UTC, datetime
+
+    audit = AuditEvent(
+        id=str(uuid.uuid4()),
+        actor_user_id=str(_user.id),
+        actor_device_id=None,
+        event_type="PRODUCT_TOGGLED_ACTIVE",
+        entity_type="Product",
+        entity_id=product.id,
+        detail=json.dumps(
+            {
+                "old_is_active": old_active,
+                "new_is_active": product.is_active,
+            }
+        ),
+        occurred_at=datetime.now(UTC),
+    )
+    db.add(audit)
+    await db.commit()
 
     return ProductListItem(
         id=product.id,
@@ -676,4 +792,138 @@ async def get_product_history(
             for tx, store in tx_rows
         ],
         total_rows=len(tx_rows),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Admin: Delete All Data (GLOBAL_ADMIN only)
+# ---------------------------------------------------------------------------
+
+
+class DeleteAllDataRequest(BaseModel):
+    """Confirmation request for wiping all product-related data."""
+
+    confirm_store_name: str
+
+
+class DeleteAllDataResponse(BaseModel):
+    """Response from the delete all data operation."""
+
+    message: str
+    wiped_tables: list[str]
+
+
+@router.delete(
+    "/admin/wipe-all-data",
+    response_model=DeleteAllDataResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Wipe all product-related data (GLOBAL_ADMIN only)",
+)
+async def wipe_all_data(
+    request: DeleteAllDataRequest,
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    current_user: User = Depends(require_global_admin()),  # noqa: B008
+) -> DeleteAllDataResponse:
+    """
+    Wipe all product-related data from the server database.
+
+    This is an irreversible operation restricted to GLOBAL_ADMIN role.
+    Requires typing the store name as confirmation.
+
+    Tables wiped:
+    - products
+    - stock_balances
+    - inventory_transactions
+    - day_books
+    - day_book_entries
+    - transfers
+    - sync_receipts
+    - outbox_events (if exists)
+    - devices
+
+    Tables preserved:
+    - users (for authentication)
+    - stores (but all except one are deactivated)
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    from sqlalchemy import text
+
+    # Verify the store name matches the first active store
+    store_result = await db.execute(
+        text("SELECT name FROM stores WHERE is_active = 1 ORDER BY id LIMIT 1")
+    )
+    store_name = store_result.scalar_one_or_none()
+
+    if store_name is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active store found")
+
+    if store_name != request.confirm_store_name:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Store name confirmation failed. Expected '{store_name}', got '{request.confirm_store_name}'.",
+        )
+
+    wiped_tables: list[str] = []
+
+    # Delete in correct order due to foreign key constraints
+    await db.execute(text("DELETE FROM day_book_entries"))
+    wiped_tables.append("day_book_entries")
+
+    await db.execute(text("DELETE FROM day_books"))
+    wiped_tables.append("day_books")
+
+    await db.execute(text("DELETE FROM inventory_transactions"))
+    wiped_tables.append("inventory_transactions")
+
+    await db.execute(text("DELETE FROM stock_balances"))
+    wiped_tables.append("stock_balances")
+
+    await db.execute(text("DELETE FROM transfers"))
+    wiped_tables.append("transfers")
+
+    await db.execute(text("DELETE FROM sync_receipts"))
+    wiped_tables.append("sync_receipts")
+
+    await db.execute(text("DELETE FROM products"))
+    wiped_tables.append("products")
+
+    await db.execute(text("DELETE FROM devices"))
+    wiped_tables.append("devices")
+
+    # Deactivate all stores except the first one
+    await db.execute(
+        text(
+            "UPDATE stores SET is_active = 0, updated_at = :now WHERE code != (SELECT code FROM stores ORDER BY id LIMIT 1)"
+        ),
+        {"now": datetime.now(UTC)},
+    )
+
+    # Ensure the first store is active
+    await db.execute(
+        text(
+            "UPDATE stores SET is_active = 1, updated_at = :now WHERE code = (SELECT code FROM stores ORDER BY id LIMIT 1)"
+        ),
+        {"now": datetime.now(UTC)},
+    )
+
+    # Write audit log entry
+    audit = AuditEvent(
+        id=str(uuid.uuid4()),
+        actor_user_id=str(current_user.id),
+        actor_device_id=None,
+        event_type="DATA_WIPED",
+        entity_type="System",
+        entity_id=None,
+        detail=f"All product-related data wiped by user {current_user.username} ({current_user.id}). Tables: {', '.join(wiped_tables)}",
+        occurred_at=datetime.now(UTC),
+    )
+    db.add(audit)
+
+    await db.commit()
+
+    return DeleteAllDataResponse(
+        message=f"All product-related data wiped successfully. Store '{store_name}' preserved for authentication.",
+        wiped_tables=wiped_tables,
     )

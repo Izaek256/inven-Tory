@@ -50,28 +50,20 @@ const products: Product[] = [
 
 // Per-store quantities: PROD-01 in Main=5, Branch=2, Depot=0 (total 7);
 // PROD-02 only in Depot=4 (single-store product — other columns show 0).
-const qtyMatrix: Record<string, number> = {
-  'STORE-MAIN::PROD-01': 5,
-  'STORE-BRANCH::PROD-01': 2,
-  'STORE-DEPOT::PROD-01': 0,
-  'STORE-MAIN::PROD-02': 0,
-  'STORE-BRANCH::PROD-02': 0,
-  'STORE-DEPOT::PROD-02': 4,
+const qtyByStore: Record<string, Record<string, number>> = {
+  'STORE-MAIN': { 'PROD-01': 5, 'PROD-02': 0 },
+  'STORE-BRANCH': { 'PROD-01': 2, 'PROD-02': 0 },
+  'STORE-DEPOT': { 'PROD-01': 0, 'PROD-02': 4 },
 };
 
 describe('Global cross-store product search (Phase 3, Task G)', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(products);
-    vi.spyOn(tauriTransactionService, 'getStockBalance').mockImplementation(
-      async (storeId: string, productId: string) => ({
-        id: `SB-${storeId}-${productId}`,
-        store_id: storeId,
-        product_id: productId,
-        stock_bucket: 'AVAILABLE',
-        quantity: qtyMatrix[`${storeId}::${productId}`] ?? 0,
-        updated_at: new Date().toISOString(),
-      }),
+    // One indexed balance query per store (concurrent) — mirrors the
+    // component's batched fetching instead of per-cell lookups.
+    vi.spyOn(tauriTransactionService, 'getStockBalancesForStore').mockImplementation(
+      async (storeId: string) => new Map(Object.entries(qtyByStore[storeId] ?? {})),
     );
   });
 

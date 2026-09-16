@@ -12,10 +12,14 @@ import {
   Sun,
   Search,
   UserRound,
+  Download,
+  Loader2,
+  Database,
 } from 'lucide-react';
 import type { AuthSession } from '../types/auth';
 import { storeColor } from '../utils/storeColors';
 import { GlobalSearchModal } from './GlobalSearchModal';
+import { useUpdater } from '../context/UpdaterContext';
 
 interface HeaderProps {
   stores: Store[];
@@ -30,6 +34,14 @@ interface HeaderProps {
     total: number;
     errors: number;
   } | null;
+  restoreProgress?: {
+    phase: string;
+    currentStep: string;
+    progressPercent: number;
+    criticalComplete: boolean;
+    canUseApp: boolean;
+    totalComplete: boolean;
+  } | null;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,6 +50,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSelectStore,
   onLogout,
   importProgress,
+  restoreProgress,
 }) => {
   const [isOnline, setIsOnline] = useState<boolean>(
     typeof navigator !== 'undefined' ? navigator.onLine : true,
@@ -48,6 +61,9 @@ export const Header: React.FC<HeaderProps> = ({
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+
+  // Updater state
+  const { progress, isDownloading } = useUpdater();
 
   // Theme — delegates to the app-wide ThemeProvider so changes are reflected
   // across the whole app immediately (data-theme on <html> element).
@@ -239,6 +255,104 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
+        {/* Restore Progress Bar — non-blocking, shown in header while restore runs in the background */}
+        {restoreProgress && !restoreProgress.totalComplete && restoreProgress.phase !== 'idle' && (
+          <div
+            className="import-progress-container"
+            data-testid="restore-progress-container"
+            title={`Restoring data: ${restoreProgress.currentStep} (${restoreProgress.progressPercent}%)`}
+            style={{ minWidth: 160 }}
+          >
+            <div className="import-progress-bar">
+              {restoreProgress.progressPercent > 0 ? (
+                <div
+                  className="import-progress-fill"
+                  style={{
+                    width: `${Math.min(100, restoreProgress.progressPercent)}%`,
+                    background: 'var(--it-warning, #f59e0b)',
+                  }}
+                />
+              ) : (
+                <div
+                  className="import-progress-fill import-progress-fill--indeterminate"
+                  style={{ background: 'var(--it-warning, #f59e0b)' }}
+                />
+              )}
+            </div>
+            <span
+              className="import-progress-label"
+              style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+            >
+              <Database size={11} />
+              {restoreProgress.progressPercent > 0
+                ? `Restoring… ${restoreProgress.progressPercent}%`
+                : 'Restoring…'}
+            </span>
+          </div>
+        )}
+
+        {/* Restore complete flash */}
+        {restoreProgress && restoreProgress.totalComplete && (
+          <div
+            className="import-progress-container"
+            data-testid="restore-complete-container"
+            style={{ minWidth: 120 }}
+          >
+            <span
+              className="import-progress-label"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                color: 'var(--it-success, #10b981)',
+              }}
+            >
+              <Database size={11} />
+              Restore complete!
+            </span>
+          </div>
+        )}
+
+        {/* Update Download Progress Bar — visible when downloading/installing update */}
+        {(isDownloading || progress.stage === 'installing') && (
+          <div
+            className="import-progress-container"
+            data-testid="update-progress-container"
+            title={
+              progress.stage === 'installing'
+                ? 'Installing update...'
+                : progress.total
+                  ? `Downloading update: ${progress.percent}%`
+                  : 'Downloading update...'
+            }
+          >
+            <div className="import-progress-bar">
+              {progress.stage === 'installing' ? (
+                <div className="import-progress-fill import-progress-fill--indeterminate" />
+              ) : progress.total ? (
+                <div className="import-progress-fill" style={{ width: `${progress.percent}%` }} />
+              ) : (
+                <div className="import-progress-fill import-progress-fill--indeterminate" />
+              )}
+            </div>
+            <span className="import-progress-label">
+              {progress.stage === 'installing' ? (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Loader2 size={12} className="animate-spin" />
+                  Installing...
+                </span>
+              ) : progress.total ? (
+                `${progress.percent}%`
+              ) : (
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Download size={12} />
+                  Downloading...
+                </span>
+              )}
+            </span>
+          </div>
+        )}
+
         {/* Pending Sync Count Badge — clickable to trigger manual sync */}
         <div
           className="pending-sync-badge"
@@ -246,7 +360,7 @@ export const Header: React.FC<HeaderProps> = ({
             isSyncing
               ? 'Sync in progress...'
               : pendingSyncCount > 0
-                ? `Pending sync outbox events: ${pendingSyncCount}. Click to trigger manual sync.`
+                ? `Pending changes to sync: ${pendingSyncCount}. Click to sync now.`
                 : 'All events synced. Click to force a sync.'
           }
           data-testid="pending-sync-badge"

@@ -128,4 +128,32 @@ def require_permission(permission: Permission) -> Callable[..., User]:
     return _check
 
 
-__all__ = ["get_current_user", "get_db", "require_permission"]
+def require_global_admin() -> Callable[..., User]:
+    """
+    Dependency factory — require GLOBAL_ADMIN role.
+
+    Usage::
+
+        @router.delete("/admin/wipe-all-data")
+        async def handler(
+            _user: User = Depends(require_global_admin()),
+        ): ...
+    """
+
+    async def _check(user: User = Depends(get_current_user)) -> User:  # noqa: B008
+        if user.role != "GLOBAL_ADMIN":
+            logger.warning(
+                "AUTHZ_FAILURE global_admin_required user_id=%s role=%s",
+                user.id,
+                user.role,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="GLOBAL_ADMIN role required",
+            )
+        return user
+
+    return _check
+
+
+__all__ = ["get_current_user", "get_db", "require_global_admin", "require_permission"]

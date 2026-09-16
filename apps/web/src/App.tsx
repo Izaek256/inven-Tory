@@ -32,6 +32,7 @@ import { AnalyticsDashboardView } from './views/AnalyticsDashboardView';
 import { RecentActivityView } from './views/RecentActivityView';
 import { ProductsCatalogView } from './views/ProductsCatalogView';
 import { StoreView } from './views/StoreView';
+import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { listStores } from './services/dashboardService';
 import './index.css';
 import './styles/dashboard-phase4.css';
@@ -194,6 +195,9 @@ function App(): React.ReactElement {
     typeof window !== 'undefined' ? window.innerWidth < BOTTOM_NAV_BREAKPOINT : false,
   );
   const [topSearch, setTopSearch] = useState('');
+  // Global search modal — same functionality as the desktop header's
+  // "Search All Stores" modal (read-only overlay, never changes the view).
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
 
   const placeholder = useMemo(() => {
     if (currentView === 'products') return 'Search products, SKU, brand, model or category...';
@@ -270,11 +274,11 @@ function App(): React.ReactElement {
 
   const effectiveView = currentView === 'recent-activity' ? 'stock-movements' : currentView;
 
+  // Header search submit opens the Global search modal (desktop parity) —
+  // the modal is a read-only overlay prefilled with the typed query.
   const handleHeaderSearch = (q: string): void => {
     setTopSearch(q);
-    if (q.trim() && effectiveView !== 'products') {
-      setCurrentView('products');
-    }
+    setGlobalSearchOpen(true);
   };
 
   const renderView = (): React.ReactElement => {
@@ -401,6 +405,13 @@ function App(): React.ReactElement {
           {renderView()}
         </main>
       </div>
+
+      <GlobalSearchModal
+        isOpen={globalSearchOpen}
+        onClose={() => setGlobalSearchOpen(false)}
+        stores={storeMeta}
+        initialQuery={topSearch}
+      />
 
       {isNarrow && (
         <nav className="web-bottom-nav web-bottom-nav--mockup" data-testid="web-bottom-nav">

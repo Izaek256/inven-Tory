@@ -52,6 +52,9 @@ Cargo.lock
 .env.local
 .env.*.local
 !.env.example
+*.key
+*-private-key*
+latest-*.json
 
 # ─── OS artifacts ──────────────────────────────────────────────────────────────
 .DS_Store

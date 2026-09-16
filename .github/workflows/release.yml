@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        include:
+          - target: windows-x86_64
+            runner: windows-latest
+          - target: linux-x86_64
+            runner: ubuntu-22.04
+          - target: darwin-x86_64
+            runner: macos-latest
+          - target: darwin-aarch64
+            runner: macos-latest
+
+    runs-on: ${{ matrix.runner }}
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target == 'darwin-aarch64' && 'aarch64-apple-darwin' || '' }}
+          
+      - name: Install dependencies (Linux)
+        if: matrix.target == 'linux-x86_64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          
+      - name: Install frontend dependencies
+        run: |
+          cd apps/desktop
+          npm ci
+          
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: apps/desktop
+          releaseId: ${{ github.event.release.id }}
+          
+  create-manifest:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        
+      - name: Create manifest
+        run: |
+          # Extract version from tag
+          VERSION=${GITHUB_REF#refs/tags/v}
+          
+          # Create the manifest file
+          cat > latest-linux-x86_64.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "Release ${VERSION}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "$(cat Tauri updater/windows-x86_64.sig 2>/dev/null || echo '')",
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_x64-setup.nsis.zip"
+              },
+              "linux-x86_64": {
+                "signature": "$(cat Tauri updater/appimage/*.AppImage.sig 2>/dev/null || echo '')",
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_amd64.AppImage.tar.gz"
+              },
+              "darwin-x86_64": {
+                "signature": "$(cat Tauri updater/macos/*.app.tar.gz.sig 2>/dev/null || echo '')",
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_x64.app.tar.gz"
+              },
+              "darwin-aarch64": {
+                "signature": "$(cat Tauri updater/macos/*.app.tar.gz.sig 2>/dev/null || echo '')",
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_aarch64.app.tar.gz"
+              }
+            }
+          }
+          EOF
+          
+      - name: Upload manifest
+        uses: softprops/action-gh-release@v2
+        with:
+          files: latest-*.json
+          append_body: true

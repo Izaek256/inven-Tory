@@ -19,7 +19,7 @@
  *     are replaced by the real role from the session.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { DashboardView } from './views/DashboardView';
@@ -35,6 +35,8 @@ import { DayBooksView } from './views/DayBooksView';
 import { SettingsView } from './views/SettingsView';
 import { CreateProductView } from './views/CreateProductView';
 import { LoginView } from './views/LoginView';
+import { GenesisWizard } from './views/GenesisWizard';
+import { useGenesisState } from './hooks/useGenesisState';
 import { OfflineAuthBanner } from './components/OfflineAuthBanner';
 import { getStores } from './services/tauriStoreService';
 import { getSession, isAuthenticated, logout } from './services/tauriAuthService';
@@ -123,6 +125,7 @@ export function App(): React.ReactElement {
   >('loading');
   const [session, setSession] = useState<AuthSession | null>(null);
   const [deviceId, setDeviceId] = useState<string>('');
+  const [showGenesis, setShowGenesis] = useState(false);
 
   const { currentView, setCurrentView, activeStoreId, setActiveStoreId } = useAppState();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -145,15 +148,42 @@ export function App(): React.ReactElement {
     errors: number;
   } | null>(null);
 
+  // Restore progress state — updated by polling after restore is kicked off
+  const [restoreProgress, setRestoreProgress] = useState<{
+    phase: string;
+    currentStep: string;
+    progressPercent: number;
+    criticalComplete: boolean;
+    canUseApp: boolean;
+    totalComplete: boolean;
+  } | null>(null);
+  const restoreUsernameRef = useRef<string>('');
+  const restorePollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
   // ---------------------------------------------------------------------------
-  // Auth bootstrap
+  // Auth + Genesis bootstrap
   // ---------------------------------------------------------------------------
+  const genesis = useGenesisState();
+
   useEffect(() => {
     const bootstrap = async (): Promise<void> => {
-      // In single-user mode the device ID is ALWAYS available (either
-      // persisted or freshly generated). No pre-registration required.
       const deviceIdVal = await getOrCreateDeviceId();
       setDeviceId(deviceIdVal);
+
+      // Wait for genesis state to be checked
+      if (genesis.loading) {
+        return;
+      }
+
+      // Check if genesis is needed
+      if (genesis.needsGenesis) {
+        setShowGenesis(true);
+        setAuthState('loading');
+        return;
+      }
+
+      // Genesis not needed - hide wizard and proceed normally
+      setShowGenesis(false);
 
       const authed = await isAuthenticated();
       if (!authed) {
@@ -166,7 +196,7 @@ export function App(): React.ReactElement {
       setAuthState(s?.token_expired_offline ? 'expired_offline' : 'authenticated');
     };
     void bootstrap();
-  }, []);
+  }, [genesis.loading, genesis.needsGenesis]);
 
   // ---------------------------------------------------------------------------
   // Stores data
@@ -292,6 +322,73 @@ export function App(): React.ReactElement {
     setSession(s);
     setAuthState('authenticated');
   };
+
+  const handleGenesisComplete = (username: string, storeCode: string): void => {
+    void username;
+    void storeCode;
+    setShowGenesis(false);
+    setAuthState('unauthenticated');
+  };
+
+  /** Called by GenesisWizard when restore has been kicked off on the Rust side.
+   *  We dismiss the wizard immediately so the app is accessible, then poll
+   *  restore progress in the background and surface it in the Header.
+   */
+  const handleRestoreStarted = useCallback(
+    (username: string): void => {
+      restoreUsernameRef.current = username;
+      setShowGenesis(false);
+      setAuthState('unauthenticated');
+
+      // Initial progress placeholder so Header shows "restoring…" right away
+      setRestoreProgress({
+        phase: 'authenticating',
+        currentStep: 'Starting restore…',
+        progressPercent: 0,
+        criticalComplete: false,
+        canUseApp: false,
+        totalComplete: false,
+      });
+
+      // Poll progress every 500 ms
+      if (restorePollRef.current) clearInterval(restorePollRef.current);
+      restorePollRef.current = setInterval(async () => {
+        try {
+          const prog = await genesis.getRestoreProgress();
+          if (prog.success && prog.progress) {
+            const p = prog.progress;
+            setRestoreProgress({
+              phase: p.phase,
+              currentStep: p.current_step,
+              progressPercent: p.progress_percent,
+              criticalComplete: p.critical_complete,
+              canUseApp: p.can_use_app,
+              totalComplete: p.total_complete,
+            });
+            if (p.total_complete || p.phase === 'error') {
+              if (restorePollRef.current) {
+                clearInterval(restorePollRef.current);
+                restorePollRef.current = null;
+              }
+              // Keep progress bar visible for 3 seconds then clear
+              setTimeout(() => setRestoreProgress(null), 3000);
+            }
+          }
+        } catch (e) {
+          // eslint-disable-next-line no-console
+          console.error('[App] restore poll error:', e);
+        }
+      }, 500);
+    },
+    [genesis],
+  );
+
+  // Cleanup poll on unmount
+  useEffect((): (() => void) => {
+    return (): void => {
+      if (restorePollRef.current) clearInterval(restorePollRef.current);
+    };
+  }, []);
 
   const handleReauthSuccess = (): void => {
     const refresh = async (): Promise<void> => {
@@ -420,59 +517,90 @@ export function App(): React.ReactElement {
 
   return (
     <div className="app-container" data-testid="app-container">
-      {switchingStore.active && (
-        <div className="store-switch-overlay" data-testid="store-switch-overlay">
-          <div className="store-switch-modal">
-            <div className="store-switch-spinner-container">
-              <div className="store-switch-spinner-ring" />
-              <div className="store-switch-spinner-core">
-                <StoreIcon size={22} />
+      {showGenesis && genesis.state && !genesis.state.ready && (
+        <GenesisWizard
+          state={genesis.state}
+          onComplete={handleGenesisComplete}
+          onCancel={() => setShowGenesis(false)}
+          running={genesis.runningGenesis}
+          error={genesis.error}
+          onRun={async (params) => {
+            const result = await genesis.runGenesis(params);
+            if (result.success) {
+              handleGenesisComplete(result.result?.username ?? '', result.result?.store_code ?? '');
+            }
+            return result;
+          }}
+          onValidateRestore={async (params) => {
+            return await genesis.validateRestore(params);
+          }}
+          onStartRestore={async (params) => {
+            return await genesis.startRestore(params);
+          }}
+          onGetRestoreProgress={async () => {
+            return await genesis.getRestoreProgress();
+          }}
+          onRestoreStarted={handleRestoreStarted}
+        />
+      )}
+      {!showGenesis && (
+        <>
+          {switchingStore.active && (
+            <div className="store-switch-overlay" data-testid="store-switch-overlay">
+              <div className="store-switch-modal">
+                <div className="store-switch-spinner-container">
+                  <div className="store-switch-spinner-ring" />
+                  <div className="store-switch-spinner-core">
+                    <StoreIcon size={22} />
+                  </div>
+                </div>
+                <h3 className="store-switch-title">Switching Store</h3>
+                <p className="store-switch-target">
+                  {switchingStore.storeName}{' '}
+                  {switchingStore.storeCode && (
+                    <span className="store-switch-badge">{switchingStore.storeCode}</span>
+                  )}
+                </p>
+                <p className="store-switch-subtitle">
+                  Refreshing inventory ledger and localized data...
+                </p>
               </div>
             </div>
-            <h3 className="store-switch-title">Switching Store</h3>
-            <p className="store-switch-target">
-              {switchingStore.storeName}{' '}
-              {switchingStore.storeCode && (
-                <span className="store-switch-badge">{switchingStore.storeCode}</span>
-              )}
-            </p>
-            <p className="store-switch-subtitle">
-              Refreshing inventory ledger and localized data...
-            </p>
-          </div>
-        </div>
-      )}
-      <Header
-        stores={stores}
-        activeStoreId={activeStoreId}
-        onSelectStore={handleSelectStoreAndReload}
-        interactiveTimeMs={interactiveTimeMs}
-        currentUser={session}
-        onLogout={handleLogout}
-        importProgress={importProgress}
-      />
-      <div className="app-body">
-        {authState !== 'loading' && authState !== 'unauthenticated' && (
-          <Sidebar
-            currentView={currentView}
-            onNavigate={setCurrentView}
-            collapsed={sidebarCollapsed}
-            onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-          />
-        )}
-        <main className="app-content">
-          {authState === 'expired_offline' && session && (
-            <OfflineAuthBanner
-              username={session.username}
-              deviceId={deviceId}
-              onReauthSuccess={handleReauthSuccess}
-            />
           )}
-          <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={setActiveStoreId}>
-            {renderView()}
-          </StoreProvider>
-        </main>
-      </div>
+          <Header
+            stores={stores}
+            activeStoreId={activeStoreId}
+            onSelectStore={handleSelectStoreAndReload}
+            interactiveTimeMs={interactiveTimeMs}
+            currentUser={session}
+            onLogout={handleLogout}
+            importProgress={importProgress}
+            restoreProgress={restoreProgress}
+          />
+          <div className="app-body">
+            {authState !== 'loading' && authState !== 'unauthenticated' && (
+              <Sidebar
+                currentView={currentView}
+                onNavigate={setCurrentView}
+                collapsed={sidebarCollapsed}
+                onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+              />
+            )}
+            <main className="app-content">
+              {authState === 'expired_offline' && session && (
+                <OfflineAuthBanner
+                  username={session.username}
+                  deviceId={deviceId}
+                  onReauthSuccess={handleReauthSuccess}
+                />
+              )}
+              <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={setActiveStoreId}>
+                {renderView()}
+              </StoreProvider>
+            </main>
+          </div>
+        </>
+      )}
     </div>
   );
 }

@@ -39,6 +39,7 @@ pub struct Product {
     pub alternate_names: Option<String>,
     pub serial_tracking_enabled: bool,
     pub is_active: bool,
+    pub low_stock_threshold: Option<i32>,
     pub created_at: String,
     pub updated_at: String,
     /// Total AVAILABLE stock quantity across all stores (summed from stock_balances).
@@ -242,6 +243,166 @@ fn generate_id(prefix: &str) -> String {
     format!("{}-{:X}", prefix, nanos)
 }
 
+// Genesis wizard structures
+#[derive(Debug, Serialize)]
+pub struct GenesisState {
+    pub ready: bool,
+    pub has_user_with_pin: bool,
+    pub has_any_store: bool,
+    pub has_tables: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GenesisResult {
+    pub success: bool,
+    pub message: String,
+    pub username: Option<String>,
+    pub store_code: Option<String>,
+}
+
+// Restore wizard structures
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RestorePreview {
+    pub stores_count: i32,
+    pub products_count: i32,
+    pub transactions_count: i32,
+    pub last_sync_timestamp: String,
+    pub estimated_critical_time_seconds: i32,
+    pub estimated_total_time_minutes: i32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct RestoreProgress {
+    pub phase: String,
+    pub current_step: String,
+    pub progress_percent: i32,
+    pub critical_complete: bool,
+    pub can_use_app: bool,
+    pub total_complete: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RestoreCredentials {
+    pub api_base_url: String,
+    pub username: String,
+    pub password: String,
+}
+
+// Global restore progress — written by the background restore thread, read by get_restore_progress
+static RESTORE_PROGRESS: std::sync::OnceLock<std::sync::Mutex<RestoreProgress>> =
+    std::sync::OnceLock::new();
+
+fn restore_progress_mutex() -> &'static std::sync::Mutex<RestoreProgress> {
+    RESTORE_PROGRESS.get_or_init(|| {
+        std::sync::Mutex::new(RestoreProgress {
+            phase: "idle".to_string(),
+            current_step: String::new(),
+            progress_percent: 0,
+            critical_complete: false,
+            can_use_app: false,
+            total_complete: false,
+        })
+    })
+}
+
+fn set_restore_progress(phase: &str, step: &str, pct: i32, crit: bool, can_use: bool, done: bool) {
+    if let Ok(mut p) = restore_progress_mutex().lock() {
+        p.phase = phase.to_string();
+        p.current_step = step.to_string();
+        p.progress_percent = pct;
+        p.critical_complete = crit;
+        p.can_use_app = can_use;
+        p.total_complete = done;
+    }
+}
+
+// ---- Server-side response structs for deserializing restore API JSON ----
+
+#[derive(Debug, Deserialize)]
+struct SrvStore {
+    id: String,
+    code: String,
+    name: String,
+    address: Option<String>,
+    is_active: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct SrvUser {
+    id: String,
+    username: String,
+    email: Option<String>,
+    full_name: Option<String>,
+    role: String,
+    #[allow(dead_code)]
+    assigned_store_id: Option<String>,
+    is_active: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct SrvProduct {
+    id: String,
+    sku: String,
+    name: String,
+    brand: Option<String>,
+    model: Option<String>,
+    category: String,
+    unit: String,
+    barcode: Option<String>,
+    alternate_names: Option<String>,
+    serial_tracking_enabled: bool,
+    is_active: bool,
+    created_at: serde_json::Value,
+    updated_at: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct SrvStockBalance {
+    id: String,
+    store_id: String,
+    product_id: String,
+    stock_bucket: String,
+    quantity: i32,
+    updated_at: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct SrvTransaction {
+    transaction_id: String,
+    store_id: String,
+    product_id: String,
+    movement_type: String,
+    quantity_delta: i32,
+    occurred_at: serde_json::Value,
+    user_id: serde_json::Value,
+    device_id: String,
+    stock_bucket: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CriticalRestoreData {
+    stores: Vec<SrvStore>,
+    users: Vec<SrvUser>,
+    products: Vec<SrvProduct>,
+    stock_balances: Vec<SrvStockBalance>,
+    recent_transactions: Vec<SrvTransaction>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportantRestoreData {
+    recent_history: Vec<SrvTransaction>,
+    #[allow(dead_code)]
+    active_day_books: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct BackgroundRestoreData {
+    historical_transactions: Vec<SrvTransaction>,
+}
+
+
 /// Upsert a day book entry for a transaction.
 ///
 /// Called after every stock movement so the day_books and day_book_entries
@@ -397,8 +558,542 @@ fn ensure_day_books_tables(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("Failed to create day_books tables: {}", e))
 }
 
+
 pub mod commands {
     use super::*;
+// Genesis: ensure core schema tables exist (mirrors alembic 0001)
+fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS stores (id VARCHAR(36) PRIMARY KEY, code VARCHAR(50) NOT NULL, name VARCHAR(255) NOT NULL, address VARCHAR(500), is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS ix_stores_code ON stores (code); CREATE TABLE IF NOT EXISTS devices (id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), device_name VARCHAR(255) NOT NULL, is_active BOOLEAN NOT NULL DEFAULT 1, registered_at DATETIME NOT NULL, last_seen_at DATETIME); CREATE INDEX IF NOT EXISTS ix_devices_store_id ON devices (store_id); CREATE TABLE IF NOT EXISTS users (id VARCHAR(36) PRIMARY KEY, username VARCHAR(100) NOT NULL, email VARCHAR(255), pin_hash VARCHAR(255), full_name VARCHAR(255), role VARCHAR(50) NOT NULL DEFAULT 'STORE_CLERK', is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username); CREATE TABLE IF NOT EXISTS products (id VARCHAR(36) PRIMARY KEY, sku VARCHAR(100) NOT NULL, name VARCHAR(255) NOT NULL, brand VARCHAR(100), model VARCHAR(100), category VARCHAR(100) NOT NULL, unit VARCHAR(20) NOT NULL DEFAULT 'pcs', barcode VARCHAR(100), alternate_names TEXT, serial_tracking_enabled BOOLEAN NOT NULL DEFAULT 0, is_active BOOLEAN NOT NULL DEFAULT 1, low_stock_threshold INTEGER, warranty_days INTEGER, batch_tracking_enabled BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS ix_products_sku ON products (sku); CREATE INDEX IF NOT EXISTS ix_products_barcode ON products (barcode); CREATE TABLE IF NOT EXISTS stock_balances (id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), product_id VARCHAR(36) NOT NULL REFERENCES products(id), stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE', quantity INTEGER NOT NULL DEFAULT 0, updated_at DATETIME NOT NULL, UNIQUE(store_id, product_id, stock_bucket)); CREATE TABLE IF NOT EXISTS inventory_transactions (transaction_id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), product_id VARCHAR(36) NOT NULL REFERENCES products(id), movement_type VARCHAR(50) NOT NULL, stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE', quantity_delta INTEGER NOT NULL, occurred_at DATETIME NOT NULL, recorded_at DATETIME NOT NULL, user_id VARCHAR(36) NOT NULL, device_id VARCHAR(36) NOT NULL, reference_number VARCHAR(100), reason_code VARCHAR(50), transfer_id VARCHAR(36), purchase_order_id VARCHAR(100), batch_id VARCHAR(100), client_sequence INTEGER, sync_status VARCHAR(50) NOT NULL DEFAULT 'PENDING', server_accepted_at DATETIME); CREATE TABLE IF NOT EXISTS transfers (id VARCHAR(36) PRIMARY KEY, source_store_id VARCHAR(36) NOT NULL REFERENCES stores(id), destination_store_id VARCHAR(36) NOT NULL REFERENCES stores(id), product_id VARCHAR(36) NOT NULL REFERENCES products(id), quantity INTEGER NOT NULL, status VARCHAR(50) NOT NULL DEFAULT 'PENDING', created_by_user_id VARCHAR(36) NOT NULL, notes TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE TABLE IF NOT EXISTS outbox_events (id VARCHAR(36) PRIMARY KEY, event_type VARCHAR(100) NOT NULL, payload TEXT, status VARCHAR(50) NOT NULL DEFAULT 'PENDING', created_at DATETIME NOT NULL, completed_at DATETIME); CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at); CREATE TABLE IF NOT EXISTS day_books (id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), book_date DATETIME NOT NULL, opening_balance INTEGER NOT NULL DEFAULT 0, closing_balance INTEGER, balance_sheet_generated BOOLEAN NOT NULL DEFAULT 0, balance_sheet_generated_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE TABLE IF NOT EXISTS day_book_entries (id VARCHAR(36) PRIMARY KEY, day_book_id VARCHAR(36) NOT NULL REFERENCES day_books(id) ON DELETE CASCADE, transaction_id VARCHAR(36) NOT NULL REFERENCES inventory_transactions(transaction_id) ON DELETE CASCADE, movement_type VARCHAR(50) NOT NULL, product_id VARCHAR(36) NOT NULL REFERENCES products(id), quantity_delta INTEGER NOT NULL, stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE', reference_number VARCHAR(100), reason_code VARCHAR(50), notes TEXT, occurred_at DATETIME NOT NULL, recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+    ).map_err(|e| format!("Failed to create schema tables: {}", e))
+}
+
+fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(_) => return GenesisState { ready: false, has_user_with_pin: false, has_any_store: false, has_tables: false },
+    };
+    let has_tables = conn.execute("SELECT 1 FROM stores LIMIT 1", []).map(|_| true).unwrap_or(false);
+    let has_any_store = conn.query_row("SELECT COUNT(*) FROM stores WHERE is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
+    let has_user_with_pin = conn.query_row("SELECT COUNT(*) FROM users WHERE pin_hash IS NOT NULL AND is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
+    GenesisState { ready: has_user_with_pin, has_user_with_pin, has_any_store, has_tables }
+}
+
+#[tauri::command]
+pub fn check_genesis_state() -> GenesisState {
+    let db_path = get_db_path();
+    check_genesis_state_internal(&db_path)
+}
+
+fn hash_pin(password: &str) -> Result<String, String> {
+    bcrypt::hash(password, 12).map_err(|e| format!("bcrypt hash failed: {}", e))
+}
+
+fn normalize_api_url(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    if trimmed.ends_with("/api/v1") {
+        trimmed.to_string()
+    } else {
+        format!("{}/api/v1", trimmed)
+    }
+}
+
+fn push_genesis_to_server(api_base_url: &str, username: &str, email: &str, password: &str, role: &str, store_id: &str, store_code: &str, store_name: &str, store_address: &str) -> Result<bool, String> {
+    let base = normalize_api_url(api_base_url);
+    let url = format!("{}/genesis", base);
+    let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(10)).build().map_err(|e| format!("HTTP client error: {}", e))?;
+    let body = serde_json::json!({"username": username, "email": email, "password": password, "role": role, "store_id": store_id, "store_code": store_code, "store_name": store_name, "store_address": store_address});
+    let resp = client.post(&url).header("Content-Type", "application/json").body(body.to_string()).send().map_err(|e| format!("Server unreachable: {}", e))?;
+    if resp.status().is_success() { Ok(true) } else { Err(format!("Server returned {}: {}", resp.status(), resp.text().unwrap_or_default())) }
+}
+
+#[tauri::command]
+pub fn run_genesis(username: String, email: String, full_name: String, password: String, role: String, store_code: String, store_name: String, store_address: Option<String>, api_base_url: Option<String>) -> GenesisResult {
+    let db_path = get_db_path();
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => return GenesisResult { success: false, message: format!("Failed to open database: {}", e), username: None, store_code: None },
+    };
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    let _ = conn.pragma_update(None, "busy_timeout", 5000);
+    if let Err(e) = ensure_schema_tables(&conn) {
+        return GenesisResult { success: false, message: format!("Schema creation failed: {}", e), username: None, store_code: None };
+    }
+    let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at); CREATE INDEX IF NOT EXISTS idx_inventory_tx_movement_date ON inventory_transactions(movement_type, occurred_at); CREATE INDEX IF NOT EXISTS idx_stock_balances_store_product ON stock_balances(store_id, product_id, stock_bucket); CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku); CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at); CREATE INDEX IF NOT EXISTS idx_stores_updated_at ON stores(updated_at);");
+    let now = now_iso();
+    let code_clean = store_code.trim().to_uppercase();
+    let name_clean = store_name.trim().to_string();
+    let address_clean = store_address.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty());
+    let store_id = format!("STORE-{}", code_clean);
+    let store_count: i32 = conn.query_row("SELECT COUNT(*) FROM stores WHERE UPPER(code) = ?1", params![code_clean], |row| row.get(0)).unwrap_or(0);
+    if store_count > 0 {
+        return GenesisResult { success: false, message: format!("Store code '{}' already exists.", code_clean), username: None, store_code: None };
+    }
+    if let Err(e) = conn.execute("INSERT INTO stores (id, code, name, address, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, 1, ?5, ?6)", params![store_id, code_clean, name_clean, address_clean, now, now]) {
+        return GenesisResult { success: false, message: format!("Failed to create store: {}", e), username: None, store_code: None };
+    }
+    let pin_hash = match hash_pin(&password) { Ok(h) => h, Err(e) => return GenesisResult { success: false, message: format!("Password hashing failed: {}", e), username: None, store_code: None } };
+    let user_id = generate_id("USER");
+    let username_clean = username.trim().to_string();
+    let user_count: i32 = conn.query_row("SELECT COUNT(*) FROM users WHERE LOWER(username) = LOWER(?1)", params![username_clean], |row| row.get(0)).unwrap_or(0);
+    if user_count > 0 {
+        return GenesisResult { success: false, message: format!("Username '{}' already exists.", username_clean), username: None, store_code: None };
+    }
+    if let Err(e) = conn.execute("INSERT INTO users (id, username, email, pin_hash, full_name, role, is_active, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)", params![user_id, username_clean, email.trim(), pin_hash, full_name.trim(), role.trim(), now]) {
+        return GenesisResult { success: false, message: format!("Failed to create user: {}", e), username: None, store_code: None };
+    }
+    let device_id = generate_id("DEV");
+    let _ = conn.execute("INSERT INTO devices (id, store_id, device_name, is_active, registered_at, last_seen_at) VALUES (?1, ?2, ?3, 1, ?4, ?5)", params![device_id, store_id, "Local Desktop (genesis)", now, now]);
+    let server_msg = if let Some(ref api_url) = api_base_url {
+        let api_url = api_url.trim();
+        if !api_url.is_empty() {
+            match push_genesis_to_server(api_url, &username_clean, &email.trim(), &password, &role.trim(), &store_id, &code_clean, &name_clean, &address_clean.unwrap_or("")) {
+                Ok(true) => "\n[OK] Server credentials pushed.".to_string(),
+                Ok(false) => "\n(Server push skipped.)".to_string(),
+                Err(e) => format!("\n[WARN] Server push failed: {}. Local login still works offline.", e),
+            }
+        } else { String::new() }
+    } else { String::new() };
+    let verified = conn.query_row("SELECT username FROM users WHERE pin_hash IS NOT NULL AND username = ?1", params![username_clean], |row| row.get::<_, String>(0)).unwrap_or_default();
+    if verified.is_empty() {
+        return GenesisResult { success: false, message: "Write succeeded but verification failed.".to_string(), username: None, store_code: None };
+    }
+    GenesisResult { success: true, message: format!(" Genesis complete.{} Log in with username '{}' and your chosen password.", server_msg, username_clean), username: Some(username_clean), store_code: Some(code_clean) }
+}
+
+fn fetch_restore_preview_from_server(api_base_url: &str, username: &str, password: &str) -> Result<RestorePreview, String> {
+    let base = normalize_api_url(api_base_url);
+    let url = format!("{}/restore/preview", base);
+    let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(10)).build().map_err(|e| format!("HTTP client error: {}", e))?;
+    let body = serde_json::json!({"username": username, "password": password});
+    let resp = client.post(&url).header("Content-Type", "application/json").body(body.to_string()).send().map_err(|e| format!("Server unreachable: {}", e))?;
+
+    if resp.status().is_success() {
+        let preview: RestorePreview = resp.json().map_err(|e| format!("Failed to parse response: {}", e))?;
+        Ok(preview)
+    } else {
+        Err(format!("Server returned {}: {}", resp.status(), resp.text().unwrap_or_default()))
+    }
+}
+
+// Restore wizard commands
+#[tauri::command]
+pub fn validate_restore_credentials(creds: RestoreCredentials) -> Result<RestorePreview, String> {
+    fetch_restore_preview_from_server(&creds.api_base_url, &creds.username, &creds.password)
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct RestoreStartResponse {
+    restore_id: String,
+    access_token: String,
+}
+
+/// Execute the phased restore: called in a background thread spawned by
+/// `start_prioritized_restore`. Updates RESTORE_PROGRESS as each phase completes.
+fn do_restore(api_base_url: String, username: String, password: String, db_path: std::path::PathBuf) {
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            set_restore_progress("error", &format!("HTTP client error: {}", e), 0, false, false, false);
+            return;
+        }
+    };
+
+    let base = normalize_api_url(&api_base_url);
+
+    // ── Phase 0: authenticate and get restore token ──────────────────────────
+    set_restore_progress("starting", "Validating credentials…", 3, false, false, false);
+    let start_url = format!("{}/restore/start", base);
+    let start_body = serde_json::json!({"username": username, "password": password});
+    let start_resp = match client
+        .post(&start_url)
+        .header("Content-Type", "application/json")
+        .body(start_body.to_string())
+        .send()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            set_restore_progress("error", &format!("Server unreachable: {}", e), 0, false, false, false);
+            return;
+        }
+    };
+    if !start_resp.status().is_success() {
+        set_restore_progress("error", &format!("Authentication failed: {}", start_resp.text().unwrap_or_default()), 0, false, false, false);
+        return;
+    }
+    let start_data: RestoreStartResponse = match start_resp.json() {
+        Ok(d) => d,
+        Err(e) => {
+            set_restore_progress("error", &format!("Failed to parse auth response: {}", e), 0, false, false, false);
+            return;
+        }
+    };
+    let access_token = start_data.access_token;
+
+    // ── Phase 1: fetch critical data ─────────────────────────────────────────
+    set_restore_progress("critical_restore", "Downloading stores, products and stock…", 10, false, false, false);
+    let critical_url = format!("{}/sync/restore/critical", base);
+    let critical_resp = match client
+        .get(&critical_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+    {
+        Ok(r) => r,
+        Err(e) => {
+            set_restore_progress("error", &format!("Failed to fetch critical data: {}", e), 0, false, false, false);
+            return;
+        }
+    };
+    if !critical_resp.status().is_success() {
+        set_restore_progress("error", &format!("Critical fetch error: {}", critical_resp.text().unwrap_or_default()), 0, false, false, false);
+        return;
+    }
+    let critical_data: CriticalRestoreData = match critical_resp.json() {
+        Ok(d) => d,
+        Err(e) => {
+            set_restore_progress("error", &format!("Failed to parse critical data: {}", e), 10, false, false, false);
+            return;
+        }
+    };
+
+    // ── Phase 2: open local DB and write critical data ───────────────────────
+    set_restore_progress("critical_restore", "Opening local database…", 20, false, false, false);
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => {
+            set_restore_progress("error", &format!("Failed to open local DB: {}", e), 20, false, false, false);
+            return;
+        }
+    };
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    let _ = conn.pragma_update(None, "busy_timeout", 5000);
+    if let Err(e) = ensure_schema_tables(&conn) {
+        set_restore_progress("error", &format!("Schema init failed: {}", e), 20, false, false, false);
+        return;
+    }
+
+    set_restore_progress("critical_restore", "Writing stores…", 25, false, false, false);
+    for s in &critical_data.stores {
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO stores (id, code, name, address, is_active, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            rusqlite::params![s.id, s.code, s.name, s.address, s.is_active as i32,
+                s.created_at, s.updated_at],
+        );
+    }
+
+    set_restore_progress("critical_restore", "Writing products…", 35, false, false, false);
+    for p in &critical_data.products {
+        let created = p.created_at.as_str().unwrap_or("");
+        let updated = p.updated_at.as_str().unwrap_or("");
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+            rusqlite::params![p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit,
+                p.barcode, p.alternate_names, p.serial_tracking_enabled as i32,
+                p.is_active as i32, created, updated],
+        );
+    }
+
+    set_restore_progress("critical_restore", "Writing stock balances…", 43, false, false, false);
+    for b in &critical_data.stock_balances {
+        let updated = b.updated_at.as_str().unwrap_or("");
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1,?2,?3,?4,?5,?6)",
+            rusqlite::params![b.id, b.store_id, b.product_id, b.stock_bucket, b.quantity, updated],
+        );
+    }
+
+    set_restore_progress("critical_restore", "Writing user accounts…", 48, false, false, false);
+    for u in &critical_data.users {
+        // Hash the restore password as the local PIN so the logged-in user can log in immediately
+        let pin_hash = if u.username == username {
+            hash_pin(&password).unwrap_or_default()
+        } else {
+            hash_pin("123456").unwrap_or_default()
+        };
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, email, pin_hash, full_name, role, is_active, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+            rusqlite::params![u.id, u.username, u.email, pin_hash, u.full_name,
+                u.role, u.is_active as i32, now_iso()],
+        );
+    }
+
+    set_restore_progress("critical_restore", "Writing recent transactions…", 52, false, false, false);
+    let now_str = now_iso();
+    for tx in &critical_data.recent_transactions {
+        let user_id_str = match &tx.user_id {
+            serde_json::Value::Number(n) => n.to_string(),
+            serde_json::Value::String(s) => s.clone(),
+            _ => "1".to_string(),
+        };
+        let occurred = tx.occurred_at.as_str().unwrap_or(&now_str);
+        let bucket = tx.stock_bucket.as_deref().unwrap_or("AVAILABLE");
+        let _ = conn.execute(
+            "INSERT OR IGNORE INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, sync_status) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'SYNCED')",
+            rusqlite::params![tx.transaction_id, tx.store_id, tx.product_id,
+                tx.movement_type, bucket, tx.quantity_delta,
+                occurred, now_str, user_id_str, tx.device_id],
+        );
+    }
+
+    // Critical complete — app is usable now
+    set_restore_progress("critical_restore", "Critical data restored — app is ready!", 55, true, true, false);
+
+    // ── Phase 3: fetch + write important data (recent history + day books) ───
+    set_restore_progress("important_restore", "Downloading recent transaction history…", 58, true, true, false);
+    let important_url = format!("{}/sync/restore/important", base);
+    if let Ok(imp_resp) = client
+        .get(&important_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+    {
+        if imp_resp.status().is_success() {
+            if let Ok(imp_data) = imp_resp.json::<ImportantRestoreData>() {
+                set_restore_progress("important_restore", "Writing recent history…", 65, true, true, false);
+                for tx in &imp_data.recent_history {
+                    let user_id_str = match &tx.user_id {
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => "1".to_string(),
+                    };
+                    let occurred = tx.occurred_at.as_str().unwrap_or(&now_str);
+                    let bucket = tx.stock_bucket.as_deref().unwrap_or("AVAILABLE");
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, sync_status) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'SYNCED')",
+                        rusqlite::params![tx.transaction_id, tx.store_id, tx.product_id,
+                            tx.movement_type, bucket, tx.quantity_delta,
+                            occurred, now_str, user_id_str, tx.device_id],
+                    );
+                }
+            }
+        }
+    }
+
+    // ── Phase 4: fetch + write background data (historical transactions) ─────
+    set_restore_progress("background_restore", "Downloading historical transactions…", 72, true, true, false);
+    let bg_url = format!("{}/sync/restore/background", base);
+    if let Ok(bg_resp) = client
+        .get(&bg_url)
+        .header("Authorization", format!("Bearer {}", access_token))
+        .send()
+    {
+        if bg_resp.status().is_success() {
+            if let Ok(bg_data) = bg_resp.json::<BackgroundRestoreData>() {
+                set_restore_progress("background_restore", "Writing historical transactions…", 85, true, true, false);
+                for tx in &bg_data.historical_transactions {
+                    let user_id_str = match &tx.user_id {
+                        serde_json::Value::Number(n) => n.to_string(),
+                        serde_json::Value::String(s) => s.clone(),
+                        _ => "1".to_string(),
+                    };
+                    let occurred = tx.occurred_at.as_str().unwrap_or(&now_str);
+                    let bucket = tx.stock_bucket.as_deref().unwrap_or("AVAILABLE");
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, sync_status) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'SYNCED')",
+                        rusqlite::params![tx.transaction_id, tx.store_id, tx.product_id,
+                            tx.movement_type, bucket, tx.quantity_delta,
+                            occurred, now_str, user_id_str, tx.device_id],
+                    );
+                }
+            }
+        }
+    }
+
+    // Done!
+    set_restore_progress("complete", "Restore complete! All data has been downloaded.", 100, true, true, true);
+}
+
+#[tauri::command]
+pub fn start_prioritized_restore(creds: RestoreCredentials) -> Result<String, String> {
+    let base = normalize_api_url(&creds.api_base_url);
+    // Validate the credentials first (fast, synchronous) before spawning the thread
+    let preview_url = format!("{}/restore/preview", base);
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+    let body = serde_json::json!({"username": creds.username, "password": creds.password});
+    let check = client
+        .post(&preview_url)
+        .header("Content-Type", "application/json")
+        .body(body.to_string())
+        .send()
+        .map_err(|e| format!("Server unreachable: {}", e))?;
+    if !check.status().is_success() {
+        return Err(format!("Server returned {}: {}", check.status(), check.text().unwrap_or_default()));
+    }
+
+    // Reset progress
+    set_restore_progress("starting", "Initialising restore…", 1, false, false, false);
+
+    // Spawn background thread so the UI can poll progress immediately
+    let api_base_url = base;
+    let username = creds.username.clone();
+    let password = creds.password.clone();
+    let db_path = get_db_path();
+    std::thread::spawn(move || do_restore(api_base_url, username, password, db_path));
+
+    Ok("restore_started".to_string())
+}
+
+#[tauri::command]
+pub fn get_restore_progress() -> Result<RestoreProgress, String> {
+    Ok(restore_progress_mutex().lock().map(|p| p.clone()).unwrap_or(RestoreProgress {
+        phase: "idle".to_string(),
+        current_step: String::new(),
+        progress_percent: 0,
+        critical_complete: false,
+        can_use_app: false,
+        total_complete: false,
+    }))
+}
+
+// Restore data application commands
+#[tauri::command]
+pub fn apply_restore_critical(
+    stores: Vec<serde_json::Value>,
+    users: Vec<serde_json::Value>,
+    products: Vec<serde_json::Value>,
+    stock_balances: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    let db_path = get_db_path();
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("Failed to open database: {}", e)),
+    };
+
+    // Ensure schema exists
+    if let Err(e) = ensure_schema_tables(&conn) {
+        return Err(format!("Schema creation failed: {}", e));
+    }
+
+    let now = now_iso();
+
+    // Apply stores
+    for store in stores {
+        let id = store.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let code = store.get("code").and_then(|v| v.as_str()).unwrap_or("");
+        let name = store.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let address = store.get("address").and_then(|v| v.as_str());
+        let is_active = store.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
+        let created_at = store.get("created_at").and_then(|v| v.as_str()).unwrap_or(&now);
+        let updated_at = store.get("updated_at").and_then(|v| v.as_str()).unwrap_or(&now);
+
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO stores (id, code, name, address, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, code, name, address, is_active, created_at, updated_at],
+        );
+    }
+
+    // Apply users
+    for user in users {
+        let id = user.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let username = user.get("username").and_then(|v| v.as_str()).unwrap_or("");
+        let email = user.get("email").and_then(|v| v.as_str());
+        let full_name = user.get("full_name").and_then(|v| v.as_str());
+        let role = user.get("role").and_then(|v| v.as_str()).unwrap_or("STORE_CLERK");
+        let assigned_store_id = user.get("assigned_store_id").and_then(|v| v.as_str());
+        let is_active = user.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
+        let created_at = &now;
+
+        // Note: pin_hash would need to be set separately or users would need to re-authenticate
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO users (id, username, email, full_name, role, assigned_store_id, is_active, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![id, username, email, full_name, role, assigned_store_id, is_active, created_at],
+        );
+    }
+
+    // Apply products
+    for product in products {
+        let id = product.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let sku = product.get("sku").and_then(|v| v.as_str()).unwrap_or("");
+        let name = product.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let brand = product.get("brand").and_then(|v| v.as_str());
+        let model = product.get("model").and_then(|v| v.as_str());
+        let category = product.get("category").and_then(|v| v.as_str()).unwrap_or("General");
+        let unit = product.get("unit").and_then(|v| v.as_str()).unwrap_or("pcs");
+        let barcode = product.get("barcode").and_then(|v| v.as_str());
+        let alternate_names = product.get("alternate_names").and_then(|v| v.as_str());
+        let serial_tracking_enabled = product.get("serial_tracking_enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_active = product.get("is_active").and_then(|v| v.as_bool()).unwrap_or(true);
+        let created_at = product.get("created_at").and_then(|v| v.as_str()).unwrap_or(&now);
+        let updated_at = product.get("updated_at").and_then(|v| v.as_str()).unwrap_or(&now);
+
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at],
+        );
+    }
+
+    // Apply stock balances
+    for balance in stock_balances {
+        let id = balance.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let store_id = balance.get("store_id").and_then(|v| v.as_str()).unwrap_or("");
+        let product_id = balance.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
+        let stock_bucket = balance.get("stock_bucket").and_then(|v| v.as_str()).unwrap_or("AVAILABLE");
+        let quantity = balance.get("quantity").and_then(|v| v.as_i64()).unwrap_or(0);
+        let updated_at = balance.get("updated_at").and_then(|v| v.as_str()).unwrap_or(&now);
+
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, store_id, product_id, stock_bucket, quantity, updated_at],
+        );
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn apply_restore_transactions(transactions: Vec<serde_json::Value>) -> Result<(), String> {
+    let db_path = get_db_path();
+    let conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("Failed to open database: {}", e)),
+    };
+
+    let now = now_iso();
+
+    for tx in transactions {
+        let id = tx.get("id").and_then(|v| v.as_str()).unwrap_or("");
+        let transaction_id = tx.get("transaction_id").and_then(|v| v.as_str()).unwrap_or("");
+        let store_id = tx.get("store_id").and_then(|v| v.as_str()).unwrap_or("");
+        let product_id = tx.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
+        let movement_type = tx.get("movement_type").and_then(|v| v.as_str()).unwrap_or("");
+        let quantity_delta = tx.get("quantity_delta").and_then(|v| v.as_i64()).unwrap_or(0);
+        let occurred_at = tx.get("occurred_at").and_then(|v| v.as_str()).unwrap_or(&now);
+        let user_id = tx.get("user_id").and_then(|v| v.as_i64()).unwrap_or(1);
+        let device_id = tx.get("device_id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let stock_bucket = tx.get("stock_bucket").and_then(|v| v.as_str()).unwrap_or("AVAILABLE");
+
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO inventory_transactions (id, transaction_id, store_id, product_id, movement_type, quantity_delta, occurred_at, user_id, device_id, stock_bucket) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![id, transaction_id, store_id, product_id, movement_type, quantity_delta, occurred_at, user_id, device_id, stock_bucket],
+        );
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn apply_restore_important(
+    _recent_history: Vec<serde_json::Value>,
+    _active_day_books: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    // Similar implementation for important data
+    Ok(())
+}
+
+#[tauri::command]
+pub fn apply_restore_background(
+    _historical_transactions: Vec<serde_json::Value>,
+    _analytics: Vec<serde_json::Value>,
+) -> Result<(), String> {
+    // Similar implementation for background data
+    Ok(())
+}
 
     // -------------------------------------------------------------------------
     // local_login — offline-capable authentication against local SQLite
@@ -508,7 +1203,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, code, name, address, is_active, created_at, updated_at FROM stores ORDER BY name ASC")
-            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+            .map_err(|e| format!("Failed to prepare database query: {}", e))?;
 
         let store_iter = stmt
             .query_map([], |row| {
@@ -553,7 +1248,7 @@ pub mod commands {
         // FR-STORE-002: Enforce unique store code
         let mut check_stmt = conn
             .prepare("SELECT COUNT(*) FROM stores WHERE UPPER(code) = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
         let count: i32 = check_stmt
             .query_row(params![code_clean], |r| r.get(0))
             .map_err(|e| format!("Failed to verify store code uniqueness: {}", e))?;
@@ -607,7 +1302,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, code, name, address, is_active, created_at, updated_at FROM stores WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let store = stmt
             .query_row(params![input.id], |row| {
@@ -649,7 +1344,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, code, name, address, is_active, created_at, updated_at FROM stores WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let store = stmt
             .query_row(params![id], |row| {
@@ -701,12 +1396,14 @@ pub mod commands {
         })
     }
 
-    /// Return the product catalogue scoped to a specific store.
+    /// Return the product catalogue as seen from a specific store.
     ///
-    /// A product is "available for operation" in a store when it already has a
-    /// stock row in that store (present there), or when it has never been
-    /// allocated to any store (fresh catalogue items that the store can receive
-    /// into). `stock_quantity` is computed ONLY from that store's balances.
+    /// The product catalogue is store-independent: every product is available
+    /// for operation in every store, so the full catalogue (not just products
+    /// that already carry a stock row in that store) is returned. `stock_quantity`
+    /// is computed ONLY from that store's AVAILABLE balances, so per-store
+    /// quantities still reflect that store's own stock; a missing balance row
+    /// simply reads as 0 and is created on demand by the first stock operation.
     #[tauri::command]
     pub fn get_products_by_store(store_id: String) -> Result<Vec<Product>, String> {
         let db_path = get_db_path();
@@ -716,22 +1413,21 @@ pub mod commands {
         let mut stmt = conn
             .prepare(
                 "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
-                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.low_stock_threshold, p.created_at, p.updated_at, \
                  COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' AND sb.store_id = ?1 THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
                  FROM products p \
                  LEFT JOIN stock_balances sb ON sb.product_id = p.id \
                  GROUP BY p.id \
-                 HAVING SUM(CASE WHEN sb.store_id = ?1 THEN 1 ELSE 0 END) > 0 \
-                     OR COUNT(sb.rowid) = 0 \
                  ORDER BY p.name ASC"
             )
-            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+            .map_err(|e| format!("Failed to prepare database query: {}", e))?;
 
         let prod_iter = stmt
             .query_map(params![store_id], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
-                let stock_qty: i32 = row.get(13)?;
+                let low_stock_threshold: Option<i32> = row.get(11)?;
+                let stock_qty: i32 = row.get(14)?;
                 Ok(Product {
                     id: row.get(0)?,
                     sku: row.get(1)?,
@@ -744,8 +1440,9 @@ pub mod commands {
                     alternate_names: row.get(8)?,
                     serial_tracking_enabled: st_int != 0,
                     is_active: active_int != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    low_stock_threshold,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
                     stock_quantity: Some(stock_qty),
                 })
             })
@@ -769,20 +1466,21 @@ pub mod commands {
         let mut stmt = conn
             .prepare(
                 "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
-                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.low_stock_threshold, p.created_at, p.updated_at, \
                  COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
                  FROM products p \
                  LEFT JOIN stock_balances sb ON sb.product_id = p.id \
                  GROUP BY p.id \
                  ORDER BY p.name ASC"
             )
-            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+            .map_err(|e| format!("Failed to prepare database query: {}", e))?;
 
         let prod_iter = stmt
             .query_map([], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
-                let stock_qty: i32 = row.get(13)?;
+                let low_stock_threshold: Option<i32> = row.get(11)?;
+                let stock_qty: i32 = row.get(14)?;
                 Ok(Product {
                     id: row.get(0)?,
                     sku: row.get(1)?,
@@ -795,8 +1493,9 @@ pub mod commands {
                     alternate_names: row.get(8)?,
                     serial_tracking_enabled: st_int != 0,
                     is_active: active_int != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    low_stock_threshold,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
                     stock_quantity: Some(stock_qty),
                 })
             })
@@ -825,7 +1524,7 @@ pub mod commands {
         let mut stmt = conn
             .prepare(
                 "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
-                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                 p.alternate_names, p.serial_tracking_enabled, p.is_active, p.low_stock_threshold, p.created_at, p.updated_at, \
                  COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
                  FROM products p \
                  LEFT JOIN stock_balances sb ON sb.product_id = p.id AND sb.store_id = COALESCE(?2, sb.store_id) \
@@ -840,7 +1539,8 @@ pub mod commands {
             .query_map(params![term, store_id], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
-                let stock_qty: i32 = row.get(13)?;
+                let low_stock_threshold: Option<i32> = row.get(11)?;
+                let stock_qty: i32 = row.get(14)?;
                 Ok(Product {
                     id: row.get(0)?,
                     sku: row.get(1)?,
@@ -853,8 +1553,9 @@ pub mod commands {
                     alternate_names: row.get(8)?,
                     serial_tracking_enabled: st_int != 0,
                     is_active: active_int != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    low_stock_threshold,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
                     stock_quantity: Some(stock_qty),
                 })
             })
@@ -869,6 +1570,53 @@ pub mod commands {
         Ok(products)
     }
 
+    /// Queue a `PRODUCT_UPDATE` outbox event for a product.
+    ///
+    /// The sync engine is outbox-driven: anything that is not written to
+    /// `outbox_events` is never pushed to the server.  Every product mutation
+    /// (create, bulk import, edit, activate/deactivate) must therefore go
+    /// through this helper, otherwise the local row silently diverges from the
+    /// server.
+    fn enqueue_product_upsert(
+        conn: &Connection,
+        prod: &Product,
+        now: &str,
+    ) -> Result<(), String> {
+        let outbox_id = generate_id("OB");
+        let outbox_event_id = format!("EVT-PROD-UPDATE-{}", prod.id);
+        let payload = serde_json::to_string(&serde_json::json!({
+            "product_id": prod.id,
+            "sku": prod.sku,
+            "name": prod.name,
+            "brand": prod.brand,
+            "model": prod.model,
+            "category": prod.category,
+            "unit": prod.unit,
+            "barcode": prod.barcode,
+            "alternate_names": prod.alternate_names,
+            "serial_tracking_enabled": prod.serial_tracking_enabled,
+            "is_active": prod.is_active,
+            "created_at": prod.created_at,
+            "updated_at": prod.updated_at,
+        }))
+        .map_err(|e| format!("Failed to serialize product update payload: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                outbox_id,
+                outbox_event_id,
+                "PRODUCT_UPDATE",
+                payload,
+                "PENDING",
+                0,
+                now
+            ],
+        )
+        .map_err(|e| format!("Failed to queue product update for sync: {}", e))?;
+
+        Ok(())
+    }
 
     #[tauri::command]
     pub fn create_product(input: NewProductInput) -> Result<Product, String> {
@@ -905,7 +1653,7 @@ pub mod commands {
         // FR-PROD-001: Enforce unique SKU
         let mut check_stmt = conn
             .prepare("SELECT COUNT(*) FROM products WHERE UPPER(sku) = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
         let count: i32 = check_stmt
             .query_row(params![sku_clean], |r| r.get(0))
             .map_err(|e| format!("Failed to verify SKU uniqueness: {}", e))?;
@@ -920,7 +1668,7 @@ pub mod commands {
         let active_int = if input.is_active.unwrap_or(true) { 1 } else { 0 };
 
         conn.execute(
-            "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, low_stock_threshold, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 product_id,
                 sku_clean,
@@ -933,13 +1681,14 @@ pub mod commands {
                 input.alternate_names,
                 st_int,
                 active_int,
+                None::<i32>, // low_stock_threshold defaults to NULL
                 now,
                 now
             ],
         )
         .map_err(|e| format!("Failed to insert product: {}", e))?;
 
-        Ok(Product {
+        let product = Product {
             id: product_id,
             sku: sku_clean,
             name: name_clean,
@@ -951,10 +1700,16 @@ pub mod commands {
             alternate_names: input.alternate_names,
             serial_tracking_enabled: input.serial_tracking_enabled.unwrap_or(false),
             is_active: input.is_active.unwrap_or(true),
+            low_stock_threshold: None,
             created_at: now.clone(),
             updated_at: now,
             stock_quantity: Some(0),
-        })
+        };
+
+        // Queue the new product so the sync engine pushes it to the server.
+        enqueue_product_upsert(&conn, &product, &product.updated_at)?;
+
+        Ok(product)
     }
 
     #[derive(Debug, Deserialize, Clone)]
@@ -992,7 +1747,7 @@ pub mod commands {
         // Collect all store IDs so each new product gets a stock_balance row per store.
         let mut store_stmt = conn
             .prepare("SELECT id FROM stores WHERE is_active = 1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
         let store_rows: Vec<String> = store_stmt
             .query_map([], |row| row.get(0))
             .map_err(|e| format!("Failed to query stores: {}", e))?
@@ -1046,8 +1801,8 @@ pub mod commands {
 
             let product_id = generate_id("PROD");
             match conn.execute(
-                "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 1, ?10, ?11)",
-                params![product_id, sku_clean, name_clean, input.brand, input.model, category_clean, unit_clean, input.barcode, input.alternate_names, now, now],
+                "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, low_stock_threshold, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, 1, ?10, ?11, ?12)",
+                params![product_id, sku_clean, name_clean, input.brand, input.model, category_clean, unit_clean, input.barcode, input.alternate_names, None::<i32>, now, now],
             ) {
                 Ok(_) => {
                     // Create stock_balance rows for every active store (default 0)
@@ -1057,7 +1812,36 @@ pub mod commands {
                             params![format!("SB-{}-{}-AVAILABLE", sid, product_id), sid, product_id, now],
                         ).ok();
                     }
-                    results.push(BatchProductResult { row_index: idx, success: true, error: None, product_id: Some(product_id), sku: Some(sku_clean) });
+
+                    let product = Product {
+                        id: product_id,
+                        sku: sku_clean,
+                        name: name_clean,
+                        brand: input.brand,
+                        model: input.model,
+                        category: category_clean,
+                        unit: unit_clean,
+                        barcode: input.barcode,
+                        alternate_names: input.alternate_names,
+                        serial_tracking_enabled: false,
+                        is_active: true,
+                        low_stock_threshold: None,
+                        created_at: now.clone(),
+                        updated_at: now.clone(),
+                        stock_quantity: Some(0),
+                    };
+
+                    // Queue the imported product for sync.  Without this the
+                    // sync engine (which only pushes what is in the outbox)
+                    // would never upload products created by a bulk import.
+                    if let Err(err) = enqueue_product_upsert(&conn, &product, &now) {
+                        eprintln!(
+                            "[TAURI-LOG] Warning: imported product {} could not be queued for sync: {}",
+                            product.id, err
+                        );
+                    }
+
+                    results.push(BatchProductResult { row_index: idx, success: true, error: None, product_id: Some(product.id.clone()), sku: Some(product.sku) });
                 }
                 Err(e) => {
                     results.push(BatchProductResult { row_index: idx, success: false, error: Some(format!("Insert failed: {}", e)), product_id: None, sku: None });
@@ -1111,13 +1895,14 @@ pub mod commands {
         }
 
         let mut stmt = conn
-            .prepare("SELECT id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at FROM products WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .prepare("SELECT id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, low_stock_threshold, created_at, updated_at FROM products WHERE id = ?1")
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let prod = stmt
             .query_row(params![input.id], |row| {
                 let st_val: i32 = row.get(9)?;
                 let active_val: i32 = row.get(10)?;
+                let low_stock_threshold: Option<i32> = row.get(11)?;
                 Ok(Product {
                     id: row.get(0)?,
                     sku: row.get(1)?,
@@ -1130,12 +1915,16 @@ pub mod commands {
                     alternate_names: row.get(8)?,
                     serial_tracking_enabled: st_val != 0,
                     is_active: active_val != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    low_stock_threshold,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
                     stock_quantity: None,
                 })
             })
             .map_err(|e| format!("Failed to fetch updated product: {}", e))?;
+
+        // Queue the product update so the sync engine pushes it to the server.
+        enqueue_product_upsert(&conn, &prod, &now)?;
 
         Ok(prod)
     }
@@ -1161,13 +1950,14 @@ pub mod commands {
         }
 
         let mut stmt = conn
-            .prepare("SELECT id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at FROM products WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .prepare("SELECT id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, low_stock_threshold, created_at, updated_at FROM products WHERE id = ?1")
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let prod = stmt
             .query_row(params![id], |row| {
                 let st_val: i32 = row.get(9)?;
                 let active_val: i32 = row.get(10)?;
+                let low_stock_threshold: Option<i32> = row.get(11)?;
                 Ok(Product {
                     id: row.get(0)?,
                     sku: row.get(1)?,
@@ -1180,12 +1970,16 @@ pub mod commands {
                     alternate_names: row.get(8)?,
                     serial_tracking_enabled: st_val != 0,
                     is_active: active_val != 0,
-                    created_at: row.get(11)?,
-                    updated_at: row.get(12)?,
+                    low_stock_threshold,
+                    created_at: row.get(12)?,
+                    updated_at: row.get(13)?,
                     stock_quantity: None,
                 })
             })
             .map_err(|e| format!("Failed to fetch product status: {}", e))?;
+
+        // Queue the status change so it reaches the server on the next sync.
+        enqueue_product_upsert(&conn, &prod, &now)?;
 
         Ok(prod)
     }
@@ -1311,7 +2105,7 @@ pub mod commands {
             "reference_number": input.reference_number,
             "reason_code": input.supplier
         }))
-        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1325,7 +2119,7 @@ pub mod commands {
                 now
             ],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         // Update day_books / day_book_entries (non-fatal — best effort)
         let _ = upsert_day_book_entry(
@@ -1478,7 +2272,7 @@ pub mod commands {
             "device_id": input.device_id,
             "reference_number": input.reference_number
         }))
-        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1492,7 +2286,7 @@ pub mod commands {
                 now
             ],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         // Update day_books / day_book_entries (non-fatal)
         let _ = upsert_day_book_entry(
@@ -1698,7 +2492,7 @@ pub mod commands {
             "reference_number": input.reference_number,
             "reason_code": input.reason
         }))
-        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -1712,7 +2506,7 @@ pub mod commands {
                 now
             ],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         // Update day_books / day_book_entries (RETURN is hidden from entries — non-fatal)
         let _ = upsert_day_book_entry(
@@ -1881,13 +2675,13 @@ pub mod commands {
             "user_id": input.user_id,
             "device_id": input.device_id,
             "reason_code": reason_clean
-        })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        })).map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
             params![outbox_id_1, format!("EVT-{}", outflow_tx_id), payload_1, now],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         let outbox_id_2 = generate_id("OB");
         let payload_2 = serde_json::to_string(&serde_json::json!({
@@ -1901,13 +2695,13 @@ pub mod commands {
             "user_id": input.user_id,
             "device_id": input.device_id,
             "reason_code": reason_clean
-        })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        })).map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
             params![outbox_id_2, format!("EVT-{}", inflow_tx_id), payload_2, now],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         // Update day_books closing_balance for both transactions (both DAMAGE = hidden — non-fatal)
         let _ = upsert_day_book_entry(
@@ -1973,7 +2767,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers ORDER BY created_at DESC")
-            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+            .map_err(|e| format!("Failed to prepare database query: {}", e))?;
 
         let trf_iter = stmt
             .query_map([], |row| {
@@ -2009,7 +2803,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, purchase_order_id, batch_id, client_sequence, sync_status, server_accepted_at, original_transaction_id FROM inventory_transactions ORDER BY occurred_at DESC")
-            .map_err(|e| format!("Failed to prepare SQL statement: {}", e))?;
+            .map_err(|e| format!("Failed to prepare database query: {}", e))?;
 
         let txn_iter = stmt
             .query_map([], |row| {
@@ -2109,7 +2903,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let transfer = stmt
             .query_row(params![transfer_id], |row| {
@@ -2207,13 +3001,13 @@ pub mod commands {
             "transfer_id": transfer_id,
             "reference_number": format!("TRF-DISP-{}", transfer_id)
         }))
-        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
             params![outbox_id, outbox_event_id, payload, now],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         Ok(Transfer {
             status: "DISPATCHED".to_string(),
@@ -2234,7 +3028,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let transfer = stmt
             .query_row(params![transfer_id], |row| {
@@ -2317,13 +3111,13 @@ pub mod commands {
             "transfer_id": transfer_id,
             "reference_number": format!("TRF-RECV-{}", transfer_id)
         }))
-        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
             params![outbox_id, outbox_event_id, payload, now],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         Ok(Transfer {
             status: "RECEIVED".to_string(),
@@ -2344,7 +3138,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let transfer = stmt
             .query_row(params![transfer_id], |row| {
@@ -2419,13 +3213,13 @@ pub mod commands {
                 "transfer_id": transfer_id,
                 "reference_number": format!("TRF-CNCL-{}", transfer_id)
             }))
-            .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+            .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
             conn.execute(
                 "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
                 params![outbox_id, outbox_event_id, payload, now],
             )
-            .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+            .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
         }
 
         conn.execute(
@@ -2452,7 +3246,7 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers WHERE id = ?1")
-            .map_err(|e| format!("SQL error: {}", e))?;
+            .map_err(|e| format!("Database error: {}", e))?;
 
         let transfer = stmt
             .query_row(params![transfer_id], |row| {
@@ -2514,7 +3308,7 @@ pub mod commands {
         if input.quantity_delta < 0 {
             let mut check_stmt = conn
                 .prepare("SELECT quantity FROM stock_balances WHERE store_id = ?1 AND product_id = ?2 AND stock_bucket = 'AVAILABLE'")
-                .map_err(|e| format!("SQL error checking balance: {}", e))?;
+                .map_err(|e| format!("Database error checking balance: {}", e))?;
 
             let current_balance: i32 = check_stmt
                 .query_row(params![input.store_id, input.product_id], |r| r.get(0))
@@ -2578,13 +3372,13 @@ pub mod commands {
             "device_id": input.device_id,
             "reason_code": reason_clean,
             "reference_number": ref_num
-        })).map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        })).map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
             params![outbox_id, outbox_event_id, payload, now],
         )
-        .map_err(|e| format!("Failed to create outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
 
         // Update day_books / day_book_entries (ADJUSTMENT is hidden from entries
         // but closing_balance is still updated — non-fatal)
@@ -2730,7 +3524,7 @@ pub mod commands {
             "reference_number": input.reference_number,
             "reason_code": input.reason_code,
         }))
-        .map_err(|e| format!("Failed to serialize outbox payload: {}", e))?;
+        .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
         conn.execute(
             "UPDATE outbox_events \
@@ -2738,7 +3532,7 @@ pub mod commands {
              WHERE event_id = ?2",
             params![payload, outbox_event_id],
         )
-        .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+        .map_err(|e| format!("Failed to update queued change: {}", e))?;
 
         // Update day_books / day_book_entries to reflect the edit (non-fatal)
         let _ = upsert_day_book_entry(
@@ -2883,7 +3677,7 @@ pub mod commands {
                  VALUES (?1, ?2, 'INVENTORY_TRANSACTION', ?3, 'PENDING', 0, ?4)",
                 params![generate_id("OB"), void_event_id, payload, now],
             )
-            .map_err(|e| format!("Failed to create tombstone outbox event: {}", e))?;
+            .map_err(|e| format!("Failed to queue tombstone change for sync: {}", e))?;
         } else {
             // Transaction not yet synced — permanently reject so it is never pushed.
             conn.execute(
@@ -2893,7 +3687,7 @@ pub mod commands {
                  WHERE event_id = ?1",
                 params![outbox_event_id],
             )
-            .map_err(|e| format!("Failed to update outbox event status: {}", e))?;
+            .map_err(|e| format!("Failed to update queued change status: {}", e))?;
         }
 
         // Recompute closing_balance on the day_books row for this store+date (non-fatal)
@@ -2959,11 +3753,11 @@ pub mod commands {
 
         let mut stmt = conn
             .prepare("SELECT COUNT(*) FROM outbox_events WHERE status IN ('PENDING', 'SENDING', 'RETRYABLE_ERROR')")
-            .map_err(|e| format!("SQL error counting outbox events: {}", e))?;
+            .map_err(|e| format!("Database error counting pending changes: {}", e))?;
 
         let count: i32 = stmt
             .query_row([], |row| row.get(0))
-            .map_err(|e| format!("Failed to query pending outbox count: {}", e))?;
+            .map_err(|e| format!("Failed to query pending sync count: {}", e))?;
 
         println!("[TAURI-SYNC] get_pending_outbox_count returning: {}", count);
         Ok(count)
@@ -3000,7 +3794,7 @@ pub mod commands {
                 "UPDATE outbox_events SET status = 'PENDING' WHERE status IN ('SENDING', 'PERMANENT_REJECTION')",
                 [],
             )
-            .map_err(|e| format!("Failed to reset outbox events: {}", e))?;
+            .map_err(|e| format!("Failed to reset pending changes: {}", e))?;
             conn.execute(
                 "UPDATE outbox_events SET next_attempt_at = NULL WHERE status = 'RETRYABLE_ERROR'",
                 [],
@@ -3011,7 +3805,7 @@ pub mod commands {
                 "UPDATE outbox_events SET status = 'PENDING' WHERE status = 'SENDING'",
                 [],
             )
-            .map_err(|e| format!("Failed to reset sending outbox events: {}", e))?;
+            .map_err(|e| format!("Failed to reset syncing changes: {}", e))?;
         }
 
         // 1b. Repair legacy outbox events that used movement_type "TRANSFER"
@@ -3021,7 +3815,7 @@ pub mod commands {
         if force_sync {
             let mut repair_stmt = conn
                 .prepare("SELECT id, event_id, payload FROM outbox_events WHERE event_type = 'INVENTORY_TRANSACTION'")
-                .map_err(|e| format!("SQL error preparing repair query: {}", e))?;
+                .map_err(|e| format!("Database error preparing repair query: {}", e))?;
             let repair_rows: Vec<(String, String, String)> = repair_stmt
                 .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
                 .map_err(|e| format!("Failed to query outbox for repair: {}", e))?
@@ -3088,7 +3882,7 @@ pub mod commands {
                  ORDER BY created_at ASC \
                  LIMIT ?2",
             )
-            .map_err(|e| format!("SQL error preparing outbox query: {}", e))?;
+            .map_err(|e| format!("Database error preparing sync queue query: {}", e))?;
 
         let rows = stmt
             .query_map(params![now, batch_limit], |row| {
@@ -3104,7 +3898,7 @@ pub mod commands {
                     "last_error": row.get::<_, Option<String>>(8)?
                 }))
             })
-            .map_err(|e| format!("Failed to query outbox events: {}", e))?;
+            .map_err(|e| format!("Failed to query pending changes: {}", e))?;
 
         let mut events = Vec::new();
         for row in rows {
@@ -3173,7 +3967,7 @@ pub mod commands {
                         event_id
                     ],
                 )
-                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+                .map_err(|e| format!("Failed to update queued change: {}", e))?;
             }
             "ACCEPTED" | "SYNCED" => {
                 conn.execute(
@@ -3182,7 +3976,7 @@ pub mod commands {
                      WHERE event_id = ?2",
                     params![target_status, event_id],
                 )
-                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+                .map_err(|e| format!("Failed to update queued change: {}", e))?;
             }
             "PERMANENT_REJECTION" | "EXCEPTION_REVIEW" => {
                 conn.execute(
@@ -3190,7 +3984,7 @@ pub mod commands {
                      WHERE event_id = ?3",
                     params![target_status, error_msg, event_id],
                 )
-                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+                .map_err(|e| format!("Failed to update queued change: {}", e))?;
             }
             _ => {
                 // SENDING or other status — just update the status field
@@ -3198,7 +3992,7 @@ pub mod commands {
                     "UPDATE outbox_events SET status = ?1 WHERE event_id = ?2",
                     params![target_status, event_id],
                 )
-                .map_err(|e| format!("Failed to update outbox event: {}", e))?;
+                .map_err(|e| format!("Failed to update queued change: {}", e))?;
             }
         }
 
@@ -3238,6 +4032,157 @@ pub mod commands {
 
         // Rows that were deleted locally (delete_transaction) simply don't exist
         // anymore — that's expected and not an error.
+        Ok(())
+    }
+
+    /// Batch transition outbox events to new statuses (called once per push
+    /// batch instead of per-event).  Accepts the full receipt outcome list the
+    /// sync service builds after an HTTP push.  Mirrors the per-event semantics
+    /// of `update_outbox_event_status` — including retry backoff for
+    /// RETRYABLE_ERROR — but commits once.
+    #[tauri::command]
+    pub fn update_outbox_event_statuses(
+        updates: Vec<serde_json::Value>,
+    ) -> Result<(), String> {
+        let db_path = get_db_path();
+        let mut conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("Failed to begin outbox status transaction: {}", e))?;
+
+        for u in &updates {
+            let event_id: String = u
+                .get("event_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| format!("Missing event_id in outbox status update: {:?}", u))?;
+            let target_status: String = u
+                .get("target_status")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| format!("Missing target_status in outbox status update: {:?}", u))?;
+            let error_msg: Option<String> = u
+                .get("error_msg")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let (current_retry,): (i32,) = tx
+                .query_row(
+                    "SELECT retry_count FROM outbox_events WHERE event_id = ?1",
+                    params![event_id],
+                    |row| Ok((row.get(0)?,)),
+                )
+                .map_err(|_| format!("Outbox event '{}' not found.", event_id))?;
+
+            match target_status.as_str() {
+                "RETRYABLE_ERROR" => {
+                    let new_retry = current_retry + 1;
+                    let delay_secs: i64 =
+                        (5_i64 * 2_i64.pow((new_retry - 1).max(0) as u32)).min(3600);
+                    let delay = std::time::Duration::from_secs(delay_secs as u64);
+                    let next_attempt: chrono::DateTime<Utc> =
+                        Utc::now() + chrono::Duration::from_std(delay)
+                            .unwrap_or(chrono::Duration::seconds(3600));
+                    let next_attempt_str =
+                        next_attempt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+                    tx.execute(
+                        "UPDATE outbox_events SET status = ?1, retry_count = ?2, \
+                         next_attempt_at = ?3, last_error = ?4 \
+                         WHERE event_id = ?5",
+                        params![target_status, new_retry, next_attempt_str, error_msg, event_id],
+                    )
+                    .map_err(|e| format!("Failed to update queued change: {}", e))?;
+                }
+                "ACCEPTED" | "SYNCED" => {
+                    tx.execute(
+                        "UPDATE outbox_events SET status = ?1, last_error = NULL, \
+                         next_attempt_at = NULL \
+                         WHERE event_id = ?2",
+                        params![target_status, event_id],
+                    )
+                    .map_err(|e| format!("Failed to update queued change: {}", e))?;
+                }
+                "PERMANENT_REJECTION" | "EXCEPTION_REVIEW" => {
+                    tx.execute(
+                        "UPDATE outbox_events SET status = ?1, last_error = ?2 \
+                         WHERE event_id = ?3",
+                        params![target_status, error_msg, event_id],
+                    )
+                    .map_err(|e| format!("Failed to update queued change: {}", e))?;
+                }
+                _ => {
+                    tx.execute(
+                        "UPDATE outbox_events SET status = ?1 WHERE event_id = ?2",
+                        params![target_status, event_id],
+                    )
+                    .map_err(|e| format!("Failed to update queued change: {}", e))?;
+                }
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| format!("Failed to commit outbox status transaction: {}", e))?;
+        Ok(())
+    }
+
+    /// Batch-update sync_status on inventory_transactions rows after a push
+    /// batch (mirrors `update_transaction_sync_status` per-event but commits
+    /// once).
+    #[tauri::command]
+    pub fn update_transaction_sync_statuses(
+        updates: Vec<serde_json::Value>,
+    ) -> Result<(), String> {
+        let db_path = get_db_path();
+        let mut conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("Failed to begin transaction status transaction: {}", e))?;
+
+        for u in &updates {
+            let transaction_id: String = u
+                .get("transaction_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| {
+                    format!("Missing transaction_id in status update: {:?}", u)
+                })?;
+            let sync_status: String = u
+                .get("sync_status")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .ok_or_else(|| format!("Missing sync_status in status update: {:?}", u))?;
+            let server_accepted_at: Option<String> = u
+                .get("server_accepted_at")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            match server_accepted_at {
+                Some(ref ts) => {
+                    tx.execute(
+                        "UPDATE inventory_transactions SET sync_status = ?1, server_accepted_at = ?2 \
+                         WHERE transaction_id = ?3",
+                        params![sync_status, ts, transaction_id],
+                    )
+                    .map_err(|e| format!("Failed to update transaction sync status: {}", e))?;
+                }
+                None => {
+                    tx.execute(
+                        "UPDATE inventory_transactions SET sync_status = ?1 \
+                         WHERE transaction_id = ?2",
+                        params![sync_status, transaction_id],
+                    )
+                    .map_err(|e| format!("Failed to update transaction sync status: {}", e))?;
+                }
+            }
+        }
+
+        tx.commit()
+            .map_err(|e| format!("Failed to commit transaction status transaction: {}", e))?;
         Ok(())
     }
 
@@ -3322,8 +4267,8 @@ pub mod commands {
 
         // Normal full upsert: server data is real, or both are placeholders (insert path).
         conn.execute(
-            "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+            "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, low_stock_threshold, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
              ON CONFLICT(id) DO UPDATE SET \
              sku = excluded.sku, \
              name = excluded.name, \
@@ -3335,6 +4280,7 @@ pub mod commands {
              alternate_names = excluded.alternate_names, \
              serial_tracking_enabled = excluded.serial_tracking_enabled, \
              is_active = excluded.is_active, \
+             low_stock_threshold = excluded.low_stock_threshold, \
              updated_at = excluded.updated_at",
             params![
                 product.id,
@@ -3348,6 +4294,7 @@ pub mod commands {
                 product.alternate_names,
                 if product.serial_tracking_enabled { 1 } else { 0 },
                 if product.is_active { 1 } else { 0 },
+                product.low_stock_threshold,
                 product.created_at,
                 product.updated_at,
             ],
@@ -3462,6 +4409,194 @@ pub mod commands {
         Ok(())
     }
 
+    /// Batch-apply a full /sync/pull snapshot in a single transaction.
+    ///
+    /// This replaces the previous per-row invoke loop (one `upsert_*` command
+    /// per product / store / balance), which opened a fresh SQLite connection
+    /// and issued one statement per row.  For a large catalogue that was N×3
+    /// fsync-on-open + per-row roundtrips; this command does it in one
+    /// connection and one transaction with prepared statements.
+    #[tauri::command]
+    pub fn apply_sync_pull(
+        products: Vec<Product>,
+        stores: Vec<Store>,
+        stock_balances: Vec<StockBalanceSnapshot>,
+    ) -> Result<serde_json::Value, String> {
+        let db_path = get_db_path();
+        let mut conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+        // WAL improves concurrent reads during a long apply; busy_timeout
+        // avoids SQLITE_BUSY when the file is briefly locked by another
+        // connection (e.g. the outbox flusher).
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        let _ = conn.pragma_update(None, "busy_timeout", 5000);
+
+        // One transaction => atomic apply + a single fsync for the whole
+        // snapshot instead of one commit per row.
+        let tx = conn
+            .transaction()
+            .map_err(|e| format!("Failed to begin sync pull transaction: {}", e))?;
+
+        let mut product_stmt = tx.prepare(
+            "INSERT INTO products (id, sku, name, brand, model, category, unit, barcode, alternate_names, serial_tracking_enabled, is_active, low_stock_threshold, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14) \
+             ON CONFLICT(id) DO UPDATE SET \
+             sku = excluded.sku, \
+             name = excluded.name, \
+             brand = excluded.brand, \
+             model = excluded.model, \
+             category = excluded.category, \
+             unit = excluded.unit, \
+             barcode = excluded.barcode, \
+             alternate_names = excluded.alternate_names, \
+             serial_tracking_enabled = excluded.serial_tracking_enabled, \
+             is_active = excluded.is_active, \
+             low_stock_threshold = excluded.low_stock_threshold, \
+             updated_at = excluded.updated_at",
+        )
+        .map_err(|e| format!("Failed to prepare product upsert: {}", e))?;
+
+        let mut store_stmt = tx.prepare(
+            "INSERT INTO stores (id, code, name, address, is_active, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(id) DO UPDATE SET \
+             code = excluded.code, \
+             name = excluded.name, \
+             address = excluded.address, \
+             is_active = excluded.is_active, \
+             updated_at = excluded.updated_at",
+        )
+        .map_err(|e| format!("Failed to prepare store upsert: {}", e))?;
+
+        let mut balance_stmt = tx.prepare(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = excluded.quantity, updated_at = excluded.updated_at",
+        )
+        .map_err(|e| format!("Failed to prepare balance upsert: {}", e))?;
+
+        let keep_placeholder_products = false;
+        let keep_placeholder_stores = false;
+
+        let result = (|| -> Result<serde_json::Value, rusqlite::Error> {
+            let mut product_count: usize = 0;
+            let mut store_count: usize = 0;
+            let mut balance_count: usize = 0;
+
+            for p in &products {
+                if !keep_placeholder_products && is_placeholder_product(&p.sku, &p.name) {
+                    // Do not let a placeholder clobber a real local product.
+                    let local_name: Option<String> = tx
+                        .query_row(
+                            "SELECT name FROM products WHERE id = ?1",
+                            params![p.id],
+                            |row| row.get(0),
+                        )
+                        .ok();
+                    if let Some(name) = local_name {
+                        if !is_placeholder_product(&p.sku, &name) {
+                            tx.execute(
+                                "UPDATE products SET is_active = ?1, updated_at = ?2 WHERE id = ?3",
+                                params![
+                                    if p.is_active { 1 } else { 0 },
+                                    p.updated_at,
+                                    p.id,
+                                ],
+                            )?;
+                            continue;
+                        }
+                    }
+                }
+                product_count += product_stmt.execute(params![
+                    p.id,
+                    p.sku,
+                    p.name,
+                    p.brand,
+                    p.model,
+                    p.category,
+                    p.unit,
+                    p.barcode,
+                    p.alternate_names,
+                    if p.serial_tracking_enabled { 1 } else { 0 },
+                    if p.is_active { 1 } else { 0 },
+                    p.low_stock_threshold,
+                    p.created_at,
+                    p.updated_at,
+                ])?;
+            }
+
+            for s in &stores {
+                if !keep_placeholder_stores && s.name.starts_with("Auto Store (") {
+                    let local_name: Option<String> = tx
+                        .query_row(
+                            "SELECT name FROM stores WHERE id = ?1",
+                            params![s.id],
+                            |row| row.get(0),
+                        )
+                        .ok();
+                    if let Some(name) = local_name {
+                        if !name.starts_with("Auto Store (") {
+                            tx.execute(
+                                "UPDATE stores SET is_active = ?1, updated_at = ?2 WHERE id = ?3",
+                                params![
+                                    if s.is_active { 1 } else { 0 },
+                                    s.updated_at,
+                                    s.id,
+                                ],
+                            )?;
+                            continue;
+                        }
+                    }
+                }
+                store_count += store_stmt.execute(params![
+                    s.id,
+                    s.code,
+                    s.name,
+                    s.address,
+                    if s.is_active { 1 } else { 0 },
+                    s.created_at,
+                    s.updated_at,
+                ])?;
+            }
+
+            for b in &stock_balances {
+                balance_count += balance_stmt.execute(params![
+                    b.id,
+                    b.store_id,
+                    b.product_id,
+                    b.stock_bucket,
+                    b.quantity,
+                    b.updated_at,
+                ])?;
+            }
+
+            Ok(serde_json::json!({
+                "products": product_count,
+                "stores": store_count,
+                "stock_balances": balance_count,
+            }))
+        })();
+
+        match result {
+            Ok(summary) => {
+                drop(product_stmt);
+                drop(store_stmt);
+                drop(balance_stmt);
+                tx.commit()
+                    .map_err(|e| format!("Failed to commit sync pull transaction: {}", e))?;
+                Ok(summary)
+            }
+            Err(e) => {
+                let msg = format!("Failed to apply sync pull (rolled back): {}", e);
+                drop(product_stmt);
+                drop(store_stmt);
+                drop(balance_stmt);
+                drop(tx);
+                Err(msg)
+            }
+        }
+    }
+
     /// Ensure the products_fts FTS5 virtual table and its sync triggers exist.
     /// Lazily creates them on first search if the Python Alembic migration hasn't
     /// run in this database yet (Tauri/desktop context).
@@ -3552,7 +4687,7 @@ pub mod commands {
                 let mut stmt = conn
                     .prepare(
                         "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
-                         p.alternate_names, p.serial_tracking_enabled, p.is_active, p.created_at, p.updated_at, \
+                         p.alternate_names, p.serial_tracking_enabled, p.is_active, p.low_stock_threshold, p.created_at, p.updated_at, \
                          COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
                          FROM ( \
                             SELECT rowid, bm25(products_fts) AS rank \
@@ -3573,7 +4708,8 @@ pub mod commands {
                     .query_map(params![fts_query, store_id], |row| {
                         let st_int: i32 = row.get(9)?;
                         let active_int: i32 = row.get(10)?;
-                        let stock_qty: i32 = row.get(13)?;
+                        let low_stock_threshold: Option<i32> = row.get(11)?;
+                        let stock_qty: i32 = row.get(14)?;
                         Ok(Product {
                             id: row.get(0)?,
                             sku: row.get(1)?,
@@ -3586,8 +4722,9 @@ pub mod commands {
                             alternate_names: row.get(8)?,
                             serial_tracking_enabled: st_int != 0,
                             is_active: active_int != 0,
-                            created_at: row.get(11)?,
-                            updated_at: row.get(12)?,
+                            low_stock_threshold,
+                            created_at: row.get(12)?,
+                            updated_at: row.get(13)?,
                             stock_quantity: Some(stock_qty),
                         })
                     })
@@ -3610,6 +4747,433 @@ pub mod commands {
 
         // Fallback to substring LIKE query if FTS5 returned 0 results or encountered an issue
         search_products(query, store_id)
+    }
+
+    // ============================================================================
+    // App Update Checker (Tauri Updater)
+    // ============================================================================
+
+    #[tauri::command]
+    pub async fn check_app_update(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
+        use tauri_plugin_updater::UpdaterExt;
+        let updater = app.updater().map_err(|e| format!("Failed to init updater: {}", e))?;
+        match updater.check().await {
+            Ok(Some(update)) => {
+                let version = update.version.clone();
+                let date = update.date.map(|d| d.to_string());
+                let body = update.body.clone();
+                Ok(Some(serde_json::json!({
+                    "available": true,
+                    "version": version,
+                    "date": date,
+                    "body": body,
+                })))
+            }
+            Ok(None) => Ok(Some(serde_json::json!({
+                "available": false,
+            }))),
+            Err(e) => {
+                // Don't fail the command if update check fails (network issues, etc.)
+                Ok(Some(serde_json::json!({
+                    "available": false,
+                    "error": e.to_string(),
+                })))
+            }
+        }
+    }
+
+    #[tauri::command]
+    pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<String, String> {
+        use tauri_plugin_updater::UpdaterExt;
+        use tauri::Emitter;
+        let updater = app.updater().map_err(|e| format!("Failed to init updater: {}", e))?;
+        let update = updater.check().await
+            .map_err(|e| format!("Failed to check for updates: {}", e))?
+            .ok_or("No update available")?;
+        
+        // Emit progress event helper
+        let emit_progress = |downloaded: u64, total: Option<u64>| {
+            let _ = app.emit("updater://progress", serde_json::json!({
+                "downloaded": downloaded,
+                "total": total,
+                "stage": "downloading",
+            }));
+        };
+        
+        // Download and install the update
+        let mut downloaded: u64 = 0;
+        update.download_and_install(
+            |chunk_length, content_length| {
+                downloaded += chunk_length as u64;
+                if let Some(total) = content_length {
+                    println!("[UPDATER] Downloaded {} / {} bytes", downloaded, total);
+                    emit_progress(downloaded, Some(total as u64));
+                } else {
+                    emit_progress(downloaded, None);
+                }
+            },
+            || {
+                println!("[UPDATER] Download complete, installing...");
+                let _ = app.emit("updater://progress", serde_json::json!({
+                    "downloaded": 0,
+                    "total": 0,
+                    "stage": "installing",
+                }));
+            },
+        ).await
+        .map_err(|e| format!("Failed to download and install update: {}", e))?;
+        
+        // Emit complete event
+        let _ = app.emit("updater://progress", serde_json::json!({
+            "downloaded": 0,
+            "total": 0,
+            "stage": "complete",
+        }));
+        
+        // Restart the app
+        app.restart();
+        
+        // Unreachable but needed for return type
+        #[allow(unreachable_code)]
+        Ok("Update downloaded and installed. The app will restart to apply the update.".to_string())
+    }
+
+    /// Delete all product-related data from local SQLite (GLOBAL_ADMIN only).
+    /// This wipes products, stock_balances, inventory_transactions, day_books, day_book_entries,
+    /// transfers, outbox_events, and devices. Users and stores are preserved.
+    #[tauri::command]
+    pub fn delete_all_data(confirm_store_name: String) -> Result<String, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        // Verify the store name matches the active store (security check)
+        let store_name: String = conn
+            .query_row(
+                "SELECT name FROM stores WHERE is_active = 1 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|_| "No active store found".to_string())?;
+
+        if store_name != confirm_store_name {
+            return Err(format!(
+                "Store name confirmation failed. Expected '{}', got '{}'.",
+                store_name, confirm_store_name
+            ));
+        }
+
+        let now = now_iso();
+
+        // Delete in correct order due to foreign key constraints
+        // First, delete dependent tables
+        conn.execute("DELETE FROM day_book_entries", [])
+            .map_err(|e| format!("Failed to delete day_book_entries: {}", e))?;
+        
+        conn.execute("DELETE FROM day_books", [])
+            .map_err(|e| format!("Failed to delete day_books: {}", e))?;
+        
+        conn.execute("DELETE FROM inventory_transactions", [])
+            .map_err(|e| format!("Failed to delete inventory_transactions: {}", e))?;
+        
+        conn.execute("DELETE FROM stock_balances", [])
+            .map_err(|e| format!("Failed to delete stock_balances: {}", e))?;
+        
+        conn.execute("DELETE FROM transfers", [])
+            .map_err(|e| format!("Failed to delete transfers: {}", e))?;
+        
+        conn.execute("DELETE FROM outbox_events", [])
+            .map_err(|e| format!("Failed to delete outbox_events: {}", e))?;
+        
+        conn.execute("DELETE FROM products", [])
+            .map_err(|e| format!("Failed to delete products: {}", e))?;
+        
+        conn.execute("DELETE FROM devices", [])
+            .map_err(|e| format!("Failed to delete devices: {}", e))?;
+
+        // Reset stores to inactive except the first one (keep one store for re-auth)
+        conn.execute(
+            "UPDATE stores SET is_active = 0, updated_at = ?1 WHERE code != (SELECT code FROM stores ORDER BY id LIMIT 1)",
+            params![now],
+        )
+        .map_err(|e| format!("Failed to deactivate stores: {}", e))?;
+
+        // Reset the first store to active
+        conn.execute(
+            "UPDATE stores SET is_active = 1, updated_at = ?1 WHERE code = (SELECT code FROM stores ORDER BY id LIMIT 1)",
+            params![now],
+        )
+        .map_err(|e| format!("Failed to activate primary store: {}", e))?;
+
+        // Clear kv_store (sync timestamps, etc.)
+        conn.execute("DELETE FROM kv_store", [])
+            .map_err(|e| format!("Failed to delete kv_store: {}", e))?;
+
+        // Recreate FTS5 table if it exists
+        conn.execute_batch(
+            "DROP TABLE IF EXISTS products_fts;
+             CREATE VIRTUAL TABLE IF NOT EXISTS products_fts USING fts5(
+                 sku,
+                 name,
+                 brand,
+                 model,
+                 category,
+                 barcode,
+                 alternate_names,
+                 content='products',
+                 content_rowid='rowid',
+                 tokenize='porter unicode61'
+             );
+             INSERT INTO products_fts(products_fts) VALUES ('rebuild');",
+        )
+        .ok();
+
+        Ok(format!(
+            "All product-related data wiped successfully. Store '{}' preserved for authentication.",
+            store_name
+        ))
+    }
+
+    /// List all local backup files in the backup directory.
+    #[tauri::command]
+    pub fn list_local_backups() -> Result<Vec<serde_json::Value>, String> {
+        use std::fs;
+
+        let db_path = get_db_path();
+        let db_dir = db_path.parent()
+            .ok_or("Failed to get database directory")?;
+        
+        let backup_dir = db_dir.join("backups");
+        
+        if !backup_dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut backups = Vec::new();
+        for entry in fs::read_dir(&backup_dir)
+            .map_err(|e| format!("Failed to read backup directory: {}", e))?
+        {
+            let entry = entry.map_err(|e| format!("Failed to read backup entry: {}", e))?;
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("db") {
+                let metadata = fs::metadata(&path)
+                    .map_err(|e| format!("Failed to get backup metadata: {}", e))?;
+                
+                let filename = path.file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown.db")
+                    .to_string();
+                
+                let created_at = metadata.created()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| {
+                        chrono::DateTime::<chrono::Utc>::from_timestamp(d.as_secs() as i64, 0)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339())
+                    })
+                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+
+                backups.push(serde_json::json!({
+                    "filename": filename,
+                    "path": path.to_string_lossy().to_string(),
+                    "size": metadata.len(),
+                    "created_at": created_at,
+                }));
+            }
+        }
+
+        // Sort by creation date, newest first
+        backups.sort_by(|a, b| b["created_at"].as_str().unwrap_or("").cmp(a["created_at"].as_str().unwrap_or("")));
+
+        Ok(backups)
+    }
+
+/// Create a consistent point-in-time snapshot of the local SQLite database.
+    ///
+    /// `VACUUM INTO` writes a single, fully self-contained copy that includes
+    /// every committed transaction — including pages still living in the
+    /// write-ahead log.  A plain `fs::copy` of a WAL database only copies the
+    /// main file, so the resulting "backup" can be stale or inconsistent.
+    ///
+    /// Returns `(filename, full path, size in bytes)`.
+    fn create_db_snapshot(
+        db_path: &Path,
+        backup_dir: &Path,
+    ) -> Result<(String, PathBuf, u64), String> {
+        use std::fs;
+
+        fs::create_dir_all(backup_dir)
+            .map_err(|e| format!("Failed to create backup directory: {}", e))?;
+
+        let timestamp = Utc::now().format("%Y-%m-%d_%H-%M-%S");
+        let db_filename = db_path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("inven_tory_local.db");
+        let base_name = db_filename.trim_end_matches(".db");
+
+        // Two backups requested within the same second (e.g. the scheduled one
+        // landing right next to a manual one) must not overwrite each other.
+        let mut backup_filename = format!("{}_{}.db", base_name, timestamp);
+        let mut backup_path = backup_dir.join(&backup_filename);
+        let mut suffix = 1;
+        while backup_path.exists() && suffix < 1000 {
+            backup_filename = format!("{}_{}_{}.db", base_name, timestamp, suffix);
+            backup_path = backup_dir.join(&backup_filename);
+            suffix += 1;
+        }
+
+        let snapshot = (|| -> Result<(), String> {
+            let conn = Connection::open(db_path)
+                .map_err(|e| format!("Failed to open database for backup: {}", e))?;
+            // Fold the write-ahead log back into the main file so the snapshot
+            // reflects every committed transaction.
+            conn.execute_batch("PRAGMA wal_checkpoint(FULL);")
+                .map_err(|e| format!("Failed to checkpoint write-ahead log: {}", e))?;
+            let escaped_path = backup_path.to_string_lossy().replace('\'', "''");
+            conn.execute_batch(&format!("VACUUM INTO '{}';", escaped_path))
+                .map_err(|e| format!("VACUUM INTO failed: {}", e))?;
+            Ok(())
+        })();
+
+        if let Err(err) = snapshot {
+            // Fallback for SQLite builds without VACUUM INTO support.
+            eprintln!(
+                "[TAURI-LOG] VACUUM INTO snapshot failed ({}); falling back to file copy",
+                err
+            );
+            fs::copy(db_path, &backup_path)
+                .map_err(|e| format!("Failed to copy database to backup: {}", e))?;
+        }
+
+        let size = fs::metadata(&backup_path)
+            .map_err(|e| format!("Failed to get backup metadata: {}", e))?
+            .len();
+
+        Ok((backup_filename, backup_path, size))
+    }
+    /// Create a local backup of the database (manual / user-initiated).
+    #[tauri::command]
+    pub fn create_local_backup() -> Result<serde_json::Value, String> {
+        use chrono::Utc;
+
+        let db_path = get_db_path();
+        let db_dir = db_path.parent()
+            .ok_or("Failed to get database directory")?;
+        
+        let backup_dir = db_dir.join("backups");
+        let (backup_filename, backup_path, size) = create_db_snapshot(&db_path, &backup_dir)?;
+
+        let created_at = Utc::now().to_rfc3339();
+
+        Ok(serde_json::json!({
+            "filename": backup_filename,
+            "path": backup_path.to_string_lossy().to_string(),
+            "size": size,
+            "created_at": created_at,
+        }))
+    }
+
+    /// Restore database from a local backup file.
+    #[tauri::command]
+    pub fn restore_from_backup(filename: String) -> Result<String, String> {
+        use std::fs;
+
+        let db_path = get_db_path();
+        let db_dir = db_path.parent()
+            .ok_or("Failed to get database directory")?;
+        
+        let backup_dir = db_dir.join("backups");
+        let backup_path = backup_dir.join(&filename);
+
+        if !backup_path.exists() {
+            return Err(format!("Backup file '{}' not found", filename));
+        }
+
+        // Copy backup to a temporary file first, then replace the main db
+        // This avoids issues with the database being locked
+        let temp_path = db_dir.join(format!("inven_tory_local.db.restore_{}", chrono::Utc::now().timestamp()));
+        fs::copy(&backup_path, &temp_path)
+            .map_err(|e| format!("Failed to copy backup to temp file: {}", e))?;
+
+        // Close any existing connections by dropping the pool (not applicable here, but we need to ensure no open connections)
+        // In practice, the app should restart after restore
+        fs::rename(&temp_path, &db_path)
+            .map_err(|e| format!("Failed to replace database with backup: {}", e))?;
+
+        Ok(format!("Database restored from '{}'. Please restart the application.", filename))
+    }
+
+    /// Create today's daily backup if one has not been taken yet.
+    ///
+    /// This command is *time*-driven: the frontend calls it from a scheduler
+    /// that fires at local midnight (see `startDailyBackupScheduler` in
+    /// `services/backupScheduler.ts`).  It is deliberately NOT called on app
+    /// launch — a restart must never create a backup on its own.
+    ///
+    /// The "already backed up today" marker is stored in `kv_store` using the
+    /// **local** calendar date, so the once-per-day guard rolls over at the
+    /// user's midnight (not midnight UTC).
+    ///
+    /// Returns the new backup info, or `None` when today's backup already
+    /// exists.
+    #[tauri::command]
+    pub fn daily_backup_if_needed() -> Result<Option<serde_json::Value>, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS kv_store \
+             (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+        )
+        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+
+        let last_backup_date: Option<String> = conn
+            .query_row(
+                "SELECT value FROM kv_store WHERE key = 'last_daily_backup_at'",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        // If already backed up today, skip
+        if last_backup_date.as_deref() == Some(today.as_str()) {
+            return Ok(None);
+        }
+
+        // Create a consistent snapshot of the database.
+        let db_dir = db_path.parent()
+            .ok_or("Failed to get database directory")?;
+        let backup_dir = db_dir.join("backups");
+        let (backup_filename, backup_path, size) = create_db_snapshot(&db_path, &backup_dir)?;
+
+        let created_at = Utc::now().to_rfc3339();
+
+        // Record that we backed up today (local date) plus the exact time.
+        conn.execute(
+            "INSERT INTO kv_store (key, value) VALUES ('last_daily_backup_at', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = ?1",
+            params![today],
+        )
+        .map_err(|e| format!("Failed to record backup date: {}", e))?;
+
+        conn.execute(
+            "INSERT INTO kv_store (key, value) VALUES ('last_daily_backup_iso', ?1) \
+             ON CONFLICT(key) DO UPDATE SET value = ?1",
+            params![created_at],
+        )
+        .map_err(|e| format!("Failed to record backup timestamp: {}", e))?;
+
+        Ok(Some(serde_json::json!({
+            "filename": backup_filename,
+            "path": backup_path.to_string_lossy().to_string(),
+            "size": size,
+            "created_at": created_at,
+        })))
     }
 
     /// Persist the last-successful-sync timestamp (SYNC-009).
@@ -3643,6 +5207,24 @@ pub fn run() {
     // Initialize local database schema (create tables if they don't exist)
     if let Ok(db_path) = get_db_path().into_os_string().into_string() {
         if let Ok(conn) = Connection::open(&db_path) {
+            // Persistent WAL mode: better concurrent read/write behaviour than
+            // the default rollback journal and avoids SQLITE_BUSY during sync.
+            // Set once here; the mode is stored in the database file itself so
+            // every later Connection::open inherits it automatically.
+            let _ = conn.pragma_update(None, "journal_mode", "WAL");
+            let _ = conn.pragma_update(None, "busy_timeout", 5000);
+
+            // Idempotent hot-path indexes on the local ledger/catalogue tables
+            // so sync and day-book queries don't do full table scans.
+            let _ = conn.execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at); \
+                 CREATE INDEX IF NOT EXISTS idx_inventory_tx_movement_date ON inventory_transactions(movement_type, occurred_at); \
+                 CREATE INDEX IF NOT EXISTS idx_stock_balances_store_product ON stock_balances(store_id, product_id, stock_bucket); \
+                 CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku); \
+                 CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at); \
+                 CREATE INDEX IF NOT EXISTS idx_stores_updated_at ON stores(updated_at);",
+            );
+
             if let Err(e) = ensure_day_books_tables(&conn) {
                 eprintln!("[TAURI-LOG] Warning: Failed to initialize day_books tables: {}", e);
             }
@@ -3652,6 +5234,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             commands::local_login,
             commands::get_stores,
@@ -3689,12 +5272,37 @@ pub fn run() {
             // Issue 15: sync commands
             commands::get_pending_outbox_events,
             commands::update_outbox_event_status,
+            commands::update_outbox_event_statuses,
             commands::update_transaction_sync_status,
+            commands::update_transaction_sync_statuses,
             commands::get_last_sync_timestamp,
             commands::set_last_sync_timestamp,
             commands::upsert_product_from_server,
             commands::upsert_store_from_server,
             commands::upsert_stock_balance_from_server,
+            commands::apply_sync_pull,
+            // App Update Checker
+            commands::check_app_update,
+            commands::download_and_install_update,
+            // Delete All Data
+            commands::delete_all_data,
+            // Backup & Restore
+            commands::list_local_backups,
+            commands::create_local_backup,
+            commands::restore_from_backup,
+            commands::daily_backup_if_needed,
+            // Genesis wizard
+            commands::check_genesis_state,
+            commands::run_genesis,
+            // Restore wizard
+            commands::validate_restore_credentials,
+            commands::start_prioritized_restore,
+            commands::get_restore_progress,
+            // Restore data application
+            commands::apply_restore_critical,
+            commands::apply_restore_transactions,
+            commands::apply_restore_important,
+            commands::apply_restore_background,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

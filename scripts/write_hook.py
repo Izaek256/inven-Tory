@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Write the useGridKeyboardFlow hook file."""
 
-content = '''import { useState, useCallback, useEffect, useRef } from 'react';
+content = """import { useState, useCallback, useEffect, useRef } from 'react';
 
 export interface GridFieldDef {
   id: string;
@@ -59,8 +59,8 @@ function isLastField(fields: GridFieldDef[], fieldIndex: number): boolean {
 function getCellId(rowIndex: number, fieldId: string): string {
   return `cell-${rowIndex}-${fieldId}`;
 }
-'''
+"""
 
-with open(r'd:/inven-Tory/packages/ui/src/hooks/useGridKeyboardFlow.ts', 'w') as f:
+with open(r"d:/inven-Tory/packages/ui/src/hooks/useGridKeyboardFlow.ts", "w") as f:
     f.write(content)
-print('Part 1 written')
+print("Part 1 written")

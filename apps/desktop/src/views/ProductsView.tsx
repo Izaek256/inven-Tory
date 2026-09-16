@@ -2,11 +2,11 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
 import { Store } from '../types/store';
 import { getProducts, createProduct, updateProduct } from '../services/tauriProductService';
-import { getStockBalance } from '../services/tauriTransactionService';
+import { getStockBalancesForStore } from '../services/tauriTransactionService';
 import { getStores } from '../services/tauriStoreService';
 import { ProductModal } from '../components/ProductModal';
 import { Button, Badge, DataTable, EmptyState, SearchInput, ColumnDef } from '@invenTory/ui';
-import { Package, Plus, Edit2, AlertTriangle } from 'lucide-react';
+import { Package, Plus, Edit2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useActiveStore } from '../context/StoreContext';
 import { storeColor } from '../utils/storeColors';
 
@@ -22,6 +22,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [offset, setOffset] = useState(0);
+
+  const LIMIT = 50;
 
   // Cross-store breakdown state (Task I): per-product, per-store AVAILABLE qty.
   const [stores, setStores] = useState<Store[]>([]);
@@ -77,18 +80,23 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     }
     let cancelled = false;
     const loadBalances = async (): Promise<void> => {
+      // One indexed balance query per store, run concurrently. The old
+      // sequential per-(store, product) single-cell loop issued
+      // stores×products round-trips (a fresh connection each) and blocked
+      // the table on all of them.
+      const perStore = await Promise.all(
+        stores.map((store) =>
+          getStockBalancesForStore(store.id)
+            .catch(() => new Map<string, number>())
+            .then((balances) => ({ storeId: store.id, balances })),
+        ),
+      );
+      if (cancelled) return;
       const next = new Map<string, Map<string, number>>();
-      for (const store of stores) {
+      for (const { storeId, balances } of perStore) {
         for (const p of products) {
-          let qty = 0;
-          try {
-            const bal = await getStockBalance(store.id, p.id);
-            qty = bal.quantity;
-          } catch {
-            qty = 0;
-          }
           const row = next.get(p.id) ?? new Map<string, number>();
-          row.set(store.id, qty);
+          row.set(storeId, balances.get(p.id) ?? 0);
           next.set(p.id, row);
         }
       }
@@ -120,6 +128,27 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     return matchesSearch;
   });
 
+  // Pagination: show 100 products per page
+  const paginatedProducts = filteredProducts.slice(offset, offset + LIMIT);
+  // Note: pagination values (totalPages, currentPage) computed inline when needed
+
+  const handlePreviousPage = (): void => {
+    const newOffset = Math.max(0, offset - LIMIT);
+    setOffset(newOffset);
+  };
+
+  const handleNextPage = (): void => {
+    const newOffset = offset + LIMIT;
+    if (newOffset < filteredProducts.length) {
+      setOffset(newOffset);
+    }
+  };
+
+  // Reset pagination when search query changes or products are reloaded
+  useEffect(() => {
+    setOffset(0);
+  }, [searchQuery, products.length]);
+
   const handleOpenCreateModal = (): void => {
     setActionError(null);
     setEditingProduct(null);
@@ -133,13 +162,27 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   };
 
   const handleCreateProduct = async (input: CreateProductInput): Promise<void> => {
-    await createProduct(input);
-    fetchProductsList();
+    setActionError(null);
+    try {
+      await createProduct(input);
+      await fetchProductsList();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setActionError(message);
+      throw err;
+    }
   };
 
   const handleUpdateProduct = async (input: UpdateProductInput): Promise<void> => {
-    await updateProduct(input);
-    fetchProductsList();
+    setActionError(null);
+    try {
+      await updateProduct(input);
+      await fetchProductsList();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setActionError(message);
+      throw err;
+    }
   };
 
   const activeStore = stores.find((s) => s.id === activeStoreId);
@@ -414,9 +457,32 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
               Product Master List ({filteredProducts.length})
             </h3>
           </div>
-          <span style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}>
-            v1.0.0 Field Set Only
-          </span>
+          {filteredProducts.length > LIMIT && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <span style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>
+                Showing {offset + 1}-{Math.min(offset + LIMIT, filteredProducts.length)} of{' '}
+                {filteredProducts.length} products
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handlePreviousPage}
+                disabled={offset === 0}
+              >
+                <ChevronLeft size={14} />
+                Previous
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleNextPage}
+                disabled={offset + LIMIT >= filteredProducts.length}
+              >
+                Next
+                <ChevronRight size={14} />
+              </Button>
+            </div>
+          )}
         </div>
 
         {loading ? (
@@ -442,7 +508,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           <div className="products-cross-store-wrap">
             <DataTable
               columns={columns}
-              rows={filteredProducts}
+              rows={paginatedProducts}
               rowKey={(p) => p.id}
               data-testid="products-table"
               emptySlot={

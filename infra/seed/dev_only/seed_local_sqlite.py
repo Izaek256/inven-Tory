@@ -76,7 +76,7 @@ DEV_USERS = [
         "email": "admin@inventory.local",
         "full_name": "System Administrator",
         "role": "GLOBAL_ADMIN",
-        "password": "DevAdmin2026!",   # DEV-ONLY — hashed into pin_hash
+        "password": "DevAdmin2026!",  # DEV-ONLY — hashed into pin_hash
     },
     {
         "username": "manager_alpha",
@@ -90,7 +90,7 @@ DEV_USERS = [
         "email": "clerk.alpha@inventory.local",
         "full_name": "Alpha Clerk",
         "role": "STORE_CLERK",
-        "password": "DevClerk2026!",    # DEV-ONLY
+        "password": "DevClerk2026!",  # DEV-ONLY
     },
 ]
 
@@ -190,26 +190,37 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
         # Stores
         for s in DEV_STORES:
             if not session.scalar(select(Store).where(Store.id == s["id"])):
-                session.add(Store(id=s["id"], code=s["code"], name=s["name"],
-                                  address=s["address"], is_active=True))
+                session.add(
+                    Store(
+                        id=s["id"],
+                        code=s["code"],
+                        name=s["name"],
+                        address=s["address"],
+                        is_active=True,
+                    )
+                )
 
         # Users (identity cache + offline pin_hash)
         for u in DEV_USERS:
             existing = session.scalar(select(User).where(User.username == u["username"]))
             if not existing:
                 from passlib.context import CryptContext
+
                 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
-                session.add(User(
-                    username=u["username"],
-                    email=u["email"],
-                    full_name=u["full_name"],
-                    role=u["role"],
-                    pin_hash=_pwd.hash(u["password"]),
-                    is_active=True,
-                ))
+                session.add(
+                    User(
+                        username=u["username"],
+                        email=u["email"],
+                        full_name=u["full_name"],
+                        role=u["role"],
+                        pin_hash=_pwd.hash(u["password"]),
+                        is_active=True,
+                    )
+                )
             elif existing.pin_hash is None:
                 # Back-fill pin_hash if the row already existed without it
                 from passlib.context import CryptContext
+
                 _pwd = CryptContext(schemes=["bcrypt"], deprecated="auto")
                 existing.pin_hash = _pwd.hash(u["password"])
 
@@ -218,8 +229,14 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
         # Devices
         for d in DEV_DEVICES:
             if not session.scalar(select(Device).where(Device.id == d["id"])):
-                session.add(Device(id=d["id"], store_id=d["store_id"],
-                                   device_name=d["device_name"], is_active=True))
+                session.add(
+                    Device(
+                        id=d["id"],
+                        store_id=d["store_id"],
+                        device_name=d["device_name"],
+                        is_active=True,
+                    )
+                )
 
         # Products
         for p in DEV_PRODUCTS:
@@ -244,28 +261,32 @@ def seed_database(db_url: str = "sqlite:///inven_tory_local.db") -> None:
             ):
                 tx_id = str(ULID())
                 device_id = "DEV-ALPHA-01" if store_id == "STORE-ALPHA" else "DEV-BETA-01"
-                session.add(InventoryTransaction(
-                    transaction_id=tx_id,
-                    store_id=store_id,
-                    product_id=product_id,
-                    movement_type="RECEIPT",
-                    stock_bucket="AVAILABLE",
-                    quantity_delta=qty,
-                    occurred_at=now,
-                    recorded_at=now,
-                    user_id=admin_user_id,
-                    device_id=device_id,
-                    reference_number="DEV-SEED-INITIAL",
-                    reason_code="INITIAL_STOCK",
-                    sync_status="ACCEPTED",
-                ))
-                session.add(StockBalance(
-                    id=f"SB-{store_id}-{product_id}-AVAIL",
-                    store_id=store_id,
-                    product_id=product_id,
-                    stock_bucket="AVAILABLE",
-                    quantity=qty,
-                ))
+                session.add(
+                    InventoryTransaction(
+                        transaction_id=tx_id,
+                        store_id=store_id,
+                        product_id=product_id,
+                        movement_type="RECEIPT",
+                        stock_bucket="AVAILABLE",
+                        quantity_delta=qty,
+                        occurred_at=now,
+                        recorded_at=now,
+                        user_id=admin_user_id,
+                        device_id=device_id,
+                        reference_number="DEV-SEED-INITIAL",
+                        reason_code="INITIAL_STOCK",
+                        sync_status="ACCEPTED",
+                    )
+                )
+                session.add(
+                    StockBalance(
+                        id=f"SB-{store_id}-{product_id}-AVAIL",
+                        store_id=store_id,
+                        product_id=product_id,
+                        stock_bucket="AVAILABLE",
+                        quantity=qty,
+                    )
+                )
 
         session.commit()
         logger.info("SQLite seed complete.")

@@ -12,7 +12,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -115,8 +115,8 @@ async def list_transactions(
     result = await db.execute(stmt)
     transactions = result.scalars().all()
 
-    # Get total count
-    count_stmt = select(InventoryTransaction)
+    # Get total count (DB-side COUNT — replaces the N+1 style fetch-all+len)
+    count_stmt = select(func.count()).select_from(InventoryTransaction)
     if store_id is not None:
         count_stmt = count_stmt.where(InventoryTransaction.store_id == store_id)
     if product_id is not None:
@@ -137,7 +137,7 @@ async def list_transactions(
             pass
 
     count_result = await db.execute(count_stmt)
-    total = len(count_result.scalars().all())
+    total = int(count_result.scalar_one())
 
     return TransactionsResponse(
         transactions=[

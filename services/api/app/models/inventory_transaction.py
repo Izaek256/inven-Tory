@@ -74,4 +74,8 @@ class InventoryTransaction(Base):
         # Section 16.2 composite indexes
         Index("ix_inv_tx_prod_store_date", "product_id", "store_id", "occurred_at"),
         Index("ix_inv_tx_store_prod_date", "store_id", "product_id", "occurred_at"),
+        # Perf: dashboard "most sold" & day-book balance scans group/filter by
+        # movement_type + occurred_at.  Without this index those aggregate
+        # queries after a large ledger scan every SALE row under a seq scan.
+        Index("ix_inv_tx_movement_date", "movement_type", "occurred_at"),
     )

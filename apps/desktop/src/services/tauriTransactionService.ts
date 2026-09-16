@@ -88,14 +88,12 @@ export async function getPendingOutboxCount(): Promise<number> {
       return await invoke<number>('get_pending_outbox_count');
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking get_pending_outbox_count:', err);
+      console.error('[TransactionService] Error invoking get_pending_outbox_count:', err);
       throw new Error(`Failed to get pending outbox count: ${String(err)}`);
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] getPendingOutboxCount() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] getPendingOutboxCount() requires the desktop app runtime.');
 }
 
 /**
@@ -119,14 +117,12 @@ export async function receiveStock(input: CreateTransactionInput): Promise<Inven
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking receive_stock:', err);
+      console.error('[TransactionService] Error invoking receive_stock:', err);
       throw new Error(`Failed to receive stock: ${String(err)}`);
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] receiveStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] receiveStock() requires the desktop app runtime.');
 }
 
 /**
@@ -150,15 +146,13 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking sell_stock:', err);
+      console.error('[TransactionService] Error invoking sell_stock:', err);
       // Re-throw raw message so the view can parse the "Insufficient stock" rejection
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] sellStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] sellStock() requires the desktop app runtime.');
 }
 
 /**
@@ -174,14 +168,12 @@ export async function returnStock(input: ReturnStockInput): Promise<InventoryTra
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking return_stock:', err);
+      console.error('[TransactionService] Error invoking return_stock:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] returnStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] returnStock() requires the desktop app runtime.');
 }
 
 /**
@@ -199,14 +191,12 @@ export async function moveStockBucket(
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking move_stock_bucket:', err);
+      console.error('[TransactionService] Error invoking move_stock_bucket:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] moveStockBucket() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] moveStockBucket() requires the desktop app runtime.');
 }
 
 /**
@@ -225,7 +215,7 @@ export async function getStockBalancesForStore(storeId: string): Promise<Map<str
       return new Map(rows.map((r) => [r.product_id, r.quantity]));
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking get_stock_balances_for_store:', err);
+      console.error('[TransactionService] Error invoking get_stock_balances_for_store:', err);
       return new Map();
     }
   }
@@ -253,14 +243,12 @@ export async function getStockBalance(storeId: string, productId: string): Promi
       };
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking get_stock_balance:', err);
+      console.error('[TransactionService] Error invoking get_stock_balance:', err);
       throw new Error(`Failed to get stock balance: ${String(err)}`);
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] getStockBalance() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] getStockBalance() requires the desktop app runtime.');
 }
 
 /**
@@ -288,13 +276,13 @@ export async function getStockBalanceForBucket(
       };
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking get_stock_balance_for_bucket:', err);
+      console.error('[TransactionService] Error invoking get_stock_balance_for_bucket:', err);
       throw new Error(`Failed to get stock balance: ${String(err)}`);
     }
   }
 
   throw new Error(
-    '[TauriTransactionService] getStockBalanceForBucket() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+    '[TransactionService] getStockBalanceForBucket() requires the desktop app runtime.',
   );
 }
 
@@ -313,14 +301,12 @@ export async function adjustStock(input: AdjustStockInput): Promise<InventoryTra
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking adjust_stock:', err);
+      console.error('[TransactionService] Error invoking adjust_stock:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] adjustStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] adjustStock() requires the desktop app runtime.');
 }
 
 /**
@@ -333,14 +319,12 @@ export async function getLocalTransactions(): Promise<InventoryTransaction[]> {
       return await invoke<InventoryTransaction[]>('get_local_transactions');
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking get_local_transactions:', err);
+      console.error('[TransactionService] Error invoking get_local_transactions:', err);
       throw new Error(`Failed to get local transactions: ${String(err)}`);
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] getLocalTransactions() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] getLocalTransactions() requires the desktop app runtime.');
 }
 
 /**
@@ -362,14 +346,12 @@ export async function updateTransaction(
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking update_transaction:', err);
+      console.error('[TransactionService] Error invoking update_transaction:', err);
       throw new Error(`Failed to update transaction: ${String(err)}`);
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] updateTransaction() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] updateTransaction() requires the desktop app runtime.');
 }
 
 /**
@@ -387,12 +369,10 @@ export async function deleteTransaction(transactionId: string): Promise<void> {
       return;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransactionService] Error invoking delete_transaction:', err);
+      console.error('[TransactionService] Error invoking delete_transaction:', err);
       throw new Error(`Failed to delete transaction: ${String(err)}`);
     }
   }
 
-  throw new Error(
-    '[TauriTransactionService] deleteTransaction() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransactionService] deleteTransaction() requires the desktop app runtime.');
 }

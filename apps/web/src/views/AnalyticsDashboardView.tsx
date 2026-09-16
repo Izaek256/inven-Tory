@@ -119,31 +119,40 @@ export function AnalyticsDashboardView({
 
   const dateRangeParams = useMemo(() => computeDateRange(dateRange.days), [dateRange.days]);
 
-  const metricsQuery = useResistantQuery<DashboardMetrics>(getDashboardMetrics, []);
+  const metricsQuery = useResistantQuery<DashboardMetrics>(
+    () => getDashboardMetrics(activeStoreId),
+    [activeStoreId],
+  );
   const stockTrendQuery = useResistantQuery<StockTrendResponse>(
-    () => getStockTrend(dateRangeParams.start, dateRangeParams.end),
-    [dateRangeParams],
+    () => getStockTrend(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+    [dateRangeParams, activeStoreId],
   );
   const categoryDistQuery = useResistantQuery<CategoryDistributionResponse>(
-    getCategoryDistribution,
-    [],
+    () => getCategoryDistribution(activeStoreId),
+    [activeStoreId],
   );
   const mostSoldQuery = useResistantQuery<MostSoldExtendedResponse>(
-    () => getMostSoldExtended(dateRangeParams.start, dateRangeParams.end, MOST_SOLD_LIMIT),
-    [dateRangeParams],
+    () =>
+      getMostSoldExtended(
+        dateRangeParams.start,
+        dateRangeParams.end,
+        MOST_SOLD_LIMIT,
+        activeStoreId,
+      ),
+    [dateRangeParams, activeStoreId],
   );
   const recentActivityQuery = useResistantQuery<RecentActivityResponse>(
-    () => getRecentActivity(RECENT_ACTIVITY_LIMIT),
-    [],
+    () => getRecentActivity(RECENT_ACTIVITY_LIMIT, activeStoreId),
+    [activeStoreId],
   );
   const kpiDeltasQuery = useResistantQuery<KPIDeltasResponse>(
-    () => getKPIDeltas(dateRangeParams.start, dateRangeParams.end),
-    [dateRangeParams],
+    () => getKPIDeltas(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+    [dateRangeParams, activeStoreId],
   );
   const storesQuery = useResistantQuery<StoreListEntry[]>(listStores, []);
   const opsSummaryQuery = useResistantQuery<OperationsSummaryResponse>(
-    () => getOperationsSummary(dateRangeParams.start, dateRangeParams.end),
-    [dateRangeParams],
+    () => getOperationsSummary(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+    [dateRangeParams, activeStoreId],
   );
 
   const metrics = metricsQuery.data;
@@ -190,6 +199,7 @@ export function AnalyticsDashboardView({
   const unitsSoldDelta = getDelta('Units Sold');
   const unitsSoldValue = unitsSoldDelta ? unitsSoldDelta.current_value : null;
   const lowStockCount = m.low_stock.length;
+  const lowStockLoading = metricsQuery.loading && !metrics;
 
   // Filter recent activity when store tab active (client-side)
   const recentActivity = useMemo(() => {
@@ -203,8 +213,9 @@ export function AnalyticsDashboardView({
 
   const activeStore = activeStoreId ? normalizedStores.find((s) => s.id === activeStoreId) : null;
   const scopeSuffix = activeStore ? ` (${activeStore.code || activeStore.name})` : '';
-  const subtitle =
-    normalizedStores.length > 1
+  const subtitle = activeStore
+    ? `Here's what's happening at ${activeStore.name}.`
+    : normalizedStores.length > 1
       ? "Here's what's happening across your stores."
       : "Here's what's happening with your inventory today.";
 
@@ -380,11 +391,11 @@ export function AnalyticsDashboardView({
         {activeStoreId ? (
           <DashboardTile
             title="Low Stock Items"
-            numericValue={lowStockCount}
+            numericValue={lowStockLoading ? undefined : lowStockCount}
             icon={AlertTriangle}
             accent="var(--it-red)"
             animDelay={80}
-            loading={loading}
+            loading={lowStockLoading}
             delta={
               getDelta('Low Stock Items') // may not exist, fallback
                 ? { label: getDelta('Low Stock Items')!.period_label, positive: false }
@@ -392,7 +403,11 @@ export function AnalyticsDashboardView({
             }
             footer={
               <span style={{ color: 'var(--it-red-text)' }}>
-                {lowStockCount > 0 ? `${lowStockCount} need attention` : 'All good'}
+                {lowStockLoading
+                  ? 'Loading...'
+                  : lowStockCount > 0
+                    ? `${lowStockCount} need attention`
+                    : 'All good'}
               </span>
             }
             testId="tile-low-stock"
@@ -604,7 +619,25 @@ export function AnalyticsDashboardView({
           <div className="web-dashboard-table-header">
             <h3 className="web-dashboard-table-title">Low-Stock Alerts{scopeSuffix}</h3>
           </div>
-          {m.low_stock.length > 0 ? (
+          {lowStockLoading ? (
+            <div className="dash-empty" data-testid="low-stock-loading">
+              <div
+                style={{
+                  width: 48,
+                  height: 48,
+                  borderRadius: 12,
+                  background: 'var(--it-surface)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <Package size={22} color="var(--it-text-disabled)" />
+              </div>
+              <div style={{ fontWeight: 700, color: 'var(--it-text-primary)' }}>Loading...</div>
+              <div style={{ fontSize: 12 }}>Fetching low stock data...</div>
+            </div>
+          ) : m.low_stock.length > 0 ? (
             <table className="dash-table" data-testid="low-stock-table-content">
               <thead>
                 <tr>

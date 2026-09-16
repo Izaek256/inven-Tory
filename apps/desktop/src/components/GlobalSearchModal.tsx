@@ -3,7 +3,7 @@ import { Modal, SearchInput, DataTable, EmptyState, type ColumnDef } from '@inve
 import { Product } from '../types/product';
 import { Store } from '../types/store';
 import { getProducts } from '../services/tauriProductService';
-import { getStockBalance } from '../services/tauriTransactionService';
+import { getStockBalancesForStore } from '../services/tauriTransactionService';
 import { storeColor } from '../utils/storeColors';
 
 interface GlobalSearchModalProps {
@@ -37,13 +37,15 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
   const [qtyMap, setQtyMap] = useState<Map<string, Map<string, number>>>(new Map());
-  const qtyCacheRef = useRef<Map<string, number>>(new Map());
+  const qtyCacheRef = useRef<Map<string, Map<string, number>>>(new Map());
 
   // Load the full catalogue when the modal opens (local/offline data source).
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
     setLoading(true);
+    // Clear the cache when modal opens to ensure fresh data after stock movements
+    qtyCacheRef.current.clear();
     getProducts()
       .then((list) => {
         if (!cancelled) setProducts(list);
@@ -59,32 +61,33 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     };
   }, [isOpen]);
 
-  // Fetch per-store quantities for the catalogue; cached across runs.
+  // Fetch per-store quantities for the catalogue; one indexed balance query
+  // per store, run concurrently and cached per store across runs. (The old
+  // sequential per-(store, product) single-cell loop issued stores×products
+  // round-trips and blocked the modal on all of them.)
   useEffect(() => {
     if (!isOpen || products.length === 0 || stores.length === 0) return;
     let cancelled = false;
     const load = async (): Promise<void> => {
+      // Always fetch fresh balances when modal opens to reflect latest stock movements
+      const fetched = await Promise.all(
+        stores.map((store) =>
+          getStockBalancesForStore(store.id)
+            .catch(() => new Map<string, number>())
+            .then((balances) => ({ storeId: store.id, balances })),
+        ),
+      );
+      for (const { storeId, balances } of fetched) {
+        qtyCacheRef.current.set(storeId, balances);
+      }
+      if (cancelled) return;
       const next = new Map<string, Map<string, number>>();
-      for (const store of stores) {
-        for (const p of products) {
-          const cacheKey = `${store.id}::${p.id}`;
-          let qty = 0;
-          const cached = qtyCacheRef.current.get(cacheKey);
-          if (cached !== undefined) {
-            qty = cached;
-          } else {
-            try {
-              const bal = await getStockBalance(store.id, p.id);
-              qty = bal.quantity;
-            } catch {
-              qty = 0;
-            }
-            qtyCacheRef.current.set(cacheKey, qty);
-          }
-          const row = next.get(p.id) ?? new Map<string, number>();
-          row.set(store.id, qty);
-          next.set(p.id, row);
+      for (const p of products) {
+        const row = new Map<string, number>();
+        for (const s of stores) {
+          row.set(s.id, qtyCacheRef.current.get(s.id)?.get(p.id) ?? 0);
         }
+        next.set(p.id, row);
       }
       if (!cancelled) setQtyMap(next);
     };
