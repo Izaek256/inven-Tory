@@ -10,7 +10,6 @@ permissions:
 
 jobs:
   release:
-    runs-on: windows-latest
     strategy:
       matrix:
         include:

@@ -260,6 +260,11 @@ describe('Task C - tile grid is a complete 3x3 grid of pure KPIs', () => {
   });
 
   it('new tiles render zero/empty data without breaking', async () => {
+    mockGetDashboardMetrics.mockResolvedValue({
+      ...baseMetrics,
+      total_products: 0,
+      total_stock_units: 0,
+    });
     render(<AnalyticsDashboardView />);
     const grid = await screen.findByTestId('analytics-tiles');
     await waitFor(
