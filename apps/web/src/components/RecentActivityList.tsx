@@ -72,7 +72,15 @@ export function RecentActivityRow({ item }: { item: RecentActivityItem }): React
   const Icon = ACTIVITY_ICONS[item.type] ?? Activity;
   const iconColor = ACTIVITY_ICON_COLORS[item.type] ?? 'var(--it-text-secondary)';
   const badgeClass = ACTIVITY_BADGE_CLASS[item.type] ?? 'activity-badge--adjustment';
-  const occurredAbsolute = new Date(item.occurred_at).toLocaleString();
+  const occurredAbsolute = new Date(item.occurred_at).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
   const qtySign = NEGATIVE_ACTIVITY_TYPES.has(item.type) ? '−' : '+';
   return (
     <div

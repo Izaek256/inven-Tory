@@ -99,7 +99,7 @@ exports[`Recent Activity - shared row component (dashboard preview + dedicated p
         class="web-dashboard-preview-time"
         data-testid="activity-duration"
         style="flex: 0.7 1 0%; font-size: 12px; color: var(--it-text-secondary); white-space: nowrap; text-align: right;"
-        title="9/12/2026, 8:00:00 AM"
+        title="12/09/2026, 08:00:00"
       >
         12 h ago
       </span>

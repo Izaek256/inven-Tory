@@ -25,12 +25,12 @@ jobs:
     runs-on: ${{ matrix.runner }}
     
     steps:
-      - uses: actions/checkout@v4
-      
+      - uses: actions/checkout@v5
+
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: '20'
+          node-version: '22'
           
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -69,7 +69,7 @@ jobs:
         run: |
           # Extract version from tag
           VERSION=${GITHUB_REF#refs/tags/v}
-          
+
           # Create the manifest file
           cat > latest-linux-x86_64.json << EOF
           {
@@ -79,11 +79,11 @@ jobs:
             "platforms": {
               "windows-x86_64": {
                 "signature": "$(cat Tauri updater/windows-x86_64.sig 2>/dev/null || echo '')",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_x64-setup.nsis.zip"
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_x64-setup.exe"
               },
               "linux-x86_64": {
                 "signature": "$(cat Tauri updater/appimage/*.AppImage.sig 2>/dev/null || echo '')",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_amd64.AppImage.tar.gz"
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_amd64.AppImage"
               },
               "darwin-x86_64": {
                 "signature": "$(cat Tauri updater/macos/*.app.tar.gz.sig 2>/dev/null || echo '')",
