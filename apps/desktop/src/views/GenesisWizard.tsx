@@ -7,6 +7,7 @@ interface GenesisWizardProps {
   state: GenesisState;
   onComplete: (username: string, storeCode: string) => void;
   onCancel: () => void;
+  onCancelRestore?: () => void;
   running: boolean;
   error: string | null;
   onRun: (params: {
@@ -47,6 +48,15 @@ interface GenesisWizardProps {
   }>;
   /** Called immediately after restore kicks off — App.tsx takes over polling and dismisses wizard */
   onRestoreStarted?: (username: string) => void;
+  /** Restore progress from App.tsx polling — keeps wizard visible during restore */
+  restoreProgress?: {
+    phase: string;
+    currentStep: string;
+    progressPercent: number;
+    criticalComplete: boolean;
+    canUseApp: boolean;
+    totalComplete: boolean;
+  } | null;
 }
 
 const FRESH_SETUP_STEPS = [
@@ -65,6 +75,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
   state,
   onComplete,
   onCancel,
+  onCancelRestore,
   running,
   error,
   onRun,
@@ -72,6 +83,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
   onStartRestore,
   onGetRestoreProgress,
   onRestoreStarted,
+  restoreProgress: restoreProgressProp,
 }) => {
   void state;
   const [setupMode, setSetupMode] = useState<'selection' | 'fresh' | 'restore'>('selection');
@@ -104,6 +116,9 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
     totalComplete: boolean;
   } | null>(null);
   const restorePollRef = React.useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Prefer the App.tsx-provided progress (from polling) over local state
+  const effectiveRestoreProgress = restoreProgressProp ?? restoreProgress;
 
   const roles = [
     { value: 'GLOBAL_ADMIN', label: 'Global Admin' },
@@ -200,12 +215,13 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
 
       if (result.success) {
         setSubmitted(false);
-        // Hand off to App.tsx: it will poll progress in the Header and dismiss this wizard
+        // Advance to progress screen
+        setStep(2);
+        // Notify App.tsx so it can poll progress
         if (onRestoreStarted) {
           onRestoreStarted(restoreUsername.trim());
         } else {
-          // Fallback: advance to progress screen if no App-level handler
-          setStep(2);
+          // Fallback: poll locally if no App-level handler
           if (!onGetRestoreProgress) {
             setTimeout(() => onComplete(restoreUsername.trim(), 'RESTORED'), 1000);
             return;
@@ -1066,7 +1082,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
               >
                 Restoring Your Data
               </h2>
-              {restoreProgress ? (
+              {effectiveRestoreProgress ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                   <div
                     style={{
@@ -1083,7 +1099,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                         marginBottom: '8px',
                       }}
                     >
-                      {restoreProgress.currentStep}
+                      {effectiveRestoreProgress.currentStep}
                     </div>
                     <div
                       style={{
@@ -1096,7 +1112,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                       <div
                         style={{
                           height: '100%',
-                          width: `${restoreProgress.progressPercent}%`,
+                          width: `${effectiveRestoreProgress.progressPercent}%`,
                           background: 'var(--it-green)',
                           transition: 'width 0.3s',
                         }}
@@ -1109,32 +1125,47 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                         marginTop: '4px',
                       }}
                     >
-                      {restoreProgress.progressPercent}% complete
+                      {effectiveRestoreProgress.progressPercent}% complete
                     </div>
                   </div>
-                  {restoreProgress.criticalComplete && !restoreProgress.totalComplete && (
-                    <div
-                      style={{
-                        padding: '12px',
-                        borderRadius: '8px',
-                        background: 'var(--it-green-surface)',
-                        border: '1px solid var(--it-green-border)',
-                      }}
-                    >
+                  {effectiveRestoreProgress.criticalComplete &&
+                    !effectiveRestoreProgress.totalComplete && (
                       <div
                         style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '8px',
-                          fontSize: '12px',
-                          color: 'var(--it-green-text)',
+                          padding: '12px',
+                          borderRadius: '8px',
+                          background: 'var(--it-green-surface)',
+                          border: '1px solid var(--it-green-border)',
                         }}
                       >
-                        <Check size={16} />
-                        <span>Critical data restored! You can use the app now.</span>
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            fontSize: '12px',
+                            color: 'var(--it-green-text)',
+                          }}
+                        >
+                          <Check size={16} />
+                          <span>Critical data restored! You can use the app now.</span>
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    )}
+                  {/* Cancel button - only show if restore is not complete and not in error state */}
+                  {!effectiveRestoreProgress.totalComplete &&
+                    effectiveRestoreProgress.phase !== 'error' &&
+                    onCancelRestore && (
+                      <Button
+                        variant="ghost"
+                        onClick={onCancelRestore}
+                        disabled={running}
+                        style={{ alignSelf: 'flex-start' }}
+                        data-testid="cancel-restore-btn"
+                      >
+                        Cancel Restore
+                      </Button>
+                    )}
                 </div>
               ) : (
                 <div
@@ -1150,6 +1181,18 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                   <p style={{ margin: 0, fontSize: '14px', color: 'var(--it-text-secondary)' }}>
                     Starting restore process...
                   </p>
+                  {/* Cancel button - show even during initial loading */}
+                  {onCancelRestore && (
+                    <Button
+                      variant="ghost"
+                      onClick={onCancelRestore}
+                      disabled={running}
+                      style={{ marginTop: '16px' }}
+                      data-testid="cancel-restore-initial-btn"
+                    >
+                      Cancel Restore
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -1182,7 +1225,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                 (setupMode === 'restore' &&
                   step === 2 &&
                   !restoreError &&
-                  restoreProgress?.phase !== 'error')
+                  effectiveRestoreProgress?.phase !== 'error')
               }
             >
               Back
@@ -1205,7 +1248,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
               (setupMode === 'restore' &&
                 step === 2 &&
                 !restoreError &&
-                restoreProgress?.phase !== 'error')
+                effectiveRestoreProgress?.phase !== 'error')
             }
             disabled={
               !canProceed() ||
@@ -1222,7 +1265,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                 : setupMode === 'restore' && step === 1
                   ? 'Start Restore'
                   : setupMode === 'restore' && step === 2
-                    ? restoreProgress?.totalComplete
+                    ? effectiveRestoreProgress?.totalComplete
                       ? 'Completed'
                       : 'Restoring...'
                     : setupMode === 'fresh' && step === 2

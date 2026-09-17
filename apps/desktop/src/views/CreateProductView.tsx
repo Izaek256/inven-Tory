@@ -625,6 +625,69 @@ export const CreateProductView: React.FC<CreateProductViewProps> = ({
               Import Products
             </h3>
           </div>
+
+          {/* Import Progress Bar - shown below header during import */}
+          {currentImportRunning && currentImportProgress && (
+            <div
+              style={{
+                marginBottom: '16px',
+                padding: '12px',
+                borderRadius: '8px',
+                backgroundColor: 'var(--it-surface)',
+                border: '1px solid var(--it-border)',
+              }}
+              data-testid="import-progress-below-header"
+            >
+              <div
+                style={{
+                  fontSize: '12px',
+                  color: 'var(--it-text-secondary)',
+                  marginBottom: '8px',
+                }}
+              >
+                {currentImportProgress.total > 0
+                  ? `Importing products: ${currentImportProgress.done}/${currentImportProgress.total} (${currentImportProgress.errors} errors)`
+                  : 'Reading import file…'}
+              </div>
+              <div
+                style={{
+                  height: '8px',
+                  borderRadius: '4px',
+                  backgroundColor: 'var(--it-border)',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    height: '100%',
+                    width:
+                      currentImportProgress.total > 0
+                        ? `${Math.min(100, (currentImportProgress.done / currentImportProgress.total) * 100)}%`
+                        : '100%',
+                    backgroundColor: 'var(--it-green)',
+                    transition: 'width 0.3s',
+                  }}
+                />
+              </div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: 'var(--it-text-secondary)',
+                  marginTop: '4px',
+                }}
+              >
+                {currentImportProgress.total > 0 ? (
+                  <>
+                    {currentImportProgress.done}/{currentImportProgress.total}
+                    {currentImportProgress.errors > 0 &&
+                      ` (${currentImportProgress.errors} errors)`}
+                  </>
+                ) : (
+                  'Reading file…'
+                )}
+              </div>
+            </div>
+          )}
           <p
             style={{
               fontSize: '13px',
@@ -739,7 +802,7 @@ export const CreateProductView: React.FC<CreateProductViewProps> = ({
             </table>
           </div>
 
-          {/* File input + progress */}
+          {/* File input */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
             <label
               htmlFor="product-import-input"
@@ -773,39 +836,6 @@ export const CreateProductView: React.FC<CreateProductViewProps> = ({
                 data-testid="import-file-input"
               />
             </label>
-
-            {currentImportRunning && currentImportProgress && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <div
-                  style={{
-                    width: '140px',
-                    height: '6px',
-                    borderRadius: '3px',
-                    backgroundColor: 'var(--it-border)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: `${Math.round((currentImportProgress.done / currentImportProgress.total) * 100)}%`,
-                      height: '100%',
-                      backgroundColor: 'var(--it-green)',
-                      transition: 'width 0.2s',
-                    }}
-                  />
-                </div>
-                <span
-                  style={{
-                    fontSize: '12px',
-                    color: 'var(--it-text-secondary)',
-                    fontFamily: 'var(--it-font-mono)',
-                  }}
-                >
-                  {currentImportProgress.done}/{currentImportProgress.total}
-                  {currentImportProgress.errors > 0 && ` · ${currentImportProgress.errors} skipped`}
-                </span>
-              </div>
-            )}
           </div>
 
           {importResult && (

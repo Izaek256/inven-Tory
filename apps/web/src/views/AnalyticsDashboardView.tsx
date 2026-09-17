@@ -330,7 +330,7 @@ export function AnalyticsDashboardView({
       )}
 
       {/* KPI Tiles — exactly 5 per spec */}
-      <div className="web-dashboard-tiles dash-tiles" data-testid="analytics-tiles">
+      <div className="web-dashboard-tiles dash-tiles items-stretch" data-testid="analytics-tiles">
         <DashboardTile
           title="Total Products"
           numericValue={m.total_products}

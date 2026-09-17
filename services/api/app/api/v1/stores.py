@@ -186,6 +186,9 @@ async def create_store(
     Validates that the code is unique (409 on duplicate).
     Accepts an optional client-provided ID (e.g., "STORE-{CODE}") for
     deterministic ID alignment with the desktop app.
+
+    When a new store is created, it automatically gets all existing products
+    with zero initial stock balances.
     """
     # Check for duplicate code
     existing = await db.execute(select(Store).where(Store.code == request.code))
@@ -214,6 +217,25 @@ async def create_store(
     db.add(store)
     await db.commit()
     await db.refresh(store)
+
+    # Get all existing products and create zero stock balances for the new store
+    products_result = await db.execute(select(Product).where(Product.is_active.is_(True)))
+    products = products_result.scalars().all()
+
+    # Create stock balance entries for all products with zero quantity
+    now = datetime.now(UTC)
+    for product in products:
+        stock_balance = StockBalance(
+            id=str(uuid.uuid4()),
+            store_id=store.id,
+            product_id=product.id,
+            stock_bucket="AVAILABLE",
+            quantity=0,
+            updated_at=now,
+        )
+        db.add(stock_balance)
+
+    await db.commit()
 
     return StoreListItem(
         id=store.id,

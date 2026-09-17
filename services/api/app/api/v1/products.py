@@ -180,7 +180,7 @@ class ProductHistoryResponse(BaseModel):
 async def list_products(
     is_active: bool | None = Query(default=None, description="Filter by active status"),
     offset: int = Query(default=0, ge=0, description="Pagination offset"),
-    limit: int = Query(default=100, ge=1, le=500, description="Maximum results to return"),
+    limit: int = Query(default=100, ge=1, le=10000, description="Maximum results to return"),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> list[ProductListItem]:
@@ -525,7 +525,7 @@ async def search_products(
     q: str = Query(
         default="", min_length=0, max_length=200, description="Search term (empty returns all)"
     ),
-    limit: int = Query(default=200, ge=1, le=500, description="Maximum results to return"),
+    limit: int = Query(default=200, ge=1, le=10000, description="Maximum results to return"),
     scope: str = Query(
         default="",
         description="Set to 'all-stores' to include per-store quantity breakdown "

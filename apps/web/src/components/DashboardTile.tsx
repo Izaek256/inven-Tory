@@ -110,7 +110,7 @@ export function DashboardTile({
 }: DashboardTileProps): React.ReactElement {
   return (
     <div
-      className={`web-dashboard-tile dash-tile web-anim-card ${variant === 'primary' ? 'web-dashboard-tile--primary' : 'web-dashboard-tile--secondary'}`}
+      className={`web-dashboard-tile dash-tile web-anim-card flex flex-col h-full ${variant === 'primary' ? 'web-dashboard-tile--primary' : 'web-dashboard-tile--secondary'}`}
       data-testid={testId}
       style={animDelay ? { animationDelay: `${animDelay}ms` } : undefined}
     >
@@ -144,7 +144,12 @@ export function DashboardTile({
         </span>
       )}
       {details && <div className="web-dashboard-tile__details">{details}</div>}
-      {footer && <div className="web-dashboard-tile__footer dash-tile__footer">{footer}</div>}
+      {footer && (
+        <div className="web-dashboard-tile__footer dash-tile__footer mt-auto pt-3">
+          <hr className="border-gray-100 mb-2" />
+          <span className="text-xs text-gray-400">{footer}</span>
+        </div>
+      )}
     </div>
   );
 }

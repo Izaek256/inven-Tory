@@ -121,19 +121,19 @@ export function useGenesisState(): UseGenesisStateReturn {
       setRunningGenesis(true);
       setError(null);
       try {
-        // Convert camelCase to snake_case for Rust backend
-        const rustParams = {
+        // Tauri v2 #[tauri::command] uses rename_all="camelCase" by default,
+        // so Rust param `full_name` expects JS key `fullName` — no conversion needed.
+        const result = await invoke<GenesisResult>('run_genesis', {
           username: params.username,
           email: params.email,
-          full_name: params.fullName,
+          fullName: params.fullName,
           password: params.password,
           role: params.role,
-          store_code: params.storeCode,
-          store_name: params.storeName,
-          store_address: params.storeAddress,
-          api_base_url: params.apiBaseUrl,
-        };
-        const result = await invoke<GenesisResult>('run_genesis', rustParams);
+          storeCode: params.storeCode,
+          storeName: params.storeName,
+          storeAddress: params.storeAddress,
+          apiBaseUrl: params.apiBaseUrl,
+        });
         if (result.success) {
           // Re-check state to confirm
           const newState = await checkState();

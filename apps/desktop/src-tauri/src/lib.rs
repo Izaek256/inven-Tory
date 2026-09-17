@@ -376,8 +376,11 @@ struct SrvTransaction {
     movement_type: String,
     quantity_delta: i32,
     occurred_at: serde_json::Value,
-    user_id: serde_json::Value,
-    device_id: String,
+    #[serde(default)]
+    user_id: Option<serde_json::Value>,
+    #[serde(default)]
+    device_id: Option<String>,
+    #[serde(default)]
     stock_bucket: Option<String>,
 }
 
@@ -564,8 +567,161 @@ pub mod commands {
 // Genesis: ensure core schema tables exist (mirrors alembic 0001)
 fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
     conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS stores (id VARCHAR(36) PRIMARY KEY, code VARCHAR(50) NOT NULL, name VARCHAR(255) NOT NULL, address VARCHAR(500), is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS ix_stores_code ON stores (code); CREATE TABLE IF NOT EXISTS devices (id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), device_name VARCHAR(255) NOT NULL, is_active BOOLEAN NOT NULL DEFAULT 1, registered_at DATETIME NOT NULL, last_seen_at DATETIME); CREATE INDEX IF NOT EXISTS ix_devices_store_id ON devices (store_id); CREATE TABLE IF NOT EXISTS users (id VARCHAR(36) PRIMARY KEY, username VARCHAR(100) NOT NULL, email VARCHAR(255), pin_hash VARCHAR(255), full_name VARCHAR(255), role VARCHAR(50) NOT NULL DEFAULT 'STORE_CLERK', is_active BOOLEAN NOT NULL DEFAULT 1, created_at DATETIME NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username); CREATE TABLE IF NOT EXISTS products (id VARCHAR(36) PRIMARY KEY, sku VARCHAR(100) NOT NULL, name VARCHAR(255) NOT NULL, brand VARCHAR(100), model VARCHAR(100), category VARCHAR(100) NOT NULL, unit VARCHAR(20) NOT NULL DEFAULT 'pcs', barcode VARCHAR(100), alternate_names TEXT, serial_tracking_enabled BOOLEAN NOT NULL DEFAULT 0, is_active BOOLEAN NOT NULL DEFAULT 1, low_stock_threshold INTEGER, warranty_days INTEGER, batch_tracking_enabled BOOLEAN NOT NULL DEFAULT 0, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE UNIQUE INDEX IF NOT EXISTS ix_products_sku ON products (sku); CREATE INDEX IF NOT EXISTS ix_products_barcode ON products (barcode); CREATE TABLE IF NOT EXISTS stock_balances (id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), product_id VARCHAR(36) NOT NULL REFERENCES products(id), stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE', quantity INTEGER NOT NULL DEFAULT 0, updated_at DATETIME NOT NULL, UNIQUE(store_id, product_id, stock_bucket)); CREATE TABLE IF NOT EXISTS inventory_transactions (transaction_id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), product_id VARCHAR(36) NOT NULL REFERENCES products(id), movement_type VARCHAR(50) NOT NULL, stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE', quantity_delta INTEGER NOT NULL, occurred_at DATETIME NOT NULL, recorded_at DATETIME NOT NULL, user_id VARCHAR(36) NOT NULL, device_id VARCHAR(36) NOT NULL, reference_number VARCHAR(100), reason_code VARCHAR(50), transfer_id VARCHAR(36), purchase_order_id VARCHAR(100), batch_id VARCHAR(100), client_sequence INTEGER, sync_status VARCHAR(50) NOT NULL DEFAULT 'PENDING', server_accepted_at DATETIME); CREATE TABLE IF NOT EXISTS transfers (id VARCHAR(36) PRIMARY KEY, source_store_id VARCHAR(36) NOT NULL REFERENCES stores(id), destination_store_id VARCHAR(36) NOT NULL REFERENCES stores(id), product_id VARCHAR(36) NOT NULL REFERENCES products(id), quantity INTEGER NOT NULL, status VARCHAR(50) NOT NULL DEFAULT 'PENDING', created_by_user_id VARCHAR(36) NOT NULL, notes TEXT, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE TABLE IF NOT EXISTS outbox_events (id VARCHAR(36) PRIMARY KEY, event_type VARCHAR(100) NOT NULL, payload TEXT, status VARCHAR(50) NOT NULL DEFAULT 'PENDING', created_at DATETIME NOT NULL, completed_at DATETIME); CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at); CREATE TABLE IF NOT EXISTS day_books (id VARCHAR(36) PRIMARY KEY, store_id VARCHAR(36) NOT NULL REFERENCES stores(id), book_date DATETIME NOT NULL, opening_balance INTEGER NOT NULL DEFAULT 0, closing_balance INTEGER, balance_sheet_generated BOOLEAN NOT NULL DEFAULT 0, balance_sheet_generated_at DATETIME, created_at DATETIME NOT NULL, updated_at DATETIME NOT NULL); CREATE TABLE IF NOT EXISTS day_book_entries (id VARCHAR(36) PRIMARY KEY, day_book_id VARCHAR(36) NOT NULL REFERENCES day_books(id) ON DELETE CASCADE, transaction_id VARCHAR(36) NOT NULL REFERENCES inventory_transactions(transaction_id) ON DELETE CASCADE, movement_type VARCHAR(50) NOT NULL, product_id VARCHAR(36) NOT NULL REFERENCES products(id), quantity_delta INTEGER NOT NULL, stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE', reference_number VARCHAR(100), reason_code VARCHAR(50), notes TEXT, occurred_at DATETIME NOT NULL, recorded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP);"
-    ).map_err(|e| format!("Failed to create schema tables: {}", e))
+        "CREATE TABLE IF NOT EXISTS stores (
+            id VARCHAR(36) PRIMARY KEY,
+            code VARCHAR(50) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            address VARCHAR(500),
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_stores_code ON stores (code);
+
+        CREATE TABLE IF NOT EXISTS devices (
+            id VARCHAR(36) PRIMARY KEY,
+            store_id VARCHAR(36) NOT NULL REFERENCES stores(id),
+            device_name VARCHAR(255) NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            registered_at DATETIME NOT NULL,
+            last_seen_at DATETIME
+        );
+        CREATE INDEX IF NOT EXISTS ix_devices_store_id ON devices (store_id);
+
+        CREATE TABLE IF NOT EXISTS users (
+            id VARCHAR(36) PRIMARY KEY,
+            username VARCHAR(100) NOT NULL,
+            email VARCHAR(255),
+            pin_hash VARCHAR(255),
+            full_name VARCHAR(255),
+            role VARCHAR(50) NOT NULL DEFAULT 'STORE_CLERK',
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username);
+
+        CREATE TABLE IF NOT EXISTS products (
+            id VARCHAR(36) PRIMARY KEY,
+            sku VARCHAR(100) NOT NULL,
+            name VARCHAR(255) NOT NULL,
+            brand VARCHAR(100),
+            model VARCHAR(100),
+            category VARCHAR(100) NOT NULL,
+            unit VARCHAR(20) NOT NULL DEFAULT 'pcs',
+            barcode VARCHAR(100),
+            alternate_names TEXT,
+            serial_tracking_enabled BOOLEAN NOT NULL DEFAULT 0,
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            low_stock_threshold INTEGER,
+            warranty_days INTEGER,
+            batch_tracking_enabled BOOLEAN NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_products_sku ON products (sku);
+        CREATE INDEX IF NOT EXISTS ix_products_barcode ON products (barcode);
+
+        CREATE TABLE IF NOT EXISTS stock_balances (
+            id VARCHAR(36) PRIMARY KEY,
+            store_id VARCHAR(36) NOT NULL REFERENCES stores(id),
+            product_id VARCHAR(36) NOT NULL REFERENCES products(id),
+            stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE',
+            quantity INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL,
+            UNIQUE(store_id, product_id, stock_bucket)
+        );
+        CREATE INDEX IF NOT EXISTS idx_stock_balances_store_product ON stock_balances(store_id, product_id, stock_bucket);
+
+        CREATE TABLE IF NOT EXISTS inventory_transactions (
+            transaction_id VARCHAR(36) PRIMARY KEY,
+            store_id VARCHAR(36) NOT NULL REFERENCES stores(id),
+            product_id VARCHAR(36) NOT NULL REFERENCES products(id),
+            movement_type VARCHAR(50) NOT NULL,
+            stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE',
+            quantity_delta INTEGER NOT NULL,
+            occurred_at DATETIME NOT NULL,
+            recorded_at DATETIME NOT NULL,
+            user_id VARCHAR(36) NOT NULL,
+            device_id VARCHAR(36) NOT NULL,
+            reference_number VARCHAR(100),
+            reason_code VARCHAR(100),
+            transfer_id VARCHAR(36),
+            purchase_order_id VARCHAR(36),
+            batch_id VARCHAR(36),
+            client_sequence INTEGER,
+            sync_status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+            server_accepted_at DATETIME,
+            original_transaction_id VARCHAR(36)
+        );
+        CREATE INDEX IF NOT EXISTS idx_inventory_tx_movement_date ON inventory_transactions(movement_type, occurred_at);
+        CREATE INDEX IF NOT EXISTS ix_inv_tx_prod_store_date ON inventory_transactions(product_id, store_id, occurred_at);
+        CREATE INDEX IF NOT EXISTS ix_inv_tx_store_prod_date ON inventory_transactions(store_id, product_id, occurred_at);
+
+        CREATE TABLE IF NOT EXISTS transfers (
+            id VARCHAR(36) PRIMARY KEY,
+            source_store_id VARCHAR(36) NOT NULL REFERENCES stores(id),
+            destination_store_id VARCHAR(36) NOT NULL REFERENCES stores(id),
+            product_id VARCHAR(36) NOT NULL REFERENCES products(id),
+            quantity INTEGER NOT NULL,
+            status VARCHAR(50) NOT NULL DEFAULT 'DRAFT',
+            created_by_user_id VARCHAR(36) NOT NULL,
+            notes TEXT,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ix_transfers_source_store_id ON transfers(source_store_id);
+        CREATE INDEX IF NOT EXISTS ix_transfers_destination_store_id ON transfers(destination_store_id);
+        CREATE INDEX IF NOT EXISTS ix_transfers_product_id ON transfers(product_id);
+        CREATE INDEX IF NOT EXISTS ix_transfers_created_by_user_id ON transfers(created_by_user_id);
+
+        CREATE TABLE IF NOT EXISTS outbox_events (
+            id VARCHAR(36) PRIMARY KEY,
+            event_id VARCHAR(36) NOT NULL,
+            event_type VARCHAR(100) NOT NULL,
+            payload TEXT NOT NULL,
+            status VARCHAR(50) NOT NULL DEFAULT 'PENDING',
+            retry_count INTEGER NOT NULL DEFAULT 0,
+            next_attempt_at DATETIME,
+            created_at DATETIME NOT NULL,
+            last_error TEXT
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_outbox_events_event_id ON outbox_events(event_id);
+        CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at);
+        CREATE INDEX IF NOT EXISTS ix_outbox_status_next_attempt ON outbox_events(status, next_attempt_at);
+
+        CREATE TABLE IF NOT EXISTS kv_store (
+            key VARCHAR(255) PRIMARY KEY,
+            value TEXT,
+            updated_at DATETIME NOT NULL
+        );",
+    ).map_err(|e| format!("Failed to create schema tables: {}", e))?;
+
+    // Migrate existing databases: add missing columns if they don't exist
+    let migrations: Vec<(&str, &str)> = vec![
+        ("inventory_transactions", "original_transaction_id VARCHAR(36)"),
+        ("outbox_events", "event_id VARCHAR(36)"),
+        ("outbox_events", "retry_count INTEGER NOT NULL DEFAULT 0"),
+        ("outbox_events", "next_attempt_at DATETIME"),
+        ("outbox_events", "last_error TEXT"),
+    ];
+    for (table, col_def) in migrations {
+        let col_name = col_def.split_whitespace().next().unwrap_or("");
+        let check = format!("SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'", table, col_name);
+        let exists: bool = conn.query_row(&check, [], |row| row.get::<_, i32>(0)).map(|c| c > 0).unwrap_or(true);
+        if !exists {
+            let alter = format!("ALTER TABLE {} ADD COLUMN {}", table, col_def);
+            if let Err(e) = conn.execute_batch(&alter) {
+                eprintln!("[SCHEMA] migration warning for {}.{}: {}", table, col_name, e);
+            }
+        }
+    }
+    // Remove completed_at if it exists (not in real schema)
+    let has_completed: bool = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('outbox_events') WHERE name='completed_at'", [], |row| row.get::<_, i32>(0)).map(|c| c > 0).unwrap_or(false);
+    if has_completed {
+        // SQLite doesn't support DROP COLUMN in older versions, but we just ignore it
+        // The column won't be used by any queries
+    }
+    Ok(())
 }
 
 fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
@@ -576,7 +732,13 @@ fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
     let has_tables = conn.execute("SELECT 1 FROM stores LIMIT 1", []).map(|_| true).unwrap_or(false);
     let has_any_store = conn.query_row("SELECT COUNT(*) FROM stores WHERE is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
     let has_user_with_pin = conn.query_row("SELECT COUNT(*) FROM users WHERE pin_hash IS NOT NULL AND is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
-    GenesisState { ready: has_user_with_pin, has_user_with_pin, has_any_store, has_tables }
+    // Also check if a restore was completed — but only use it as a secondary
+    // signal. The PRIMARY signal is has_user_with_pin: if users with pin_hash
+    // exist, genesis is done. The restore_completed flag alone is NOT enough
+    // because it can persist after DB files are cleared.
+    let restore_completed = conn.execute("SELECT 1 FROM kv_store WHERE key = 'restore_completed' AND value = 'true'", []).map(|_| true).unwrap_or(false);
+    let ready = has_user_with_pin || (restore_completed && has_any_store);
+    GenesisState { ready, has_user_with_pin, has_any_store, has_tables }
 }
 
 #[tauri::command]
@@ -598,11 +760,11 @@ fn normalize_api_url(raw: &str) -> String {
     }
 }
 
-fn push_genesis_to_server(api_base_url: &str, username: &str, email: &str, password: &str, role: &str, store_id: &str, store_code: &str, store_name: &str, store_address: &str) -> Result<bool, String> {
+fn push_genesis_to_server(api_base_url: &str, username: &str, email: &str, full_name: &str, password: &str, role: &str, store_id: &str, store_code: &str, store_name: &str, store_address: &str) -> Result<bool, String> {
     let base = normalize_api_url(api_base_url);
     let url = format!("{}/genesis", base);
     let client = reqwest::blocking::Client::builder().timeout(std::time::Duration::from_secs(10)).build().map_err(|e| format!("HTTP client error: {}", e))?;
-    let body = serde_json::json!({"username": username, "email": email, "password": password, "role": role, "store_id": store_id, "store_code": store_code, "store_name": store_name, "store_address": store_address});
+    let body = serde_json::json!({"username": username, "email": email, "full_name": full_name, "password": password, "role": role, "store_id": store_id, "store_code": store_code, "store_name": store_name, "store_address": store_address});
     let resp = client.post(&url).header("Content-Type", "application/json").body(body.to_string()).send().map_err(|e| format!("Server unreachable: {}", e))?;
     if resp.status().is_success() { Ok(true) } else { Err(format!("Server returned {}: {}", resp.status(), resp.text().unwrap_or_default())) }
 }
@@ -619,6 +781,8 @@ pub fn run_genesis(username: String, email: String, full_name: String, password:
     if let Err(e) = ensure_schema_tables(&conn) {
         return GenesisResult { success: false, message: format!("Schema creation failed: {}", e), username: None, store_code: None };
     }
+    // Clear any stale restore_completed flag from a previous restore
+    let _ = conn.execute("DELETE FROM kv_store WHERE key = 'restore_completed'", []);
     let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at); CREATE INDEX IF NOT EXISTS idx_inventory_tx_movement_date ON inventory_transactions(movement_type, occurred_at); CREATE INDEX IF NOT EXISTS idx_stock_balances_store_product ON stock_balances(store_id, product_id, stock_bucket); CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku); CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at); CREATE INDEX IF NOT EXISTS idx_stores_updated_at ON stores(updated_at);");
     let now = now_iso();
     let code_clean = store_code.trim().to_uppercase();
@@ -647,7 +811,7 @@ pub fn run_genesis(username: String, email: String, full_name: String, password:
     let server_msg = if let Some(ref api_url) = api_base_url {
         let api_url = api_url.trim();
         if !api_url.is_empty() {
-            match push_genesis_to_server(api_url, &username_clean, &email.trim(), &password, &role.trim(), &store_id, &code_clean, &name_clean, &address_clean.unwrap_or("")) {
+            match push_genesis_to_server(api_url, &username_clean, &email.trim(), &full_name.trim(), &password, &role.trim(), &store_id, &code_clean, &name_clean, &address_clean.unwrap_or("")) {
                 Ok(true) => "\n[OK] Server credentials pushed.".to_string(),
                 Ok(false) => "\n(Server push skipped.)".to_string(),
                 Err(e) => format!("\n[WARN] Server push failed: {}. Local login still works offline.", e),
@@ -775,6 +939,7 @@ fn do_restore(api_base_url: String, username: String, password: String, db_path:
         set_restore_progress("error", &format!("Schema init failed: {}", e), 20, false, false, false);
         return;
     }
+    let _ = ensure_day_books_tables(&conn);
 
     set_restore_progress("critical_restore", "Writing stores…", 25, false, false, false);
     for s in &critical_data.stores {
@@ -814,33 +979,70 @@ fn do_restore(api_base_url: String, username: String, password: String, db_path:
         } else {
             hash_pin("123456").unwrap_or_default()
         };
-        let _ = conn.execute(
+        println!("[RESTORE] Writing user: username='{}', id='{}', pin_hash_len={}", u.username, u.id, pin_hash.len());
+        let write_result = conn.execute(
             "INSERT OR REPLACE INTO users (id, username, email, pin_hash, full_name, role, is_active, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
             rusqlite::params![u.id, u.username, u.email, pin_hash, u.full_name,
                 u.role, u.is_active as i32, now_iso()],
         );
+        match write_result {
+            Ok(rows) => println!("[RESTORE] User '{}' written successfully (rows={})", u.username, rows),
+            Err(e) => eprintln!("[RESTORE] FAILED to write user '{}': {}", u.username, e),
+        }
+    }
+
+    // Verify users were actually written
+    {
+        let user_count: i32 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0)).unwrap_or(-1);
+        let pin_count: i32 = conn.query_row("SELECT COUNT(*) FROM users WHERE pin_hash IS NOT NULL", [], |row| row.get(0)).unwrap_or(-1);
+        println!("[RESTORE] After writing users: total={}, with_pin_hash={}", user_count, pin_count);
     }
 
     set_restore_progress("critical_restore", "Writing recent transactions…", 52, false, false, false);
     let now_str = now_iso();
     for tx in &critical_data.recent_transactions {
-        let user_id_str = match &tx.user_id {
+        let user_id_str = match tx.user_id.as_ref().unwrap_or(&serde_json::Value::String("1".to_string())) {
             serde_json::Value::Number(n) => n.to_string(),
             serde_json::Value::String(s) => s.clone(),
             _ => "1".to_string(),
         };
+        let device_id_str = tx.device_id.as_deref().unwrap_or("unknown");
         let occurred = tx.occurred_at.as_str().unwrap_or(&now_str);
         let bucket = tx.stock_bucket.as_deref().unwrap_or("AVAILABLE");
         let _ = conn.execute(
             "INSERT OR IGNORE INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, sync_status) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'SYNCED')",
             rusqlite::params![tx.transaction_id, tx.store_id, tx.product_id,
                 tx.movement_type, bucket, tx.quantity_delta,
-                occurred, now_str, user_id_str, tx.device_id],
+                occurred, now_str, user_id_str, device_id_str],
+        );
+        let _ = upsert_day_book_entry(
+            &conn,
+            &tx.store_id,
+            &tx.transaction_id,
+            &tx.product_id,
+            &tx.movement_type,
+            tx.quantity_delta,
+            bucket,
+            None,
+            None,
+            occurred,
         );
     }
 
     // Critical complete — app is usable now
+    // Each INSERT OR REPLACE above auto-committed, so data is visible to other connections.
     set_restore_progress("critical_restore", "Critical data restored — app is ready!", 55, true, true, false);
+
+    // Persist a flag so check_genesis_state knows restore completed successfully
+    {
+        let kv_table_sql = "CREATE TABLE IF NOT EXISTS kv_store (key VARCHAR(255) PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL)";
+        let _ = conn.execute_batch(kv_table_sql);
+        let now = chrono::Utc::now().to_rfc3339();
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES ('restore_completed', 'true', ?1)",
+            params![now],
+        );
+    }
 
     // ── Phase 3: fetch + write important data (recent history + day books) ───
     set_restore_progress("important_restore", "Downloading recent transaction history…", 58, true, true, false);
@@ -853,19 +1055,33 @@ fn do_restore(api_base_url: String, username: String, password: String, db_path:
         if imp_resp.status().is_success() {
             if let Ok(imp_data) = imp_resp.json::<ImportantRestoreData>() {
                 set_restore_progress("important_restore", "Writing recent history…", 65, true, true, false);
+                let _ = ensure_day_books_tables(&conn);
                 for tx in &imp_data.recent_history {
-                    let user_id_str = match &tx.user_id {
+                    let user_id_str = match tx.user_id.as_ref().unwrap_or(&serde_json::Value::String("1".to_string())) {
                         serde_json::Value::Number(n) => n.to_string(),
                         serde_json::Value::String(s) => s.clone(),
                         _ => "1".to_string(),
                     };
+                    let device_id_str = tx.device_id.as_deref().unwrap_or("unknown");
                     let occurred = tx.occurred_at.as_str().unwrap_or(&now_str);
                     let bucket = tx.stock_bucket.as_deref().unwrap_or("AVAILABLE");
                     let _ = conn.execute(
                         "INSERT OR IGNORE INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, sync_status) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'SYNCED')",
                         rusqlite::params![tx.transaction_id, tx.store_id, tx.product_id,
                             tx.movement_type, bucket, tx.quantity_delta,
-                            occurred, now_str, user_id_str, tx.device_id],
+                            occurred, now_str, user_id_str, device_id_str],
+                    );
+                    let _ = upsert_day_book_entry(
+                        &conn,
+                        &tx.store_id,
+                        &tx.transaction_id,
+                        &tx.product_id,
+                        &tx.movement_type,
+                        tx.quantity_delta,
+                        bucket,
+                        None,
+                        None,
+                        occurred,
                     );
                 }
             }
@@ -884,18 +1100,31 @@ fn do_restore(api_base_url: String, username: String, password: String, db_path:
             if let Ok(bg_data) = bg_resp.json::<BackgroundRestoreData>() {
                 set_restore_progress("background_restore", "Writing historical transactions…", 85, true, true, false);
                 for tx in &bg_data.historical_transactions {
-                    let user_id_str = match &tx.user_id {
+                    let user_id_str = match tx.user_id.as_ref().unwrap_or(&serde_json::Value::String("1".to_string())) {
                         serde_json::Value::Number(n) => n.to_string(),
                         serde_json::Value::String(s) => s.clone(),
                         _ => "1".to_string(),
                     };
+                    let device_id_str = tx.device_id.as_deref().unwrap_or("unknown");
                     let occurred = tx.occurred_at.as_str().unwrap_or(&now_str);
                     let bucket = tx.stock_bucket.as_deref().unwrap_or("AVAILABLE");
                     let _ = conn.execute(
                         "INSERT OR IGNORE INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, sync_status) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,'SYNCED')",
                         rusqlite::params![tx.transaction_id, tx.store_id, tx.product_id,
                             tx.movement_type, bucket, tx.quantity_delta,
-                            occurred, now_str, user_id_str, tx.device_id],
+                            occurred, now_str, user_id_str, device_id_str],
+                    );
+                    let _ = upsert_day_book_entry(
+                        &conn,
+                        &tx.store_id,
+                        &tx.transaction_id,
+                        &tx.product_id,
+                        &tx.movement_type,
+                        tx.quantity_delta,
+                        bucket,
+                        None,
+                        None,
+                        occurred,
                     );
                 }
             }
@@ -949,6 +1178,63 @@ pub fn get_restore_progress() -> Result<RestoreProgress, String> {
         can_use_app: false,
         total_complete: false,
     }))
+}
+
+#[tauri::command]
+pub fn cancel_restore() -> Result<(), String> {
+    // Reset restore progress to idle state
+    set_restore_progress("idle", "Restore cancelled", 0, false, false, false);
+
+    // Get database path and open connection
+    let db_path = get_db_path();
+    let mut conn = match rusqlite::Connection::open(&db_path) {
+        Ok(c) => c,
+        Err(e) => return Err(format!("Failed to open database: {}", e)),
+    };
+
+    // Start a transaction for rollback
+    let tx = match conn.transaction() {
+        Ok(t) => t,
+        Err(e) => return Err(format!("Failed to start transaction: {}", e)),
+    };
+
+    // Clear all restore-related data that was partially applied
+    // This is a nuclear option - we clear everything and let the user start fresh
+    // In a production system, you might want more sophisticated rollback logic
+
+    // Delete all stores (this will cascade to dependent data)
+    let _ = tx.execute("DELETE FROM stores", []);
+
+    // Delete all products
+    let _ = tx.execute("DELETE FROM products", []);
+
+    // Delete all stock balances
+    let _ = tx.execute("DELETE FROM stock_balances", []);
+
+    // Delete all inventory transactions
+    let _ = tx.execute("DELETE FROM inventory_transactions", []);
+
+    // Delete all users
+    let _ = tx.execute("DELETE FROM users", []);
+
+    // Delete all day book entries
+    let _ = tx.execute("DELETE FROM day_book_entries", []);
+
+    // Delete all day books
+    let _ = tx.execute("DELETE FROM day_books", []);
+
+    // Clear all outbox events (since we're rolling back the entire restore)
+    let _ = tx.execute("DELETE FROM outbox_events", []);
+
+    // Clear the restore completion flag
+    let _ = tx.execute("DELETE FROM kv_store WHERE key = 'restore_completed'", []);
+
+    // Commit the transaction
+    if let Err(e) = tx.commit() {
+        return Err(format!("Failed to commit rollback transaction: {}", e));
+    }
+
+    Ok(())
 }
 
 // Restore data application commands
@@ -1053,24 +1339,26 @@ pub fn apply_restore_transactions(transactions: Vec<serde_json::Value>) -> Resul
         Ok(c) => c,
         Err(e) => return Err(format!("Failed to open database: {}", e)),
     };
+    let _ = conn.pragma_update(None, "journal_mode", "WAL");
+    let _ = conn.pragma_update(None, "busy_timeout", 5000);
+    let _ = ensure_schema_tables(&conn);
 
     let now = now_iso();
 
-    for tx in transactions {
-        let id = tx.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    for tx in &transactions {
         let transaction_id = tx.get("transaction_id").and_then(|v| v.as_str()).unwrap_or("");
         let store_id = tx.get("store_id").and_then(|v| v.as_str()).unwrap_or("");
         let product_id = tx.get("product_id").and_then(|v| v.as_str()).unwrap_or("");
         let movement_type = tx.get("movement_type").and_then(|v| v.as_str()).unwrap_or("");
         let quantity_delta = tx.get("quantity_delta").and_then(|v| v.as_i64()).unwrap_or(0);
         let occurred_at = tx.get("occurred_at").and_then(|v| v.as_str()).unwrap_or(&now);
-        let user_id = tx.get("user_id").and_then(|v| v.as_i64()).unwrap_or(1);
+        let user_id = tx.get("user_id").and_then(|v| v.as_str()).unwrap_or("unknown");
         let device_id = tx.get("device_id").and_then(|v| v.as_str()).unwrap_or("unknown");
         let stock_bucket = tx.get("stock_bucket").and_then(|v| v.as_str()).unwrap_or("AVAILABLE");
 
         let _ = conn.execute(
-            "INSERT OR REPLACE INTO inventory_transactions (id, transaction_id, store_id, product_id, movement_type, quantity_delta, occurred_at, user_id, device_id, stock_bucket) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![id, transaction_id, store_id, product_id, movement_type, quantity_delta, occurred_at, user_id, device_id, stock_bucket],
+            "INSERT OR REPLACE INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, quantity_delta, occurred_at, recorded_at, user_id, device_id, stock_bucket, sync_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'PENDING')",
+            params![transaction_id, store_id, product_id, movement_type, quantity_delta, occurred_at, now, user_id, device_id, stock_bucket],
         );
     }
 
@@ -1118,8 +1406,18 @@ pub fn apply_restore_background(
     #[tauri::command]
     pub fn local_login(username: String, password: String) -> Result<LocalSession, String> {
         let db_path = get_db_path();
+        println!("[LOGIN] Attempting login for user '{}' at {:?}", username.trim(), db_path);
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open local database: {}", e))?;
+
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        let _ = conn.pragma_update(None, "busy_timeout", 5000);
+        let _ = ensure_schema_tables(&conn);
+
+        // Debug: count users in DB
+        let total_users: i32 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0)).unwrap_or(-1);
+        let users_with_pin: i32 = conn.query_row("SELECT COUNT(*) FROM users WHERE pin_hash IS NOT NULL", [], |row| row.get(0)).unwrap_or(-1);
+        println!("[LOGIN] DB has {} total users, {} with pin_hash", total_users, users_with_pin);
 
         let clean_username = username.trim();
 
@@ -1175,12 +1473,12 @@ pub fn apply_restore_background(
         // Verify password with bcrypt
         let valid = bcrypt::verify(&password, &pin_hash)
             .map_err(|e| {
-                eprintln!("[local_login] Bcrypt verification error for user '{}': {}", clean_username, e);
+                eprintln!("[LOGIN] Bcrypt verification error for user '{}': {}", clean_username, e);
                 format!("Password verification error: {}", e)
             })?;
 
         if !valid {
-            eprintln!("[local_login] Password mismatch for user '{}'", clean_username);
+            eprintln!("[LOGIN] Password mismatch for user '{}' (password len={})", clean_username, password.len());
             return Err("Invalid username or password.".to_string());
         }
 
@@ -1200,6 +1498,8 @@ pub fn apply_restore_background(
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
+
+        let _ = ensure_schema_tables(&conn);
 
         let mut stmt = conn
             .prepare("SELECT id, code, name, address, is_active, created_at, updated_at FROM stores ORDER BY name ASC")
@@ -1265,6 +1565,27 @@ pub fn apply_restore_background(
             params![store_id, code_clean, name_clean, input.address, now, now],
         )
         .map_err(|e| format!("Failed to insert store into database: {}", e))?;
+
+        // Get all existing products and create zero stock balances for the new store
+        let mut product_stmt = conn
+            .prepare("SELECT id FROM products WHERE is_active IS TRUE")
+            .map_err(|e| format!("Failed to query products: {}", e))?;
+        
+        let product_ids: Vec<String> = product_stmt
+            .query_map([], |row| row.get(0))
+            .map_err(|e| format!("Failed to map product IDs: {}", e))?
+            .collect::<Result<Vec<String>, _>>()
+            .map_err(|e| format!("Failed to collect product IDs: {}", e))?;
+
+        // Create stock balance entries for all products with zero quantity
+        for product_id in product_ids {
+            let stock_balance_id = format!("SB-{}-{}", store_id, product_id);
+            conn.execute(
+                "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, 'AVAILABLE', 0, ?4)",
+                params![stock_balance_id, store_id, product_id, now],
+            )
+            .map_err(|e| format!("Failed to create stock balance for product {}: {}", product_id, e))?;
+        }
 
         Ok(Store {
             id: store_id,
@@ -3751,6 +4072,8 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
+        let _ = ensure_schema_tables(&conn);
+
         let mut stmt = conn
             .prepare("SELECT COUNT(*) FROM outbox_events WHERE status IN ('PENDING', 'SENDING', 'RETRYABLE_ERROR')")
             .map_err(|e| format!("Database error counting pending changes: {}", e))?;
@@ -4197,7 +4520,7 @@ pub fn apply_restore_background(
         // Ensure the kv_store table exists (created lazily on first write)
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
         )
         .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
 
@@ -4416,7 +4739,7 @@ pub fn apply_restore_background(
     /// and issued one statement per row.  For a large catalogue that was N×3
     /// fsync-on-open + per-row roundtrips; this command does it in one
     /// connection and one transaction with prepared statements.
-    #[tauri::command]
+    #[tauri::command(rename_all = "snake_case")]
     pub fn apply_sync_pull(
         products: Vec<Product>,
         stores: Vec<Store>,
@@ -5126,7 +5449,7 @@ pub fn apply_restore_background(
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
         )
         .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
 
@@ -5155,16 +5478,16 @@ pub fn apply_restore_background(
 
         // Record that we backed up today (local date) plus the exact time.
         conn.execute(
-            "INSERT INTO kv_store (key, value) VALUES ('last_daily_backup_at', ?1) \
-             ON CONFLICT(key) DO UPDATE SET value = ?1",
-            params![today],
+            "INSERT INTO kv_store (key, value, updated_at) VALUES ('last_daily_backup_at', ?1, ?2) \
+             ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
+            params![today, created_at],
         )
         .map_err(|e| format!("Failed to record backup date: {}", e))?;
 
         conn.execute(
-            "INSERT INTO kv_store (key, value) VALUES ('last_daily_backup_iso', ?1) \
-             ON CONFLICT(key) DO UPDATE SET value = ?1",
-            params![created_at],
+            "INSERT INTO kv_store (key, value, updated_at) VALUES ('last_daily_backup_iso', ?1, ?2) \
+             ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
+            params![created_at, created_at],
         )
         .map_err(|e| format!("Failed to record backup timestamp: {}", e))?;
 
@@ -5185,14 +5508,15 @@ pub fn apply_restore_background(
 
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
         )
         .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
 
+        let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
-            "INSERT INTO kv_store (key, value) VALUES ('last_sync_at', ?1) \
-             ON CONFLICT(key) DO UPDATE SET value = ?1",
-            params![timestamp],
+            "INSERT INTO kv_store (key, value, updated_at) VALUES ('last_sync_at', ?1, ?2) \
+             ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
+            params![timestamp, now],
         )
         .map_err(|e| format!("Failed to persist last_sync_at: {}", e))?;
 
@@ -5298,6 +5622,7 @@ pub fn run() {
             commands::validate_restore_credentials,
             commands::start_prioritized_restore,
             commands::get_restore_progress,
+            commands::cancel_restore,
             // Restore data application
             commands::apply_restore_critical,
             commands::apply_restore_transactions,

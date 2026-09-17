@@ -331,16 +331,14 @@ export function App(): React.ReactElement {
   };
 
   /** Called by GenesisWizard when restore has been kicked off on the Rust side.
-   *  We dismiss the wizard immediately so the app is accessible, then poll
-   *  restore progress in the background and surface it in the Header.
+   *  We keep the genesis wizard visible with progress until critical data is
+   *  restored (users with pin_hash written), then transition to the login screen.
    */
   const handleRestoreStarted = useCallback(
     (username: string): void => {
       restoreUsernameRef.current = username;
-      setShowGenesis(false);
-      setAuthState('unauthenticated');
 
-      // Initial progress placeholder so Header shows "restoring…" right away
+      // Initial progress placeholder so the wizard shows "restoring…" right away
       setRestoreProgress({
         phase: 'authenticating',
         currentStep: 'Starting restore…',
@@ -365,11 +363,14 @@ export function App(): React.ReactElement {
               canUseApp: p.can_use_app,
               totalComplete: p.total_complete,
             });
-            if (p.total_complete || p.phase === 'error') {
+            // When critical data is restored, dismiss wizard and show login
+            if (p.critical_complete || p.total_complete || p.phase === 'error') {
               if (restorePollRef.current) {
                 clearInterval(restorePollRef.current);
                 restorePollRef.current = null;
               }
+              setShowGenesis(false);
+              setAuthState('unauthenticated');
               // Keep progress bar visible for 3 seconds then clear
               setTimeout(() => setRestoreProgress(null), 3000);
             }
@@ -382,6 +383,31 @@ export function App(): React.ReactElement {
     },
     [genesis],
   );
+
+  /** Handle cancel restore - rollback all changes and clear outbox events */
+  const handleCancelRestore = useCallback(async (): Promise<void> => {
+    // Stop polling
+    if (restorePollRef.current) {
+      clearInterval(restorePollRef.current);
+      restorePollRef.current = null;
+    }
+
+    // Clear progress state
+    setRestoreProgress(null);
+
+    // Call Rust backend to rollback restore
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('cancel_restore');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[App] Failed to cancel restore:', err);
+    }
+
+    // Return to selection screen
+    setShowGenesis(true);
+    setAuthState('loading');
+  }, []);
 
   // Cleanup poll on unmount
   useEffect((): (() => void) => {
@@ -522,6 +548,7 @@ export function App(): React.ReactElement {
           state={genesis.state}
           onComplete={handleGenesisComplete}
           onCancel={() => setShowGenesis(false)}
+          onCancelRestore={handleCancelRestore}
           running={genesis.runningGenesis}
           error={genesis.error}
           onRun={async (params) => {
@@ -541,6 +568,7 @@ export function App(): React.ReactElement {
             return await genesis.getRestoreProgress();
           }}
           onRestoreStarted={handleRestoreStarted}
+          restoreProgress={restoreProgress}
         />
       )}
       {!showGenesis && (
@@ -574,7 +602,6 @@ export function App(): React.ReactElement {
             interactiveTimeMs={interactiveTimeMs}
             currentUser={session}
             onLogout={handleLogout}
-            importProgress={importProgress}
             restoreProgress={restoreProgress}
           />
           <div className="app-body">

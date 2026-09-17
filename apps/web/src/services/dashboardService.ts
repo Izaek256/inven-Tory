@@ -25,7 +25,7 @@ import type {
 
 export async function searchProducts(
   query: string = '',
-  limit = 200,
+  limit = 10000,
   scope: 'all-stores' | '' = '',
 ): Promise<ProductSearchResponse> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });

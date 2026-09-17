@@ -63,7 +63,7 @@ export interface SyncConfig {
    * skipped but pending transactions are NOT discarded (offline rule).
    */
   accessToken?: string;
-  /** Maximum number of outbox events per push request (default: 100). */
+  /** Maximum number of outbox events per push request (default: 500). */
   batchSize?: number;
   /** Force sync even if last attempt was recent or if events are in retry backoff. */
   force?: boolean;
@@ -828,7 +828,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
   _syncInProgress = true;
 
-  const batchSize = config.batchSize ?? 100;
+  const batchSize = config.batchSize ?? 500;
   let totalRejected = 0;
   let hadRetryableError = false;
   let lastErrorMsg: string | null = null;

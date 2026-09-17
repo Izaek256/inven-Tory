@@ -21,7 +21,7 @@ import { searchProducts } from '../services/dashboardService';
 import type { ProductSearchResult, StoreQuantity } from '../types/dashboard';
 import { InventoryPanel } from '../components/InventoryPanel';
 
-const CATALOG_LIMIT = 200;
+const CATALOG_LIMIT = 10000;
 const PAGE_SIZE = 10;
 
 export interface StoreColumn {

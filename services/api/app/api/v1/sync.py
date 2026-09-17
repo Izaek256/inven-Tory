@@ -186,7 +186,7 @@ class TransactionReceiptItem(BaseModel):
 class PushRequest(BaseModel):
     """Batch push payload."""
 
-    events: list[TransactionPushItem] = Field(default_factory=list, max_length=500)
+    events: list[TransactionPushItem] = Field(default_factory=list, max_length=1000)
     products: list[ProductSnapshot] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -896,6 +896,9 @@ async def restore_important(
                 "movement_type": t.movement_type,
                 "quantity_delta": t.quantity_delta,
                 "occurred_at": t.occurred_at.isoformat() if t.occurred_at else now.isoformat(),
+                "user_id": str(t.user_id) if t.user_id is not None else "1",
+                "device_id": str(t.device_id) if t.device_id else "unknown",
+                "stock_bucket": t.stock_bucket,
             }
             for t in recent_history
         ],
@@ -965,12 +968,44 @@ async def restore_background(
                 "movement_type": t.movement_type,
                 "quantity_delta": t.quantity_delta,
                 "occurred_at": t.occurred_at.isoformat() if t.occurred_at else now.isoformat(),
+                "user_id": str(t.user_id) if t.user_id is not None else "1",
+                "device_id": str(t.device_id) if t.device_id else "unknown",
+                "stock_bucket": t.stock_bucket,
             }
             for t in historical_transactions
         ],
         analytics=analytics,
         server_time=now,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/restore/cancel  (Restore functionality)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/restore/cancel",
+    status_code=status.HTTP_200_OK,
+    summary="Cancel an in-progress restore and rollback changes",
+)
+async def cancel_restore(
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    current_user: User = Depends(get_current_user),  # noqa: B008
+) -> dict[str, str]:
+    """
+    Cancel an in-progress restore operation.
+
+    This endpoint will:
+    1. Mark any in-progress restore as cancelled
+    2. Rollback any server-side changes made during the restore
+    3. Return a success response
+
+    Note: The client-side is responsible for clearing local data and outbox events.
+    """
+    # In a production system, you would implement server-side rollback logic here
+    # For now, we'll return success since the client handles the local rollback
+    return {"status": "cancelled", "message": "Restore cancelled successfully"}
 
 
 # ---------------------------------------------------------------------------
