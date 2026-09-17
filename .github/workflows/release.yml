@@ -17,10 +17,6 @@ jobs:
             runner: windows-latest
           - target: linux-x86_64
             runner: ubuntu-22.04
-          - target: darwin-x86_64
-            runner: macos-latest
-          - target: darwin-aarch64
-            runner: macos-latest
 
     runs-on: ${{ matrix.runner }}
     
@@ -34,8 +30,6 @@ jobs:
           
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target == 'darwin-aarch64' && 'aarch64-apple-darwin' || '' }}
           
       - name: Install dependencies (Linux)
         if: matrix.target == 'linux-x86_64'
@@ -84,18 +78,11 @@ jobs:
               "linux-x86_64": {
                 "signature": "$(cat Tauri updater/appimage/*.AppImage.sig 2>/dev/null || echo '')",
                 "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_amd64.AppImage"
-              },
-              "darwin-x86_64": {
-                "signature": "$(cat Tauri updater/macos/*.app.tar.gz.sig 2>/dev/null || echo '')",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_x64.app.tar.gz"
-              },
-              "darwin-aarch64": {
-                "signature": "$(cat Tauri updater/macos/*.app.tar.gz.sig 2>/dev/null || echo '')",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_aarch64.app.tar.gz"
               }
             }
           }
           EOF
+          cp latest-linux-x86_64.json latest-windows-x86_64.json
           
       - name: Upload manifest
         uses: softprops/action-gh-release@v2
