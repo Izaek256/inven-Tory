@@ -96,7 +96,7 @@ DEV_STORES = [
 # Login requires a registered device_id; the web app always sends this ID.
 WEB_DASHBOARD_DEVICE = {
     "id": "WEB-DASHBOARD-DEVICE",
-    "store_id": "STORE-ALPHA",   # anchored to Alpha; any active store works
+    "store_id": "STORE-ALPHA",  # anchored to Alpha; any active store works
     "device_name": "Web Management Dashboard",
 }
 
@@ -178,9 +178,7 @@ async def seed() -> None:
 
         # ── Users ─────────────────────────────────────────────────────────────
         for u in DEV_USERS:
-            existing = await session.scalar(
-                select(User).where(User.username == u["username"])
-            )
+            existing = await session.scalar(select(User).where(User.username == u["username"]))
             if not existing:
                 session.add(
                     User(

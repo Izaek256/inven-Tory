@@ -25,14 +25,12 @@ export async function getTransfers(): Promise<Transfer[]> {
       return await invoke<Transfer[]>('get_transfers');
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransferService] Error invoking get_transfers:', err);
+      console.error('[TransferService] Error invoking get_transfers:', err);
       throw new Error(`Failed to load transfers: ${String(err)}`);
     }
   }
 
-  throw new Error(
-    '[TauriTransferService] getTransfers() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransferService] getTransfers() requires the desktop app runtime.');
 }
 
 /**
@@ -44,14 +42,12 @@ export async function createTransfer(input: CreateTransferInput): Promise<Transf
       return await invoke<Transfer>('create_transfer', { input });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransferService] Error invoking create_transfer:', err);
+      console.error('[TransferService] Error invoking create_transfer:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransferService] createTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransferService] createTransfer() requires the desktop app runtime.');
 }
 
 /**
@@ -67,22 +63,23 @@ export async function dispatchTransfer(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<Transfer>('dispatch_transfer', {
+        transferId,
         transfer_id: transferId,
+        userId,
         user_id: userId,
+        deviceId,
         device_id: deviceId,
       });
       _triggerAutoSync();
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransferService] Error invoking dispatch_transfer:', err);
+      console.error('[TransferService] Error invoking dispatch_transfer:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransferService] dispatchTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransferService] dispatchTransfer() requires the desktop app runtime.');
 }
 
 /**
@@ -97,22 +94,23 @@ export async function receiveTransfer(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<Transfer>('receive_transfer', {
+        transferId,
         transfer_id: transferId,
+        userId,
         user_id: userId,
+        deviceId,
         device_id: deviceId,
       });
       _triggerAutoSync();
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransferService] Error invoking receive_transfer:', err);
+      console.error('[TransferService] Error invoking receive_transfer:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransferService] receiveTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransferService] receiveTransfer() requires the desktop app runtime.');
 }
 
 /**
@@ -127,22 +125,23 @@ export async function cancelTransfer(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<Transfer>('cancel_transfer', {
+        transferId,
         transfer_id: transferId,
+        userId,
         user_id: userId,
+        deviceId,
         device_id: deviceId,
       });
       _triggerAutoSync();
       return res;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransferService] Error invoking cancel_transfer:', err);
+      console.error('[TransferService] Error invoking cancel_transfer:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransferService] cancelTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransferService] cancelTransfer() requires the desktop app runtime.');
 }
 
 /**
@@ -152,17 +151,16 @@ export async function markTransferException(transferId: string, notes?: string):
   if (isTauriEnvironment()) {
     try {
       return await invoke<Transfer>('mark_transfer_exception', {
+        transferId,
         transfer_id: transferId,
         notes,
       });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriTransferService] Error invoking mark_transfer_exception:', err);
+      console.error('[TransferService] Error invoking mark_transfer_exception:', err);
       throw new Error(String(err));
     }
   }
 
-  throw new Error(
-    '[TauriTransferService] markTransferException() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[TransferService] markTransferException() requires the desktop app runtime.');
 }

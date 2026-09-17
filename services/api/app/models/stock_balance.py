@@ -9,7 +9,7 @@ Mirrors packages/storage/storage/models/stock_balance.py but uses app.db.Base.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -44,4 +44,6 @@ class StockBalance(Base):
             "stock_bucket",
             name="uq_stock_balances_store_product_bucket",
         ),
+        # Perf: /sync/pull delta filter sorts/orders by updated_at.
+        Index("ix_stock_balances_updated_at", "updated_at"),
     )

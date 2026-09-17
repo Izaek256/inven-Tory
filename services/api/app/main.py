@@ -6,9 +6,11 @@ lives in services; domain rules live in packages/domain.
 """
 
 import logging
+import time
 import traceback
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +18,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.api.v1 import (
+    admin,
     auth,
     dashboard,
     day_books,
@@ -104,6 +107,35 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _log_slow_requests(request: Request, call_next: AsyncGenerator) -> Any:
+    """
+    Lightweight request-level timing (performance observability).
+
+    Any request that takes longer than ``settings.slow_query_threshold_ms``
+    is logged at WARNING.  Set ``SLOW_QUERY_THRESHOLD_MS=0`` to disable.
+    Logs the method + path only — never query params, bodies or headers, so
+    no sensitive data leaks into the logs.
+    """
+    threshold = getattr(settings, "slow_query_threshold_ms", 0)
+    if not threshold or threshold <= 0:
+        return await call_next(request)
+
+    started = time.monotonic()
+    try:
+        response = await call_next(request)
+    finally:
+        elapsed_ms = (time.monotonic() - started) * 1000
+        if elapsed_ms >= threshold:
+            logger.warning(
+                "SLOW_REQUEST %dms %s %s",
+                int(elapsed_ms),
+                request.method,
+                request.url.path,
+            )
+    return response
+
+
 @app.exception_handler(Exception)
 async def _global_json_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """
@@ -159,6 +191,7 @@ async def health_check() -> dict[str, str]:
 API_V1_PREFIX = "/api/v1"
 
 app.include_router(auth.router, prefix=API_V1_PREFIX)
+app.include_router(admin.router, prefix=API_V1_PREFIX)
 app.include_router(dashboard.router, prefix=API_V1_PREFIX)
 app.include_router(devices.router, prefix=API_V1_PREFIX)
 app.include_router(sync.router, prefix=API_V1_PREFIX)
@@ -168,6 +201,30 @@ app.include_router(users.router, prefix=API_V1_PREFIX)
 app.include_router(transfers.router, prefix=API_V1_PREFIX)
 app.include_router(transactions.router, prefix=API_V1_PREFIX)
 app.include_router(day_books.router, prefix=API_V1_PREFIX)
+
+# Also mount restore routes at /api/v1/restore/* as aliases for /api/v1/sync/restore/*
+from fastapi import APIRouter as _APIRouter
+
+restore_router = _APIRouter(prefix="/restore", tags=["restore"])
+restore_router.add_api_route(
+    "/preview", sync.restore_preview, methods=["GET"], response_model=sync.RestorePreviewResponse
+)
+restore_router.add_api_route(
+    "/critical", sync.restore_critical, methods=["GET"], response_model=sync.CriticalRestoreResponse
+)
+restore_router.add_api_route(
+    "/important",
+    sync.restore_important,
+    methods=["GET"],
+    response_model=sync.ImportantRestoreResponse,
+)
+restore_router.add_api_route(
+    "/background",
+    sync.restore_background,
+    methods=["GET"],
+    response_model=sync.BackgroundRestoreResponse,
+)
+app.include_router(restore_router, prefix=API_V1_PREFIX)
 
 # Future routers (Issue 17+):
 #   Issue 17: audit log  →  app/api/v1/audit.py

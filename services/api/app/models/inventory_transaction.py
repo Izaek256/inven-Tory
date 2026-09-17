@@ -49,9 +49,12 @@ class InventoryTransaction(Base):
     )
     reference_number: Mapped[str | None] = mapped_column(String(100), nullable=True)
     reason_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    transfer_id: Mapped[str | None] = mapped_column(
-        String(36), ForeignKey("transfers.id"), nullable=True, index=True
-    )
+    # transfer_id is a client-generated correlation ID (desktop owns the
+    # transfers lifecycle). No FK to the central transfers table: desktop
+    # transfers are never replicated server-side, so a hard FK would reject
+    # every TRANSFER_OUT/TRANSFER_IN event during sync (0006 migration drops
+    # the constraint on existing databases).
+    transfer_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
 
     # Section 16.1 additions
     purchase_order_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
@@ -71,4 +74,8 @@ class InventoryTransaction(Base):
         # Section 16.2 composite indexes
         Index("ix_inv_tx_prod_store_date", "product_id", "store_id", "occurred_at"),
         Index("ix_inv_tx_store_prod_date", "store_id", "product_id", "occurred_at"),
+        # Perf: dashboard "most sold" & day-book balance scans group/filter by
+        # movement_type + occurred_at.  Without this index those aggregate
+        # queries after a large ledger scan every SALE row under a seq scan.
+        Index("ix_inv_tx_movement_date", "movement_type", "occurred_at"),
     )

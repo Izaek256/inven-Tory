@@ -110,24 +110,26 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         await onSubmitUpdate({
           id: product.id,
           name: name.trim(),
-          brand: brand.trim() || undefined,
-          model: model.trim() || undefined,
+          // Explicit null clears the field; omitting the key (undefined)
+          // would leave the previous value in place on PATCH runtimes.
+          brand: brand.trim() || null,
+          model: model.trim() || null,
           category: category.trim(),
           unit: unit.trim(),
-          barcode: barcode.trim() || undefined,
-          alternate_names: alternateNames.trim() || undefined,
+          barcode: barcode.trim() || null,
+          alternate_names: alternateNames.trim() || null,
           serial_tracking_enabled: serialTrackingEnabled,
         });
       } else {
         await onSubmitCreate({
           sku: finalSku,
           name: name.trim(),
-          brand: brand.trim() || undefined,
-          model: model.trim() || undefined,
+          brand: brand.trim() || null,
+          model: model.trim() || null,
           category: category.trim(),
           unit: unit.trim(),
-          barcode: barcode.trim() || undefined,
-          alternate_names: alternateNames.trim() || undefined,
+          barcode: barcode.trim() || null,
+          alternate_names: alternateNames.trim() || null,
           serial_tracking_enabled: serialTrackingEnabled,
           is_active: isActive,
         });
@@ -144,7 +146,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEdit ? 'Edit Product' : 'Add New Product (v1.0.0)'}
+      title={isEdit ? 'Edit Product' : 'Add New Product'}
       size="lg"
       footer={
         <>

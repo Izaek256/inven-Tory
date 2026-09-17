@@ -83,11 +83,22 @@ export interface StockBalanceSnapshot {
   updated_at: string;
 }
 
+export interface PullPaginationInfo {
+  offset: number;
+  limit: number;
+  total_products: number;
+  total_stores: number;
+  total_stock_balances: number;
+  has_more: boolean;
+  next_offset: number;
+}
+
 export interface PullResponse {
   products: ProductSnapshot[];
   stores: StoreSnapshot[];
   stock_balances?: StockBalanceSnapshot[];
   server_time: string;
+  pagination?: PullPaginationInfo;
 }
 
 // ---------------------------------------------------------------------------

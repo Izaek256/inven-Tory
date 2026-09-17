@@ -358,6 +358,78 @@ describe('tauriSyncService', () => {
     expect(state2.lastOutcome).toBe('success');
   });
 
+  // ── triggerSync: product catalogue push ────────────────────────────────
+
+  it('triggerSync (forced) uploads the local catalogue when the outbox is empty', async () => {
+    const { isTauriEnvironment } = await import('../services/tauriStoreService');
+    vi.mocked(isTauriEnvironment).mockReturnValue(true);
+
+    const { invoke } = await import('@tauri-apps/api/core');
+    // 1) get_pending_outbox_events → empty queue (nothing queued)
+    // 2) get_products → the locally imported catalogue
+    vi.mocked(invoke)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        {
+          id: 'PROD-IMPORTED-1',
+          sku: 'IMPORTED-1',
+          name: 'Imported Widget',
+          brand: null,
+          model: null,
+          category: 'General',
+          unit: 'pcs',
+          barcode: null,
+          alternate_names: null,
+          serial_tracking_enabled: false,
+          is_active: true,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        },
+      ])
+      .mockResolvedValue(undefined);
+
+    const fetchMock = stubFetch(
+      {
+        receipts: [],
+        accepted_count: 0,
+        rejected_count: 0,
+        server_time: new Date().toISOString(),
+      },
+      PULL_OK,
+    );
+
+    await triggerSync(makeSyncConfig({ force: true }));
+
+    // Catalogue push first, pull second.
+    expect(fetchMock.mock.calls[0][0]).toContain('/sync/push');
+    const pushInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const pushBody = JSON.parse(String(pushInit.body)) as {
+      events: unknown[];
+      products: Array<{ id: string }>;
+    };
+    expect(pushBody.events).toEqual([]);
+    expect(pushBody.products.map((p) => p.id)).toContain('PROD-IMPORTED-1');
+
+    expect(fetchMock.mock.calls[1][0]).toContain('/sync/pull');
+  });
+
+  it('triggerSync (background, not forced) stays quiet when the outbox is empty', async () => {
+    const { isTauriEnvironment } = await import('../services/tauriStoreService');
+    vi.mocked(isTauriEnvironment).mockReturnValue(true);
+
+    const { invoke } = await import('@tauri-apps/api/core');
+    vi.mocked(invoke).mockResolvedValue([]);
+
+    const fetchMock = stubFetch(PULL_OK);
+
+    await triggerSync(makeSyncConfig());
+
+    const pushCalls = fetchMock.mock.calls.filter(
+      (c) => typeof c[0] === 'string' && (c[0] as string).includes('/sync/push'),
+    );
+    expect(pushCalls).toHaveLength(0);
+  });
+
   // ── getSyncStatus reflects pendingCount ────────────────────────────────
 
   it('getSyncStatus reflects pendingCount set via setMockSyncState', async () => {

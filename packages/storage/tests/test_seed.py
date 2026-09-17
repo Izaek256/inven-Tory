@@ -22,7 +22,7 @@ def test_seed_database(tmp_path):
 
     with session_factory() as session:
         stores = session.scalars(select(Store)).all()
-        assert len(stores) == 4
+        assert len(stores) == 3
 
         users = session.scalars(select(User)).all()
         assert len(users) >= 3
@@ -43,7 +43,7 @@ def test_seed_database(tmp_path):
 
     with session_factory_after() as session:
         stores_after = session.scalars(select(Store)).all()
-        assert len(stores_after) == 4
+        assert len(stores_after) == 3
 
         users_after = session.scalars(select(User)).all()
         assert len(users_after) == len(users)

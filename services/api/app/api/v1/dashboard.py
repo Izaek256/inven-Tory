@@ -50,7 +50,7 @@ existing StockBalance / InventoryTransaction projections; nothing is mutated.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -77,6 +77,27 @@ SALE_MOVEMENT_TYPE = "SALE"
 
 # Stock buckets for status classification
 AVAILABLE_BUCKET = "AVAILABLE"
+
+
+# ---------------------------------------------------------------------------
+# Index-friendly date-range helpers
+#
+# Postgres can't use an index on `occurred_at` when a query filters with
+# `func.date(occurred_at) >= :d` — the expression hides the column.  The
+# helpers below convert an inclusive [start, end] *date* window into an
+# equivalent timestamp range [start 00:00 UTC, end+1 00:00 UTC).  All
+# `occurred_at` values are stored as UTC timestamps, so the window covers
+# exactly the same rows `func.date()` would have matched, while remaining
+# sargable and index-friendly.
+# ---------------------------------------------------------------------------
+
+
+def _date_window(start: date, end: date) -> tuple[datetime, datetime]:
+    """Return the [start, end+1) UTC datetime range for an inclusive date window."""
+    return (
+        datetime.combine(start, time.min, tzinfo=UTC),
+        datetime.combine(end + timedelta(days=1), time.min, tzinfo=UTC),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -242,17 +263,41 @@ class OperationsSummaryResponse(BaseModel):
     summary="Aggregated dashboard KPI metrics",
 )
 async def dashboard_metrics(
+    store_id: str | None = Query(
+        default=None, description="Scope metrics to a single store (store tabs)"
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> DashboardMetricsResponse:
-    """Aggregate the KPI tile data for the web dashboard (read-only)."""
+    """Aggregate the KPI tile data for the web dashboard (read-only).
 
-    total_products = int((await db.execute(select(func.count(Product.id)))).scalar_one() or 0)
+    When ``store_id`` is provided every metric is scoped to that store's
+    data; otherwise metrics aggregate across all stores (backward compatible).
+    """
+
+    if store_id:
+        total_products = int(
+            (
+                await db.execute(
+                    select(func.count(func.distinct(StockBalance.product_id))).where(
+                        and_(
+                            StockBalance.store_id == store_id,
+                            StockBalance.stock_bucket == "AVAILABLE",
+                        )
+                    )
+                )
+            ).scalar_one()
+            or 0
+        )
+    else:
+        total_products = int((await db.execute(select(func.count(Product.id)))).scalar_one() or 0)
 
     stock_stmt = select(
         func.coalesce(func.sum(StockBalance.quantity), 0),
         func.max(StockBalance.updated_at),
     ).where(StockBalance.stock_bucket == "AVAILABLE")
+    if store_id:
+        stock_stmt = stock_stmt.where(StockBalance.store_id == store_id)
     total_stock_units, last_sync_at = (await db.execute(stock_stmt)).one()
     total_stock_units = int(total_stock_units or 0)
 
@@ -267,6 +312,8 @@ async def dashboard_metrics(
         .order_by(func.sum(func.abs(InventoryTransaction.quantity_delta)).desc())
         .limit(MOST_SOLD_LIMIT)
     )
+    if store_id:
+        sale_stmt = sale_stmt.where(InventoryTransaction.store_id == store_id)
     sale_rows = (await db.execute(sale_stmt)).all()
     sale_product_ids = [r.product_id for r in sale_rows]
     sale_name_map: dict[str, tuple[str, str]] = {}
@@ -293,18 +340,21 @@ async def dashboard_metrics(
         )
 
     # Low-stock alerts: products where AVAILABLE stock < low_stock_threshold.
+    # Scoped to one store: only products actually stocked in that store.
+    low_join = and_(
+        StockBalance.product_id == Product.id,
+        StockBalance.stock_bucket == "AVAILABLE",
+    )
+    if store_id:
+        low_join = and_(low_join, StockBalance.store_id == store_id)
     low_stmt = (
         select(Product, func.coalesce(func.sum(StockBalance.quantity), 0))
-        .outerjoin(
-            StockBalance,
-            and_(
-                StockBalance.product_id == Product.id,
-                StockBalance.stock_bucket == "AVAILABLE",
-            ),
-        )
+        .outerjoin(StockBalance, low_join)
         .where(Product.low_stock_threshold.is_not(None))
         .group_by(Product.id)
     )
+    if store_id:
+        low_stmt = low_stmt.where(StockBalance.product_id.is_not(None))
     low_rows = (await db.execute(low_stmt)).all()
     low_stock: list[LowStockProduct] = []
     for product, quantity in low_rows:
@@ -321,55 +371,75 @@ async def dashboard_metrics(
                     threshold=threshold,
                 )
             )
-    low_stock.sort(key=lambda r: (r.quantity - r.threshold))
+    low_stock.sort(key=lambda r: r.quantity - r.threshold)
 
     # Cross-store distribution: products present in more than one store.
-    store_count_stmt = (
-        select(StockBalance.product_id, func.count(func.distinct(StockBalance.store_id)))
-        .where(StockBalance.stock_bucket == "AVAILABLE")
-        .group_by(StockBalance.product_id)
-        .having(func.count(func.distinct(StockBalance.store_id)) > 1)
-    )
-    multi_rows = (await db.execute(store_count_stmt)).all()
-    multi_ids = [r[0] for r in multi_rows]
-
-    combined_quantity = 0
-    if multi_ids:
-        combined_stmt = (
-            select(
-                Product.id,
-                func.coalesce(func.sum(StockBalance.quantity), 0),
-            )
-            .join(StockBalance, StockBalance.product_id == Product.id)
+    # Single-store scope has no cross-store dimension by definition.
+    if store_id:
+        has_stock_stmt = (
+            select(StockBalance.store_id)
             .where(
                 and_(
-                    Product.id.in_(multi_ids),
+                    StockBalance.store_id == store_id,
                     StockBalance.stock_bucket == "AVAILABLE",
+                    StockBalance.quantity > 0,
                 )
             )
-            .group_by(Product.id)
+            .limit(1)
         )
-        for row in (await db.execute(combined_stmt)).all():
-            combined_quantity += int(row[1] or 0)
+        stores_with_stock = 1 if (await db.execute(has_stock_stmt)).first() else 0
+        cross_store = CrossStoreSummary(
+            products_in_multiple_stores=0,
+            stores_with_stock=stores_with_stock,
+            combined_quantity=total_stock_units,
+        )
+    else:
+        store_count_stmt = (
+            select(StockBalance.product_id, func.count(func.distinct(StockBalance.store_id)))
+            .where(StockBalance.stock_bucket == "AVAILABLE")
+            .group_by(StockBalance.product_id)
+            .having(func.count(func.distinct(StockBalance.store_id)) > 1)
+        )
+        multi_rows = (await db.execute(store_count_stmt)).all()
+        multi_ids = [r[0] for r in multi_rows]
 
-    store_totals_stmt = (
-        select(Store.id)
-        .outerjoin(StockBalance, StockBalance.store_id == Store.id)
-        .where(
-            and_(
-                StockBalance.stock_bucket == "AVAILABLE",
-                StockBalance.quantity > 0,
+        combined_quantity = 0
+        if multi_ids:
+            combined_stmt = (
+                select(
+                    Product.id,
+                    func.coalesce(func.sum(StockBalance.quantity), 0),
+                )
+                .join(StockBalance, StockBalance.product_id == Product.id)
+                .where(
+                    and_(
+                        Product.id.in_(multi_ids),
+                        StockBalance.stock_bucket == "AVAILABLE",
+                    )
+                )
+                .group_by(Product.id)
             )
-        )
-        .group_by(Store.id)
-    )
-    stores_with_stock = len((await db.execute(store_totals_stmt)).all())
+            for row in (await db.execute(combined_stmt)).all():
+                combined_quantity += int(row[1] or 0)
 
-    cross_store = CrossStoreSummary(
-        products_in_multiple_stores=len(multi_ids),
-        stores_with_stock=stores_with_stock,
-        combined_quantity=combined_quantity,
-    )
+        store_totals_stmt = (
+            select(Store.id)
+            .outerjoin(StockBalance, StockBalance.store_id == Store.id)
+            .where(
+                and_(
+                    StockBalance.stock_bucket == "AVAILABLE",
+                    StockBalance.quantity > 0,
+                )
+            )
+            .group_by(Store.id)
+        )
+        stores_with_stock = len((await db.execute(store_totals_stmt)).all())
+
+        cross_store = CrossStoreSummary(
+            products_in_multiple_stores=len(multi_ids),
+            stores_with_stock=stores_with_stock,
+            combined_quantity=combined_quantity,
+        )
 
     # Receipt-linked sales volume per day (SALE lines with a reference number).
     since = datetime.now(UTC).date() - timedelta(days=RECEIPT_SALES_DAYS - 1)
@@ -378,6 +448,7 @@ async def dashboard_metrics(
         d = (since + timedelta(days=offset)).isoformat()
         day_map[d] = {"receipts": 0, "items": 0}
 
+    since_start, _ = _date_window(since, since)
     receipt_stmt = (
         select(
             func.date(InventoryTransaction.occurred_at).label("sale_date"),
@@ -389,11 +460,13 @@ async def dashboard_metrics(
                 InventoryTransaction.movement_type == SALE_MOVEMENT_TYPE,
                 InventoryTransaction.reference_number.is_not(None),
                 InventoryTransaction.reference_number != "",
-                func.date(InventoryTransaction.occurred_at) >= since,
+                InventoryTransaction.occurred_at >= since_start,
             )
         )
         .group_by("sale_date", InventoryTransaction.reference_number)
     )
+    if store_id:
+        receipt_stmt = receipt_stmt.where(InventoryTransaction.store_id == store_id)
     for row in (await db.execute(receipt_stmt)).all():
         d = row.sale_date
         if isinstance(d, (datetime, date)):
@@ -478,6 +551,9 @@ def _prior_period(start: date, end: date) -> tuple[date, date]:
 async def stock_trend(
     start_date: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="End date YYYY-MM-DD"),
+    store_id: str | None = Query(
+        default=None, description="Scope trend to a single store (store tabs)"
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> StockTrendResponse:
@@ -487,6 +563,9 @@ async def stock_trend(
     Computed as: starting AVAILABLE total at range start + cumulative net
     InventoryTransaction deltas (AVAILABLE bucket) per day.  This produces a
     correct running total rather than a snapshot of rows updated on that day.
+
+    When ``store_id`` is provided both the starting total and the daily
+    deltas are scoped to that store.
     """
     start, end = _parse_date_range(start_date, end_date, default_days=7)
 
@@ -494,6 +573,8 @@ async def stock_trend(
     stock_stmt = select(
         func.coalesce(func.sum(StockBalance.quantity), 0),
     ).where(StockBalance.stock_bucket == AVAILABLE_BUCKET)
+    if store_id:
+        stock_stmt = stock_stmt.where(StockBalance.store_id == store_id)
     start_total = int((await db.execute(stock_stmt)).scalar_one() or 0)
 
     # Generate all dates in range (zero-filled).
@@ -504,6 +585,7 @@ async def stock_trend(
         current += timedelta(days=1)
 
     # Daily net deltas from AVAILABLE-bucket transactions in range.
+    window_start, window_end = _date_window(start, end)
     delta_stmt = (
         select(
             func.date(InventoryTransaction.occurred_at).label("tx_date"),
@@ -512,12 +594,14 @@ async def stock_trend(
         .where(
             and_(
                 InventoryTransaction.stock_bucket == AVAILABLE_BUCKET,
-                func.date(InventoryTransaction.occurred_at) >= start,
-                func.date(InventoryTransaction.occurred_at) <= end,
+                InventoryTransaction.occurred_at >= window_start,
+                InventoryTransaction.occurred_at < window_end,
             )
         )
         .group_by("tx_date")
     )
+    if store_id:
+        delta_stmt = delta_stmt.where(InventoryTransaction.store_id == store_id)
     for row in (await db.execute(delta_stmt)).all():
         d = row.tx_date
         if isinstance(d, (datetime, date)):
@@ -548,22 +632,45 @@ async def stock_trend(
     summary="Product count distribution by category",
 )
 async def category_distribution(
+    store_id: str | None = Query(
+        default=None, description="Scope to products stocked in a single store"
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> CategoryDistributionResponse:
     """
     Return product count per category with percentage breakdown.
-    Only includes active products.
+    Only includes active products. When ``store_id`` is provided, only
+    products with an AVAILABLE balance in that store are counted.
     """
-    stmt = (
-        select(Product.category, func.count(Product.id).label("count"))
-        .where(
-            Product.is_active.is_(True),
-            Product.category.is_not(None),
+    if store_id:
+        stmt = (
+            select(Product.category, func.count(func.distinct(Product.id)).label("count"))
+            .join(
+                StockBalance,
+                and_(
+                    StockBalance.product_id == Product.id,
+                    StockBalance.stock_bucket == AVAILABLE_BUCKET,
+                    StockBalance.store_id == store_id,
+                ),
+            )
+            .where(
+                Product.is_active.is_(True),
+                Product.category.is_not(None),
+            )
+            .group_by(Product.category)
+            .order_by(func.count(func.distinct(Product.id)).desc())
         )
-        .group_by(Product.category)
-        .order_by(func.count(Product.id).desc())
-    )
+    else:
+        stmt = (
+            select(Product.category, func.count(Product.id).label("count"))
+            .where(
+                Product.is_active.is_(True),
+                Product.category.is_not(None),
+            )
+            .group_by(Product.category)
+            .order_by(func.count(Product.id).desc())
+        )
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -586,14 +693,23 @@ async def category_distribution(
     summary="Per-category stock status: In Stock / Low Stock / Out of Stock",
 )
 async def stock_status_by_category(
+    store_id: str | None = Query(default=None, description="Scope quantities to a single store"),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> StockStatusByCategoryResponse:
     """
     Return stacked bar data per category.
     Reuses the same low-stock threshold logic as the Low-Stock Alerts tile.
+    When ``store_id`` is provided, quantities come from that store only and
+    products never stocked there are excluded.
     """
     # Get all active products with their category, threshold, and total available quantity
+    status_join = and_(
+        StockBalance.product_id == Product.id,
+        StockBalance.stock_bucket == AVAILABLE_BUCKET,
+    )
+    if store_id:
+        status_join = and_(status_join, StockBalance.store_id == store_id)
     stmt = (
         select(
             Product.id,
@@ -601,18 +717,14 @@ async def stock_status_by_category(
             Product.low_stock_threshold,
             func.coalesce(func.sum(StockBalance.quantity), 0).label("total_qty"),
         )
-        .outerjoin(
-            StockBalance,
-            and_(
-                StockBalance.product_id == Product.id,
-                StockBalance.stock_bucket == AVAILABLE_BUCKET,
-            ),
-        )
+        .outerjoin(StockBalance, status_join)
         .where(
             Product.is_active.is_(True),
         )
         .group_by(Product.id, Product.category, Product.low_stock_threshold)
     )
+    if store_id:
+        stmt = stmt.where(StockBalance.product_id.is_not(None))
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -659,37 +771,64 @@ async def stock_status_by_category(
 async def kpi_deltas(
     start_date: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="End date YYYY-MM-DD"),
+    store_id: str | None = Query(
+        default=None, description="Scope deltas to a single store (store tabs)"
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> KPIDeltasResponse:
     """
     Compute current vs prior period deltas for key metrics.
     Defaults to last 7 days vs the 7 days before that.
+    When ``store_id`` is provided the snapshot and movement metrics are
+    scoped to that store.
     """
     start, end = _parse_date_range(start_date, end_date, default_days=7)
     prior_start, prior_end = _prior_period(start, end)
 
     # Helper to compute metric for a given period
     async def _compute_metrics(period_start: date, period_end: date) -> dict[str, int | float]:
-        # Total products (catalogue-wide, not period-dependent)
-        total_products = int((await db.execute(select(func.count(Product.id)))).scalar_one() or 0)
+        # Total products: catalogue-wide, or products stocked in the store.
+        if store_id:
+            total_products = int(
+                (
+                    await db.execute(
+                        select(func.count(func.distinct(StockBalance.product_id))).where(
+                            and_(
+                                StockBalance.store_id == store_id,
+                                StockBalance.stock_bucket == AVAILABLE_BUCKET,
+                            )
+                        )
+                    )
+                ).scalar_one()
+                or 0
+            )
+        else:
+            total_products = int(
+                (await db.execute(select(func.count(Product.id)))).scalar_one() or 0
+            )
 
         # Total stock units (current snapshot, not period-dependent)
         stock_stmt = select(func.coalesce(func.sum(StockBalance.quantity), 0)).where(
             StockBalance.stock_bucket == AVAILABLE_BUCKET
         )
+        if store_id:
+            stock_stmt = stock_stmt.where(StockBalance.store_id == store_id)
         total_stock_units = int((await db.execute(stock_stmt)).scalar_one() or 0)
 
         # Most-sold units in period
+        window_start, window_end = _date_window(period_start, period_end)
         sale_stmt = select(
             func.coalesce(func.sum(func.abs(InventoryTransaction.quantity_delta)), 0)
         ).where(
             and_(
                 InventoryTransaction.movement_type == SALE_MOVEMENT_TYPE,
-                func.date(InventoryTransaction.occurred_at) >= period_start,
-                func.date(InventoryTransaction.occurred_at) <= period_end,
+                InventoryTransaction.occurred_at >= window_start,
+                InventoryTransaction.occurred_at < window_end,
             )
         )
+        if store_id:
+            sale_stmt = sale_stmt.where(InventoryTransaction.store_id == store_id)
         most_sold_units = int((await db.execute(sale_stmt)).scalar_one() or 0)
 
         # Receipt-linked sales in period
@@ -703,10 +842,12 @@ async def kpi_deltas(
                 InventoryTransaction.movement_type == SALE_MOVEMENT_TYPE,
                 InventoryTransaction.reference_number.is_not(None),
                 InventoryTransaction.reference_number != "",
-                func.date(InventoryTransaction.occurred_at) >= period_start,
-                func.date(InventoryTransaction.occurred_at) <= period_end,
+                InventoryTransaction.occurred_at >= window_start,
+                InventoryTransaction.occurred_at < window_end,
             )
         )
+        if store_id:
+            receipt_stmt = receipt_stmt.where(InventoryTransaction.store_id == store_id)
         receipt_row = (await db.execute(receipt_stmt)).one()
         receipt_count = int(receipt_row.receipts or 0)
         receipt_items = int(receipt_row.items or 0)
@@ -717,13 +858,15 @@ async def kpi_deltas(
             .where(
                 and_(
                     InventoryTransaction.movement_type == SALE_MOVEMENT_TYPE,
-                    func.date(InventoryTransaction.occurred_at) >= period_start,
-                    func.date(InventoryTransaction.occurred_at) <= period_end,
+                    InventoryTransaction.occurred_at >= window_start,
+                    InventoryTransaction.occurred_at < window_end,
                 )
             )
             .group_by(InventoryTransaction.product_id)
             .having(func.count(func.distinct(InventoryTransaction.store_id)) > 1)
         )
+        if store_id:
+            cross_stmt = cross_stmt.where(InventoryTransaction.store_id == store_id)
         cross_count = len((await db.execute(cross_stmt)).all())
 
         return {
@@ -786,16 +929,21 @@ async def most_sold_extended(
     start_date: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="End date YYYY-MM-DD"),
     limit: int = Query(default=10, ge=1, le=50, description="Number of products to return"),
+    store_id: str | None = Query(
+        default=None, description="Scope to sales in a single store (store tabs)"
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> MostSoldExtendedResponse:
     """
     Return top products by units sold in the current period with trend vs prior period.
+    When ``store_id`` is provided only sales in that store count.
     """
     start, end = _parse_date_range(start_date, end_date, default_days=7)
     prior_start, prior_end = _prior_period(start, end)
 
     # Current period sales
+    curr_start, curr_end = _date_window(start, end)
     curr_stmt = (
         select(
             InventoryTransaction.product_id,
@@ -804,14 +952,16 @@ async def most_sold_extended(
         .where(
             and_(
                 InventoryTransaction.movement_type == SALE_MOVEMENT_TYPE,
-                func.date(InventoryTransaction.occurred_at) >= start,
-                func.date(InventoryTransaction.occurred_at) <= end,
+                InventoryTransaction.occurred_at >= curr_start,
+                InventoryTransaction.occurred_at < curr_end,
             )
         )
         .group_by(InventoryTransaction.product_id)
         .order_by(func.sum(func.abs(InventoryTransaction.quantity_delta)).desc())
         .limit(limit)
     )
+    if store_id:
+        curr_stmt = curr_stmt.where(InventoryTransaction.store_id == store_id)
     curr_rows = (await db.execute(curr_stmt)).all()
     curr_product_ids = [r.product_id for r in curr_rows]
     curr_map = {r.product_id: int(r.units_sold or 0) for r in curr_rows}
@@ -819,6 +969,7 @@ async def most_sold_extended(
     # Prior period sales for the same products
     prior_map: dict[str, int] = {}
     if curr_product_ids:
+        p_start, p_end = _date_window(prior_start, prior_end)
         prior_stmt = (
             select(
                 InventoryTransaction.product_id,
@@ -828,12 +979,14 @@ async def most_sold_extended(
                 and_(
                     InventoryTransaction.movement_type == SALE_MOVEMENT_TYPE,
                     InventoryTransaction.product_id.in_(curr_product_ids),
-                    func.date(InventoryTransaction.occurred_at) >= prior_start,
-                    func.date(InventoryTransaction.occurred_at) <= prior_end,
+                    InventoryTransaction.occurred_at >= p_start,
+                    InventoryTransaction.occurred_at < p_end,
                 )
             )
             .group_by(InventoryTransaction.product_id)
         )
+        if store_id:
+            prior_stmt = prior_stmt.where(InventoryTransaction.store_id == store_id)
         for row in (await db.execute(prior_stmt)).all():
             prior_map[row.product_id] = int(row.units_sold or 0)
 
@@ -891,12 +1044,16 @@ async def most_sold_extended(
 )
 async def recent_activity(
     limit: int = Query(default=20, ge=1, le=100, description="Number of items to return"),
+    store_id: str | None = Query(
+        default=None, description="Scope feed to a single store (store tabs)"
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> RecentActivityResponse:
     """
     Return recent inventory activity with type classification for color coding.
     Types: stock_added, stock_sold, transfer_completed, receipt_linked, stock_removed, adjustment, damage, return
+    When ``store_id`` is provided only that store's movements are returned.
     """
     stmt = (
         select(InventoryTransaction, Product, Store)
@@ -905,6 +1062,8 @@ async def recent_activity(
         .order_by(InventoryTransaction.occurred_at.desc())
         .limit(limit)
     )
+    if store_id:
+        stmt = stmt.where(InventoryTransaction.store_id == store_id)
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -956,6 +1115,9 @@ async def recent_activity(
 async def operations_summary(
     start_date: str | None = Query(default=None, description="Start date YYYY-MM-DD"),
     end_date: str | None = Query(default=None, description="End date YYYY-MM-DD"),
+    store_id: str | None = Query(
+        default=None, description="Scope counts to a single store (store tabs)"
+    ),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> OperationsSummaryResponse:
@@ -964,8 +1126,10 @@ async def operations_summary(
     adjustments, returns, damage) in the selected date range, grouped by
     movement type.  Read-only aggregation over InventoryTransaction; units
     are the absolute quantity deltas so inflows and outflows both count.
+    When ``store_id`` is provided only that store's operations count.
     """
     start, end = _parse_date_range(start_date, end_date, default_days=7)
+    window_start, window_end = _date_window(start, end)
 
     stmt = (
         select(
@@ -977,13 +1141,15 @@ async def operations_summary(
         )
         .where(
             and_(
-                func.date(InventoryTransaction.occurred_at) >= start,
-                func.date(InventoryTransaction.occurred_at) <= end,
+                InventoryTransaction.occurred_at >= window_start,
+                InventoryTransaction.occurred_at < window_end,
             )
         )
         .group_by(InventoryTransaction.movement_type)
         .order_by(func.count(InventoryTransaction.transaction_id).desc())
     )
+    if store_id:
+        stmt = stmt.where(InventoryTransaction.store_id == store_id)
     rows = (await db.execute(stmt)).all()
 
     by_type: list[MovementTypeSummary] = []

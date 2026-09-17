@@ -2,6 +2,48 @@ import { invoke } from '@tauri-apps/api/core';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
 import { isTauriEnvironment } from './tauriStoreService';
 
+export interface BatchProductInput {
+  sku: string;
+  name: string;
+  brand?: string;
+  model?: string;
+  category: string;
+  unit?: string;
+  barcode?: string;
+  alternate_names?: string;
+}
+
+export interface BatchProductResult {
+  row_index: number;
+  success: boolean;
+  error: string | null;
+  product_id: string | null;
+  sku: string | null;
+}
+
+/**
+ * Kick off a background sync after a local product mutation.
+ *
+ * Product changes are written to the local outbox and only reach the server
+ * when a sync runs.  Mutating products must therefore nudge the sync engine —
+ * the same pattern used by `tauriTransactionService` / `tauriTransferService`.
+ * `triggerSync` is re-entrant-safe: overlapping calls collapse into the run
+ * that is already in flight.
+ */
+function _triggerAutoSync(): void {
+  const envBaseUrl =
+    typeof import.meta !== 'undefined'
+      ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+      : undefined;
+  const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+  import('./tauriSyncService')
+    .then(({ triggerSync }) => {
+      void triggerSync({ apiBaseUrl }).catch(() => undefined);
+    })
+    .catch(() => undefined);
+}
+
 async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T | null> {
   try {
     const { getAccessToken } = await import('./tauriAuthService');
@@ -46,7 +88,7 @@ export async function getProducts(): Promise<Product[]> {
       return await invoke<Product[]>('get_products');
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] getProducts failed:', err);
+      console.error('[ProductService] getProducts failed:', err);
       throw new Error(`Failed to load products: ${String(err)}`);
     }
   }
@@ -54,21 +96,19 @@ export async function getProducts(): Promise<Product[]> {
   const apiProducts = await _fetchApi<Product[]>('/products');
   if (apiProducts) return apiProducts;
 
-  throw new Error(
-    '[TauriProductService] getProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[ProductService] getProducts() requires the desktop app runtime.');
 }
 
-export async function searchProducts(query: string): Promise<Product[]> {
+export async function searchProducts(query: string, storeId?: string | null): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product[]>('search_products_fts5', { query });
+      return await invoke<Product[]>('search_products_fts5', { query, storeId });
     } catch {
       try {
-        return await invoke<Product[]>('search_products', { query });
+        return await invoke<Product[]>('search_products', { query, storeId });
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error('[TauriProductService] searchProducts failed:', err);
+        console.error('[ProductService] searchProducts failed:', err);
         throw new Error(`Failed to search products: ${String(err)}`);
       }
     }
@@ -77,25 +117,26 @@ export async function searchProducts(query: string): Promise<Product[]> {
   const apiResults = await _fetchApi<Product[]>(`/products?search=${encodeURIComponent(query)}`);
   if (apiResults) return apiResults;
 
-  throw new Error(
-    '[TauriProductService] searchProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[ProductService] searchProducts() requires the desktop app runtime.');
 }
 
-export async function searchProductsFts5(query: string): Promise<Product[]> {
+export async function searchProductsFts5(
+  query: string,
+  storeId?: string | null,
+): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
-      const results = await invoke<Product[]>('search_products_fts5', { query });
+      const results = await invoke<Product[]>('search_products_fts5', { query, storeId });
       if (results && results.length > 0) {
         return results;
       }
-      return await invoke<Product[]>('search_products', { query });
+      return await invoke<Product[]>('search_products', { query, storeId });
     } catch {
       try {
-        return await invoke<Product[]>('search_products', { query });
+        return await invoke<Product[]>('search_products', { query, storeId });
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error('[TauriProductService] searchProductsFts5 failed:', err);
+        console.error('[ProductService] searchProductsFts5 failed:', err);
         throw new Error(`Failed to search products (FTS5): ${String(err)}`);
       }
     }
@@ -104,9 +145,7 @@ export async function searchProductsFts5(query: string): Promise<Product[]> {
   const apiResults = await _fetchApi<Product[]>(`/products?search=${encodeURIComponent(query)}`);
   if (apiResults) return apiResults;
 
-  throw new Error(
-    '[TauriProductService] searchProductsFts5() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[ProductService] searchProductsFts5() requires the desktop app runtime.');
 }
 
 /**
@@ -126,7 +165,7 @@ export async function getProductsByStore(storeId: string): Promise<Product[]> {
       return scoped.filter((p) => p.is_active);
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] getProductsByStore failed:', err);
+      console.error('[ProductService] getProductsByStore failed:', err);
     }
   }
 
@@ -140,10 +179,12 @@ export async function getProductsByStore(storeId: string): Promise<Product[]> {
 export async function createProduct(input: CreateProductInput): Promise<Product> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product>('create_product', { input });
+      const product = await invoke<Product>('create_product', { input });
+      _triggerAutoSync();
+      return product;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] createProduct failed:', err);
+      console.error('[ProductService] createProduct failed:', err);
       throw new Error(String(err));
     }
   }
@@ -154,18 +195,18 @@ export async function createProduct(input: CreateProductInput): Promise<Product>
   });
   if (created) return created;
 
-  throw new Error(
-    '[TauriProductService] createProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[ProductService] createProduct() requires the desktop app runtime.');
 }
 
 export async function updateProduct(input: UpdateProductInput): Promise<Product> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product>('update_product', { input });
+      const product = await invoke<Product>('update_product', { input });
+      _triggerAutoSync();
+      return product;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] updateProduct failed:', err);
+      console.error('[ProductService] updateProduct failed:', err);
       throw new Error(String(err));
     }
   }
@@ -176,29 +217,52 @@ export async function updateProduct(input: UpdateProductInput): Promise<Product>
   });
   if (updated) return updated;
 
-  throw new Error(
-    '[TauriProductService] updateProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[ProductService] updateProduct() requires the desktop app runtime.');
 }
 
 export async function toggleProductActive(id: string, is_active: boolean): Promise<Product> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product>('toggle_product_active', { id, isActive: is_active, is_active });
+      const product = await invoke<Product>('toggle_product_active', {
+        id,
+        isActive: is_active,
+        is_active,
+      });
+      _triggerAutoSync();
+      return product;
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[TauriProductService] toggleProductActive failed:', err);
+      console.error('[ProductService] toggleProductActive failed:', err);
       throw new Error(String(err));
     }
   }
 
-  const toggled = await _fetchApi<Product>(`/products/${id}`, {
+  // NOTE: the dedicated toggle-active endpoint is required here. PATCH
+  // /products/{id} only accepts product fields — sending { is_active } to
+  // it is silently ignored (200 OK, nothing changes).
+  const toggled = await _fetchApi<Product>(`/products/${id}/toggle-active`, {
     method: 'PATCH',
     body: JSON.stringify({ is_active }),
   });
   if (toggled) return toggled;
 
-  throw new Error(
-    '[TauriProductService] toggleProductActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-  );
+  throw new Error('[ProductService] toggleProductActive() requires the desktop app runtime.');
+}
+
+export async function createProductsBatch(
+  inputs: BatchProductInput[],
+): Promise<BatchProductResult[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<BatchProductResult[]>('create_products_batch', {
+        inputs,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[ProductService] createProductsBatch failed:', err);
+      throw new Error(String(err));
+    }
+  }
+
+  throw new Error('[ProductService] createProductsBatch() requires the desktop app runtime.');
 }

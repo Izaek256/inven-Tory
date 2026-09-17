@@ -12,6 +12,8 @@ class MovementType(str, Enum):
     SALE = "SALE"
     RETURN = "RETURN"
     TRANSFER = "TRANSFER"
+    TRANSFER_IN = "TRANSFER_IN"
+    TRANSFER_OUT = "TRANSFER_OUT"
     ADJUSTMENT = "ADJUSTMENT"
     DAMAGE = "DAMAGE"
     COUNT = "COUNT"

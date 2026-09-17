@@ -110,24 +110,24 @@ export function DashboardTile({
 }: DashboardTileProps): React.ReactElement {
   return (
     <div
-      className={`web-dashboard-tile web-anim-card ${variant === 'primary' ? 'web-dashboard-tile--primary' : 'web-dashboard-tile--secondary'}`}
+      className={`web-dashboard-tile dash-tile web-anim-card flex flex-col h-full ${variant === 'primary' ? 'web-dashboard-tile--primary' : 'web-dashboard-tile--secondary'}`}
       data-testid={testId}
       style={animDelay ? { animationDelay: `${animDelay}ms` } : undefined}
     >
-      <div className="web-dashboard-tile__head">
+      <div className="web-dashboard-tile__head dash-tile__head">
         {Icon && (
           <span
-            className="web-dashboard-tile__icon"
+            className="web-dashboard-tile__icon dash-tile__icon"
             style={{ backgroundColor: accent }}
             aria-hidden="true"
           >
             <Icon size={16} color="#fff" />
           </span>
         )}
-        <span className="web-dashboard-tile__title">{title}</span>
+        <span className="web-dashboard-tile__title dash-tile__label">{title}</span>
       </div>
       <div
-        className="web-dashboard-tile__value"
+        className="web-dashboard-tile__value dash-tile__value"
         data-testid={testId ? `${testId}-value` : undefined}
       >
         {loading ? (
@@ -139,10 +139,17 @@ export function DashboardTile({
         )}
       </div>
       {delta && (
-        <DeltaIndicator label={delta.label} positive={delta.positive} neutral={delta.neutral} />
+        <span className="dash-tile__delta-wrapper">
+          <DeltaIndicator label={delta.label} positive={delta.positive} neutral={delta.neutral} />
+        </span>
       )}
       {details && <div className="web-dashboard-tile__details">{details}</div>}
-      {footer && <div className="web-dashboard-tile__footer">{footer}</div>}
+      {footer && (
+        <div className="web-dashboard-tile__footer dash-tile__footer mt-auto pt-3">
+          <hr className="border-gray-100 mb-2" />
+          <span className="text-xs text-gray-400">{footer}</span>
+        </div>
+      )}
     </div>
   );
 }

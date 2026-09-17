@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.device import Device
@@ -175,6 +176,59 @@ def _make_rejected_receipt(transaction_id: str, reason: str) -> SyncReceipt:
         received_at=now,
         processed_at=now,
     )
+
+
+def _is_inventory_transactions_pkey_collision(exc: Exception) -> bool:
+    """
+    True when ``exc`` is a duplicate-key error on ``inventory_transactions``'s
+    primary key (``transaction_id``).
+
+    transaction_id is the SYNC-003 idempotency key. A PK collision therefore
+    means the ledger ALREADY holds this transaction — it was accepted by an
+    earlier (possibly concurrent) submission. ``ingest_batch`` must treat that
+    as the authoritative accepted signal instead of surfacing a retryable
+    "Unexpected error", otherwise the desktop keeps re-pushing an acknowledged
+    event forever (outbox stuck in RETRYABLE_ERROR).
+    """
+    return isinstance(exc, IntegrityError) and "inventory_transactions_pkey" in str(exc)
+
+
+async def _ensure_accepted_receipt(
+    transaction_id: str,
+    db: AsyncSession,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> SyncReceipt:
+    """
+    Return (and persist) an ACCEPTED SyncReceipt for ``transaction_id``.
+
+    Used when a duplicate submission collides on the inventory_transactions
+    primary key: the ledger row was already committed, so the event is durably
+    accepted. Any stale rejected receipt for the same id is flipped to
+    accepted to match the append-only guarantee.
+    """
+    now = _now_utc()
+
+    async def _persist(session: AsyncSession) -> SyncReceipt:
+        existing = await session.get(SyncReceipt, transaction_id)
+        if existing is not None:
+            existing.accepted = True
+            existing.rejection_reason = None
+            existing.processed_at = now
+            return existing
+        receipt = _make_accepted_receipt(transaction_id)
+        session.add(receipt)
+        return receipt
+
+    if session_factory is not None:
+        async with session_factory() as s:
+            receipt = await _persist(s)
+            await s.flush()
+            await s.commit()
+        return receipt
+
+    receipt = await _persist(db)
+    await db.flush()
+    return receipt
 
 
 # ---------------------------------------------------------------------------
@@ -474,27 +528,65 @@ async def _ingest_transaction_impl(
         await _rb()
         raise
     if not store_exists:
-        target_code = payload.store_id[:40].upper()
+        # Derive code from suffix after STORE- prefix to stay consistent with
+        # manual store creation (id STORE-{CODE}, code {CODE}).
+        raw_id = payload.store_id.strip()
+        suffix = raw_id[6:] if raw_id.upper().startswith("STORE-") else raw_id
+        target_code = suffix[:20].upper().strip() or raw_id[:20].upper()
         with db.no_autoflush:
             existing_code_owner = await db.scalar(
                 select(Store.id).where(Store.code == target_code).limit(1)
             )
         if existing_code_owner:
+            # A store with this code already exists — check if it's an
+            # auto-provisioned placeholder that we can replace.
+            existing_store = await db.get(Store, existing_code_owner)
+            if existing_store and existing_store.name.startswith("Auto Store ("):
+                # Replace the placeholder with a new store using the correct
+                # deterministic ID. Delete the old placeholder first to avoid
+                # PK conflict, then insert the new one.
+                await db.delete(existing_store)
+                await db.flush()
+                existing_code_owner = None
+            else:
+                # Real store exists with this code — create alias store with
+                # UUID-suffixed code to satisfy FK without duplicating the real store
+                pass  # Fall through to alias creation
+        else:
+            existing_code_owner = None
+        if not existing_code_owner:
+            # No existing store with this code (or replaced placeholder) —
+            # create new store with derived code
+            auto_store = Store(
+                id=payload.store_id,
+                code=target_code,
+                name=f"Auto Store ({suffix[:30] or payload.store_id[:30]})",
+                is_active=True,
+            )
+            db.add(auto_store)
+            try:
+                await db.flush()
+            except Exception:
+                await _rb()
+                raise
+        else:
+            # Existing real store with this code — create alias store with
+            # UUID-suffixed code to satisfy FK without duplicating the real store
             import uuid
 
-            target_code = f"{target_code[:30]}-{uuid.uuid4().hex[:8]}".upper()
-        auto_store = Store(
-            id=payload.store_id,
-            code=target_code,
-            name=f"Auto Store ({payload.store_id[:30]})",
-            is_active=True,
-        )
-        db.add(auto_store)
-        try:
-            await db.flush()
-        except Exception:
-            await _rb()
-            raise
+            alias_code = f"{target_code[:12]}-{uuid.uuid4().hex[:8]}".upper()
+            auto_store = Store(
+                id=payload.store_id,
+                code=alias_code,
+                name=f"Auto Store ({suffix[:30] or payload.store_id[:30]})",
+                is_active=True,
+            )
+            db.add(auto_store)
+            try:
+                await db.flush()
+            except Exception:
+                await _rb()
+                raise
 
     existing_prod = None
     try:
@@ -715,6 +807,23 @@ async def ingest_batch(
                     receipt = await ingest_transaction(payload, item_session)
                     await item_session.commit()
             except Exception as exc:  # noqa: BLE001
+                if _is_inventory_transactions_pkey_collision(exc):
+                    # Already durably in the ledger (earlier/concurrent
+                    # submission) — reply accepted so the client stops
+                    # re-pushing an acknowledged event.
+                    try:
+                        receipt = await _ensure_accepted_receipt(
+                            payload.transaction_id, db, session_factory
+                        )
+                    except Exception as receipt_error:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to persist accepted receipt for tx_id=%s: %s",
+                            payload.transaction_id,
+                            receipt_error,
+                        )
+                        receipt = _make_accepted_receipt(payload.transaction_id)
+                    receipts_by_index[original_idx] = receipt
+                    continue
                 rejection_text = f"Unexpected error: {exc!s}"
                 try:
                     async with session_factory() as receipt_session:
@@ -755,6 +864,23 @@ async def ingest_batch(
                     receipt = await ingest_transaction(payload, db)
                 receipts_by_index[original_idx] = receipt
             except Exception as exc:  # noqa: BLE001
+                if _is_inventory_transactions_pkey_collision(exc):
+                    # Already durably in the ledger (earlier/concurrent
+                    # submission) — reply accepted so the client stops
+                    # re-pushing an acknowledged event.
+                    await _rb_sess(db)
+                    try:
+                        receipt = await _ensure_accepted_receipt(payload.transaction_id, db)
+                    except Exception as receipt_error:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to persist accepted receipt for tx_id=%s: %s",
+                            payload.transaction_id,
+                            receipt_error,
+                        )
+                        await _rb_sess(db)
+                        receipt = _make_accepted_receipt(payload.transaction_id)
+                    receipts_by_index[original_idx] = receipt
+                    continue
                 now = _now_utc()
                 rejection_text = f"Unexpected error: {exc!s}"
                 await _rb_sess(db)
@@ -899,23 +1025,20 @@ async def _upsert_stock_balance(
     Atomically increment (or create) the stock_balances row for
     (store_id, product_id, stock_bucket).
 
-    Uses a SELECT-then-UPDATE/INSERT approach rather than raw SQL UPSERT so the
-    code works with both PostgreSQL (production) and SQLite (test fixtures).
-    Both paths run within the caller's transaction, so there is no race window
-    in a properly serialised transaction.
+    Uses a portable native UPSERT so PostgreSQL and SQLite share one code
+    path. PostgreSQL uses ``INSERT ... ON CONFLICT ... DO UPDATE``; SQLite
+    (used by test fixtures) uses ``INSERT ... ON CONFLICT ... DO UPDATE``
+    too, which SQLAlchemy supports via ``sqlite.insert``. Both backends
+    implement the same conflict-on-unique-key semantics, so there is no
+    SELECT-then-UPDATE race window and no separate round-trip per event.
     """
-    with db.no_autoflush:
-        stmt = select(StockBalance).where(
-            StockBalance.store_id == store_id,
-            StockBalance.product_id == product_id,
-            StockBalance.stock_bucket == stock_bucket,
-        )
-        result = await db.execute(stmt)
-    balance: StockBalance | None = result.scalars().first()
-
     now = _now_utc()
-    if balance is None:
-        balance = StockBalance(
+
+    # Pick the dialect-specific insert builder that supports on_conflict.
+    if db.bind and db.bind.dialect.name == "sqlite":
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(StockBalance).values(
             id=str(uuid.uuid4()),
             store_id=store_id,
             product_id=product_id,
@@ -923,7 +1046,30 @@ async def _upsert_stock_balance(
             quantity=delta,
             updated_at=now,
         )
-        db.add(balance)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["store_id", "product_id", "stock_bucket"],
+            set_={
+                "quantity": StockBalance.quantity + delta,
+                "updated_at": now,
+            },
+        )
     else:
-        balance.quantity += delta
-        balance.updated_at = now
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(StockBalance).values(
+            id=str(uuid.uuid4()),
+            store_id=store_id,
+            product_id=product_id,
+            stock_bucket=stock_bucket,
+            quantity=delta,
+            updated_at=now,
+        )
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_stock_balances_store_product_bucket",
+            set_={
+                "quantity": StockBalance.quantity + delta,
+                "updated_at": now,
+            },
+        )
+
+    await db.execute(stmt)

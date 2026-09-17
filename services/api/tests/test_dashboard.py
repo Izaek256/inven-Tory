@@ -609,3 +609,122 @@ def test_freshness_none_is_very_stale() -> None:
     from app.api.v1.stores import compute_freshness
 
     assert compute_freshness(None) == "VERY_STALE"
+
+
+# ---------------------------------------------------------------------------
+# Store scoping — ?store_id= on dashboard endpoints (store tabs)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dashboard_metrics_store_scoping(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """?store_id= scopes metrics to one store; unscoped aggregates both."""
+    store_a = await _seed_store(db_session, name="Store A")
+    store_b = await _seed_store(db_session, name="Store B")
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store_a.id, user.id)
+    product_a = await _seed_product(db_session, name="Widget A", sku="SCOPE-A")
+    product_b = await _seed_product(db_session, name="Widget B", sku="SCOPE-B")
+    await _seed_balance(db_session, store_a.id, product_a.id, quantity=50)
+    await _seed_balance(db_session, store_b.id, product_b.id, quantity=7)
+    await _seed_transaction(
+        db_session,
+        store_a.id,
+        product_a.id,
+        str(user.id),
+        device.id,
+        quantity_delta=-3,
+        movement_type="SALE",
+    )
+    await _seed_transaction(
+        db_session,
+        store_b.id,
+        product_b.id,
+        str(user.id),
+        device.id,
+        quantity_delta=-9,
+        movement_type="SALE",
+    )
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+
+    scoped = client.get(
+        "/api/v1/dashboard/metrics", params={"store_id": store_a.id}, headers=headers
+    )
+    assert scoped.status_code == 200
+    scoped_data = scoped.json()
+    assert scoped_data["total_products"] == 1
+    assert scoped_data["total_stock_units"] == 50
+    assert [m["product_id"] for m in scoped_data["most_sold"]] == [product_a.id]
+    assert scoped_data["cross_store"]["products_in_multiple_stores"] == 0
+
+    unscoped = client.get("/api/v1/dashboard/metrics", headers=headers)
+    assert unscoped.status_code == 200
+    unscoped_data = unscoped.json()
+    assert unscoped_data["total_stock_units"] == 57
+    assert {m["product_id"] for m in unscoped_data["most_sold"]} == {
+        product_a.id,
+        product_b.id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_dashboard_timeseries_and_activity_store_scoping(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """stock-trend, most-sold, recent-activity and operations-summary honor ?store_id=."""
+    store_a = await _seed_store(db_session, name="Store A")
+    store_b = await _seed_store(db_session, name="Store B")
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store_a.id, user.id)
+    product = await _seed_product(db_session, name="Scoped Gadget", sku="SCOPE-G")
+    await _seed_balance(db_session, store_a.id, product.id, quantity=20)
+    await _seed_transaction(
+        db_session,
+        store_a.id,
+        product.id,
+        str(user.id),
+        device.id,
+        quantity_delta=-4,
+        movement_type="SALE",
+    )
+    await _seed_transaction(
+        db_session,
+        store_b.id,
+        product.id,
+        str(user.id),
+        device.id,
+        quantity_delta=-6,
+        movement_type="SALE",
+    )
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+    params = {"store_id": store_a.id}
+
+    most_sold = client.get("/api/v1/dashboard/most-sold-extended", params=params, headers=headers)
+    assert most_sold.status_code == 200
+    rows = most_sold.json()["data"]
+    assert [r["product_id"] for r in rows] == [product.id]
+    assert rows[0]["units_sold"] == 4
+
+    activity = client.get(
+        "/api/v1/dashboard/recent-activity", params={**params, "limit": 10}, headers=headers
+    )
+    assert activity.status_code == 200
+    items = activity.json()["data"]
+    assert len(items) == 1
+    assert items[0]["store_id"] == store_a.id
+
+    ops = client.get("/api/v1/dashboard/operations-summary", params=params, headers=headers)
+    assert ops.status_code == 200
+    assert ops.json()["total_transactions"] == 1
+
+    trend = client.get("/api/v1/dashboard/stock-trend", params=params, headers=headers)
+    assert trend.status_code == 200
+    assert trend.json()["data"], "scoped trend should return daily points"

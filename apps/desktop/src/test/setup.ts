@@ -633,10 +633,15 @@ vi.mock('@tauri-apps/api/core', () => {
         return Promise.resolve<OutboxEventRow[]>([]);
 
       case 'update_outbox_event_status':
+      case 'update_outbox_event_statuses':
         return Promise.resolve(undefined);
 
       case 'update_transaction_sync_status':
+      case 'update_transaction_sync_statuses':
         return Promise.resolve(undefined);
+
+      case 'apply_sync_pull':
+        return Promise.resolve({ products: 0, stores: 0, stock_balances: 0 });
 
       case 'upsert_product_from_server':
       case 'upsert_store_from_server':
@@ -668,7 +673,6 @@ vi.mock('@tauri-apps/api/core', () => {
 
       // Default fallback for unhandled commands in Tauri environment
       default:
-        // eslint-disable-next-line no-console
         console.warn(`[Tauri Mock] Unhandled invoke: ${cmd}`, args);
         return Promise.reject(new Error(`Tauri command '${cmd}' not mocked in test setup`));
     }

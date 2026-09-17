@@ -11,7 +11,7 @@ Section 17.2 push payload; SYNC-003, SYNC-004, SYNC-012.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, String, Text
+from sqlalchemy import Boolean, DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -43,8 +43,13 @@ class SyncReceipt(Base):
 
     # Timestamps
     received_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_utc_now, nullable=False
+        DateTime(timezone=True), default=_utc_now, nullable=False, index=True
     )
     processed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, nullable=False
+    )
+
+    __table_args__ = (
+        # Perf: /sync/status counts receipts received in the last 24 h.
+        Index("ix_sync_receipts_received_accepted", "received_at", "accepted"),
     )

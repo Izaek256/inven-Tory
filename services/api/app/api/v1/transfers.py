@@ -12,7 +12,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db
@@ -85,8 +85,8 @@ async def list_transfers(
     result = await db.execute(stmt)
     transfers = result.scalars().all()
 
-    # Get total count
-    count_stmt = select(Transfer)
+    # Get total count (DB-side COUNT — replaces fetch-all+len)
+    count_stmt = select(func.count()).select_from(Transfer)
     if store_id is not None:
         count_stmt = count_stmt.where(
             (Transfer.source_store_id == store_id) | (Transfer.destination_store_id == store_id)
@@ -95,7 +95,7 @@ async def list_transfers(
         count_stmt = count_stmt.where(Transfer.status == status_filter)
 
     count_result = await db.execute(count_stmt)
-    total = len(count_result.scalars().all())
+    total = int(count_result.scalar_one())
 
     return TransfersResponse(
         transfers=[

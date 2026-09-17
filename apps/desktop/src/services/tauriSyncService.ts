@@ -42,6 +42,7 @@ import { Product } from '../types/product';
 import {
   ClientSyncState,
   OutboxEventRow,
+  ProductSnapshot,
   PullResponse,
   PushResponse,
   SyncOutcome,
@@ -62,12 +63,23 @@ export interface SyncConfig {
    * skipped but pending transactions are NOT discarded (offline rule).
    */
   accessToken?: string;
-  /** Maximum number of outbox events per push request (default: 100). */
+  /** Maximum number of outbox events per push request (default: 500). */
   batchSize?: number;
   /** Force sync even if last attempt was recent or if events are in retry backoff. */
   force?: boolean;
   /** AbortSignal for cancellation. */
   signal?: AbortSignal;
+  /** Sync mode: incremental (default) or restore (full restore with priorities) */
+  mode?: 'incremental' | 'restore';
+  /** Progress callback for restore mode */
+  onProgress?: (progress: {
+    phase: string;
+    currentStep: string;
+    progressPercent: number;
+    criticalComplete: boolean;
+    canUseApp: boolean;
+    totalComplete: boolean;
+  }) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -117,47 +129,35 @@ async function _getPendingOutboxEvents(limit: number, force?: boolean): Promise<
   return [];
 }
 
-async function _updateOutboxEventStatus(
-  eventId: string,
-  targetStatus: string,
-  errorMsg?: string | null,
+/** Batch status transition — one IPC call per push batch instead of per event. */
+async function _updateOutboxEventStatuses(
+  updates: Array<{ event_id: string; target_status: string; error_msg?: string | null }>,
 ): Promise<void> {
   if (isTauriEnvironment()) {
     try {
-      await invoke<void>('update_outbox_event_status', {
-        eventId,
-        event_id: eventId,
-        targetStatus,
-        target_status: targetStatus,
-        errorMsg: errorMsg ?? null,
-        error_msg: errorMsg ?? null,
-      });
+      await invoke<void>('update_outbox_event_statuses', { updates });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[SyncService] Failed to invoke update_outbox_event_status:', err);
+      console.error('[SyncService] Failed to invoke update_outbox_event_statuses:', err);
       throw err;
     }
   }
 }
 
-async function _updateTransactionSyncStatus(
-  transactionId: string,
-  syncStatus: string,
-  serverAcceptedAt?: string | null,
+/** Batch transaction sync-status update — one IPC call per push batch. */
+async function _updateTransactionSyncStatuses(
+  updates: Array<{
+    transaction_id: string;
+    sync_status: string;
+    server_accepted_at?: string | null;
+  }>,
 ): Promise<void> {
   if (isTauriEnvironment()) {
     try {
-      await invoke<void>('update_transaction_sync_status', {
-        transactionId,
-        transaction_id: transactionId,
-        syncStatus,
-        sync_status: syncStatus,
-        serverAcceptedAt: serverAcceptedAt ?? null,
-        server_accepted_at: serverAcceptedAt ?? null,
-      });
+      await invoke<void>('update_transaction_sync_statuses', { updates });
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[SyncService] Failed to invoke update_transaction_sync_status:', err);
+      console.error('[SyncService] Failed to invoke update_transaction_sync_statuses:', err);
       throw err;
     }
   }
@@ -229,6 +229,22 @@ export async function getSyncStatus(): Promise<ClientSyncState> {
  * Build the HTTP push payload from a raw outbox event row.
  * Parses the JSON payload blob stored in SQLite.
  */
+interface ProductUpdatePayload {
+  product_id: string;
+  sku: string;
+  name: string;
+  brand: string | null;
+  model: string | null;
+  category: string;
+  unit: string;
+  barcode: string | null;
+  alternate_names: string | null;
+  serial_tracking_enabled: boolean;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 function _buildPushItem(row: OutboxEventRow): TransactionPushItem | null {
   try {
     const p = JSON.parse(row.payload) as Record<string, unknown>;
@@ -267,6 +283,46 @@ function _buildPushItem(row: OutboxEventRow): TransactionPushItem | null {
     };
   } catch {
     return null;
+  }
+}
+
+function _buildProductUpdate(row: OutboxEventRow): ProductSnapshot | null {
+  try {
+    const p = JSON.parse(row.payload) as ProductUpdatePayload;
+    return {
+      id: p.product_id,
+      sku: p.sku,
+      name: p.name,
+      brand: p.brand ?? null,
+      model: p.model ?? null,
+      category: p.category,
+      unit: p.unit,
+      barcode: p.barcode ?? null,
+      alternate_names: p.alternate_names ?? null,
+      serial_tracking_enabled: p.serial_tracking_enabled,
+      is_active: p.is_active,
+      updated_at: p.updated_at || new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Load the local product catalogue (desktop runtime only).
+ *
+ * Returns an empty array outside Tauri or when the IPC call fails, so callers
+ * can treat "nothing to push" and "cannot read" the same way.
+ */
+async function _loadLocalProducts(): Promise<Product[]> {
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+  try {
+    const prods = await invoke<Product[]>('get_products');
+    return Array.isArray(prods) ? prods : [];
+  } catch {
+    return [];
   }
 }
 
@@ -324,10 +380,12 @@ async function _httpPush(
   apiBaseUrl: string,
   accessToken: string,
   items: TransactionPushItem[],
-  products?: Product[],
+  products?: Array<Product | ProductSnapshot>,
   signal?: AbortSignal,
 ): Promise<PushResponse> {
-  const payload: { events: TransactionPushItem[]; products?: Product[] } = { events: items };
+  const payload: { events: TransactionPushItem[]; products?: Array<Product | ProductSnapshot> } = {
+    events: items,
+  };
   if (products && products.length > 0) {
     payload.products = products;
   }
@@ -353,13 +411,31 @@ async function _httpPush(
 
 /**
  * POST to /api/v1/sync/pull and return the response.
+ *
+ * Uses delta sync (`since`) and page slicing (`limit`/`offset`) so the wire
+ * payload stays proportional to the change set.  `since` should be the
+ * server_time returned by the previous pull.
  */
 async function _httpPull(
   apiBaseUrl: string,
   accessToken: string,
-  signal?: AbortSignal,
+  signal: AbortSignal | undefined,
+  options: { since?: string | null; limit?: number; offset?: number } = {},
 ): Promise<PullResponse> {
-  const response = await fetch(`${apiBaseUrl}/sync/pull`, {
+  const params = new URLSearchParams();
+  if (options.since) {
+    params.set('since', options.since);
+  }
+  if (options.limit && options.limit > 0) {
+    params.set('limit', String(options.limit));
+  }
+  if (options.offset && options.offset > 0) {
+    params.set('offset', String(options.offset));
+  }
+  const qs = params.toString();
+  const url = `${apiBaseUrl}/sync/pull${qs ? `?${qs}` : ''}`;
+
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -376,6 +452,299 @@ async function _httpPull(
   }
 
   return response.json() as Promise<PullResponse>;
+}
+
+/** Pull page size — server slices the combined stream at the DB level. */
+const PULL_PAGE_SIZE = 5000;
+
+async function _httpPullAll(
+  apiBaseUrl: string,
+  accessToken: string,
+  signal: AbortSignal | undefined,
+): Promise<PullResponse> {
+  const lastSync = await _getLastSyncTimestamp();
+  const since = lastSync || undefined;
+
+  let offset = 0;
+  let hasMore = true;
+  let merged: PullResponse | null = null;
+
+  while (hasMore) {
+    const page = await _httpPull(apiBaseUrl, accessToken, signal, {
+      since,
+      limit: PULL_PAGE_SIZE,
+      offset,
+    });
+    if (!merged) {
+      merged = page;
+    } else {
+      merged.products.push(...page.products);
+      merged.stores.push(...page.stores);
+      if (!merged.stock_balances) {
+        merged.stock_balances = [];
+      }
+      merged.stock_balances.push(...(page.stock_balances ?? []));
+    }
+    if (page.pagination && page.pagination.has_more) {
+      offset = page.pagination.next_offset;
+      hasMore = true;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return (
+    merged ?? {
+      products: [],
+      stores: [],
+      stock_balances: [],
+      server_time: new Date().toISOString(),
+    }
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Restore sync runner (for server restore functionality)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trigger a prioritized restore sync for server data restoration.
+ *
+ * This implements the "Last synced to server, first restored to app" principle:
+ * Phase 1 (Critical): Stores, users, products, stock balances - must complete before app usage
+ * Phase 2 (Important): Recent transactions, active day books - background sync
+ * Phase 3 (Background): Historical data - lowest priority
+ */
+async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> {
+  if (_syncInProgress) {
+    return getSyncStatus();
+  }
+
+  _syncInProgress = true;
+
+  try {
+    // Resolve access token for restore
+    let resolvedToken = config.accessToken;
+    if (!resolvedToken) {
+      const { getAccessToken } = await import('./tauriAuthService');
+      resolvedToken = (await getAccessToken()) ?? undefined;
+    }
+
+    if (!resolvedToken) {
+      _mockLastOutcome = 'offline';
+      _syncInProgress = false;
+      return getSyncStatus();
+    }
+
+    // Phase 1: Critical data restore
+    if (config.onProgress) {
+      config.onProgress({
+        phase: 'critical_restore',
+        currentStep: 'Validating server credentials...',
+        progressPercent: 5,
+        criticalComplete: false,
+        canUseApp: false,
+        totalComplete: false,
+      });
+    }
+
+    // Fetch critical data from server
+    const criticalResponse = await fetch(`${config.apiBaseUrl}/restore/critical`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${resolvedToken}`,
+      },
+      signal: config.signal,
+    });
+
+    if (!criticalResponse.ok) {
+      throw new Error(`Critical restore failed: ${criticalResponse.status}`);
+    }
+
+    const criticalData = await criticalResponse.json();
+
+    if (config.onProgress) {
+      config.onProgress({
+        phase: 'critical_restore',
+        currentStep: 'Restoring stores and users...',
+        progressPercent: 20,
+        criticalComplete: false,
+        canUseApp: false,
+        totalComplete: false,
+      });
+    }
+
+    // Apply critical data to local database
+    if (isTauriEnvironment()) {
+      try {
+        await invoke('apply_restore_critical', {
+          stores: criticalData.stores || [],
+          users: criticalData.users || [],
+          products: criticalData.products || [],
+          stock_balances: criticalData.stock_balances || [],
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[SyncService] Failed to apply critical restore:', err);
+        throw new Error('Failed to restore critical data');
+      }
+    }
+
+    if (config.onProgress) {
+      config.onProgress({
+        phase: 'critical_restore',
+        currentStep: 'Restoring recent transactions...',
+        progressPercent: 60,
+        criticalComplete: false,
+        canUseApp: false,
+        totalComplete: false,
+      });
+    }
+
+    // Apply recent transactions
+    if (isTauriEnvironment() && criticalData.recent_transactions) {
+      try {
+        await invoke('apply_restore_transactions', {
+          transactions: criticalData.recent_transactions,
+        });
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[SyncService] Failed to restore recent transactions:', err);
+        // Non-fatal - continue with restore
+      }
+    }
+
+    // Critical phase complete - app can now be used
+    if (config.onProgress) {
+      config.onProgress({
+        phase: 'critical_restore',
+        currentStep: 'Critical data restored',
+        progressPercent: 100,
+        criticalComplete: true,
+        canUseApp: true,
+        totalComplete: false,
+      });
+    }
+
+    // Set last sync timestamp
+    await _setLastSyncTimestamp(criticalData.server_time || new Date().toISOString());
+
+    _mockLastOutcome = 'success';
+    _mockLastError = null;
+
+    // Start background sync for remaining data (non-blocking)
+    setTimeout(() => {
+      triggerBackgroundRestore(config, resolvedToken);
+    }, 1000);
+
+    return getSyncStatus();
+  } catch (err) {
+    const errorMsg = err instanceof Error ? err.message : String(err);
+    _mockLastOutcome = 'error';
+    _mockLastError = errorMsg;
+    // eslint-disable-next-line no-console
+    console.error('[SyncService] Restore failed:', errorMsg);
+    return getSyncStatus();
+  } finally {
+    _syncInProgress = false;
+  }
+}
+
+/**
+ * Background restore for non-critical data (runs after critical restore completes).
+ * This is fire-and-forget - the app is already usable.
+ */
+async function triggerBackgroundRestore(config: SyncConfig, accessToken: string): Promise<void> {
+  try {
+    // Phase 2: Important data
+    if (config.onProgress) {
+      config.onProgress({
+        phase: 'background_sync',
+        currentStep: 'Syncing recent history...',
+        progressPercent: 10,
+        criticalComplete: true,
+        canUseApp: true,
+        totalComplete: false,
+      });
+    }
+
+    const importantResponse = await fetch(`${config.apiBaseUrl}/restore/important`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (importantResponse.ok) {
+      const importantData = await importantResponse.json();
+
+      if (isTauriEnvironment()) {
+        try {
+          await invoke('apply_restore_important', {
+            recent_history: importantData.recent_history || [],
+            active_day_books: importantData.active_day_books || [],
+          });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[SyncService] Failed to apply important restore:', err);
+        }
+      }
+    }
+
+    // Phase 3: Background data (lowest priority)
+    if (config.onProgress) {
+      config.onProgress({
+        phase: 'background_sync',
+        currentStep: 'Syncing historical data...',
+        progressPercent: 50,
+        criticalComplete: true,
+        canUseApp: true,
+        totalComplete: false,
+      });
+    }
+
+    const backgroundResponse = await fetch(`${config.apiBaseUrl}/restore/background`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (backgroundResponse.ok) {
+      const backgroundData = await backgroundResponse.json();
+
+      if (isTauriEnvironment()) {
+        try {
+          await invoke('apply_restore_background', {
+            historical_transactions: backgroundData.historical_transactions || [],
+            analytics: backgroundData.analytics || [],
+          });
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[SyncService] Failed to apply background restore:', err);
+        }
+      }
+    }
+
+    // Complete
+    if (config.onProgress) {
+      config.onProgress({
+        phase: 'background_sync',
+        currentStep: 'Restore complete',
+        progressPercent: 100,
+        criticalComplete: true,
+        canUseApp: true,
+        totalComplete: true,
+      });
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[SyncService] Background restore failed:', err);
+    // Non-fatal - app is already usable
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -412,6 +781,11 @@ async function _httpPull(
 export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> {
   if (_syncInProgress) {
     return getSyncStatus();
+  }
+
+  // Handle restore mode
+  if (config.mode === 'restore') {
+    return triggerRestoreSync(config);
   }
 
   // Resolve access token — prefer explicit config.accessToken, then auth service.
@@ -454,11 +828,13 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
   _syncInProgress = true;
 
-  const batchSize = config.batchSize ?? 100;
+  const batchSize = config.batchSize ?? 500;
   let totalRejected = 0;
   let hadRetryableError = false;
   let lastErrorMsg: string | null = null;
   let pullResponse: PullResponse | null = null;
+  /** True once this run has POSTed a batch to /sync/push. */
+  let pushedAnything = false;
 
   try {
     // ── Push loop ────────────────────────────────────────────────────────────
@@ -472,28 +848,45 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         break;
       }
 
-      // Mark all as SENDING
-      for (const row of rows) {
-        await _updateOutboxEventStatus(row.event_id, 'SENDING').catch(() => undefined);
-      }
+      // Mark all as SENDING in one batch call
+      await _updateOutboxEventStatuses(
+        rows.map((row) => ({ event_id: row.event_id, target_status: 'SENDING' })),
+      ).catch(() => undefined);
 
       // Build push items; skip rows with unparseable payloads
       const itemsWithRows: Array<{ item: TransactionPushItem; row: OutboxEventRow }> = [];
+      const productUpdates: Array<{ product: ProductSnapshot; row: OutboxEventRow }> = [];
+      const unparseable: OutboxEventRow[] = [];
       for (const row of rows) {
-        const item = _buildPushItem(row);
-        if (item) {
-          itemsWithRows.push({ item, row });
+        if (row.event_type === 'PRODUCT_UPDATE') {
+          const product = _buildProductUpdate(row);
+          if (product) {
+            productUpdates.push({ product, row });
+          } else {
+            // Unparseable → permanent rejection
+            unparseable.push(row);
+          }
         } else {
-          // Unparseable → permanent rejection
-          await _updateOutboxEventStatus(
-            row.event_id,
-            'PERMANENT_REJECTION',
-            'Outbox payload could not be parsed',
-          ).catch(() => undefined);
+          const item = _buildPushItem(row);
+          if (item) {
+            itemsWithRows.push({ item, row });
+          } else {
+            // Unparseable → permanent rejection
+            unparseable.push(row);
+          }
         }
       }
+      if (unparseable.length > 0) {
+        await _updateOutboxEventStatuses(
+          unparseable.map((row) => ({
+            event_id: row.event_id,
+            target_status: 'PERMANENT_REJECTION',
+            error_msg: 'Outbox payload could not be parsed',
+          })),
+        ).catch(() => undefined);
+      }
 
-      if (itemsWithRows.length === 0) {
+      if (itemsWithRows.length === 0 && productUpdates.length === 0) {
         continue;
       }
 
@@ -502,59 +895,61 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
       // ingest_batch ordering and keeps the two sides consistent.
       const sortedItemsWithRows = _sortPushItems(itemsWithRows);
 
-      let localProducts: Product[] = [];
-      if (isTauriEnvironment()) {
-        try {
-          const prods = await invoke<Product[]>('get_products');
-          if (Array.isArray(prods)) {
-            localProducts = prods;
-          }
-        } catch {
-          // Non-fatal
-        }
-      }
+      // Product snapshots are piggy-backed on every push so transaction events
+      // that reference a locally created product are accepted by the server.
+      const localProducts = await _loadLocalProducts();
+
+      // Add product updates to the products array for push
+      const pushProducts = [...localProducts, ...productUpdates.map((x) => x.product)];
 
       try {
         const pushResp = await _httpPush(
           config.apiBaseUrl,
           resolvedToken,
           sortedItemsWithRows.map((x) => x.item),
-          localProducts,
+          pushProducts,
           config.signal,
         );
+        pushedAnything = true;
 
         // Build a lookup map by transaction_id
         const receiptMap = new Map(pushResp.receipts.map((r) => [r.transaction_id, r]));
 
-        // Update each event based on its receipt
+        // Update each transaction event based on its receipt
+        const outboxStatusUpdates: Array<{
+          event_id: string;
+          target_status: string;
+          error_msg?: string | null;
+        }> = [];
+        const txStatusUpdates: Array<{
+          transaction_id: string;
+          sync_status: string;
+          server_accepted_at?: string | null;
+        }> = [];
+
         for (const { item, row } of sortedItemsWithRows) {
           const receipt = receiptMap.get(item.transaction_id);
           if (!receipt) {
             // No receipt returned — treat as retryable error
-            await _updateOutboxEventStatus(
-              row.event_id,
-              'RETRYABLE_ERROR',
-              'No receipt returned from server',
-            ).catch(() => undefined);
+            outboxStatusUpdates.push({
+              event_id: row.event_id,
+              target_status: 'RETRYABLE_ERROR',
+              error_msg: 'No receipt returned from server',
+            });
             hadRetryableError = true;
             continue;
           }
 
           if (receipt.accepted) {
-            await Promise.all([
-              _updateOutboxEventStatus(row.event_id, 'SYNCED').catch((e) => {
-                // eslint-disable-next-line no-console
-                console.error('[SyncService] Failed to mark outbox event SYNCED:', e);
-              }),
-              _updateTransactionSyncStatus(
-                item.transaction_id,
-                'SYNCED',
-                receipt.received_at,
-              ).catch((e) => {
-                // eslint-disable-next-line no-console
-                console.error('[SyncService] Failed to mark transaction SYNCED:', e);
-              }),
-            ]);
+            outboxStatusUpdates.push({
+              event_id: row.event_id,
+              target_status: 'SYNCED',
+            });
+            txStatusUpdates.push({
+              transaction_id: item.transaction_id,
+              sync_status: 'SYNCED',
+              server_accepted_at: receipt.received_at,
+            });
           } else {
             const rejectionReason = receipt.rejection_reason ?? 'Server rejected transaction';
             // eslint-disable-next-line no-console
@@ -573,16 +968,34 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
             totalRejected++;
 
-            await Promise.all([
-              _updateOutboxEventStatus(row.event_id, targetStatus, rejectionReason).catch(
-                () => undefined,
-              ),
-              _updateTransactionSyncStatus(item.transaction_id, targetStatus).catch(
-                () => undefined,
-              ),
-            ]);
+            outboxStatusUpdates.push({
+              event_id: row.event_id,
+              target_status: targetStatus,
+              error_msg: rejectionReason,
+            });
+            txStatusUpdates.push({
+              transaction_id: item.transaction_id,
+              sync_status: targetStatus,
+            });
           }
         }
+
+        // Mark product update events as SYNCED (they don't have individual receipts,
+        // but the server upserts them as part of the push)
+        for (const { row } of productUpdates) {
+          outboxStatusUpdates.push({ event_id: row.event_id, target_status: 'SYNCED' });
+        }
+
+        await Promise.all([
+          _updateOutboxEventStatuses(outboxStatusUpdates).catch((e) => {
+            // eslint-disable-next-line no-console
+            console.error('[SyncService] Failed to batch-mark outbox events:', e);
+          }),
+          _updateTransactionSyncStatuses(txStatusUpdates).catch((e) => {
+            // eslint-disable-next-line no-console
+            console.error('[SyncService] Failed to batch-mark transactions:', e);
+          }),
+        ]);
 
         // If fewer rows than batch size returned, we've drained the queue
         if (rows.length < batchSize) {
@@ -594,52 +1007,63 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         lastErrorMsg = errMsg;
         hadRetryableError = true;
 
-        for (const { row } of itemsWithRows) {
-          await _updateOutboxEventStatus(row.event_id, 'RETRYABLE_ERROR', errMsg).catch(
-            () => undefined,
-          );
-        }
+        await _updateOutboxEventStatuses(
+          itemsWithRows.map(({ row }) => ({
+            event_id: row.event_id,
+            target_status: 'RETRYABLE_ERROR',
+            error_msg: errMsg,
+          })),
+        ).catch(() => undefined);
 
         // Stop the push loop on transient error — next scheduled run will retry
         keepGoing = false;
       }
     }
 
+    // ── Catalogue push (repair pass) ──────────────────────────────────────
+    // The push loop above is outbox-driven, so a device whose queue is empty
+    // would never upload its product catalogue.  Products created through the
+    // app are queued as PRODUCT_UPDATE events, but rows imported/created
+    // before that (or while pushes kept failing) still have to reach the
+    // server.  On a forced sync (app start, reconnect, manual sync) with an
+    // empty queue we therefore upload the local catalogue on its own; the
+    // server applies it as an idempotent upsert.
+    if (!pushedAnything && !hadRetryableError && config.force) {
+      const localProducts = await _loadLocalProducts();
+      if (localProducts.length > 0) {
+        try {
+          await _httpPush(config.apiBaseUrl, resolvedToken, [], localProducts, config.signal);
+        } catch (catalogueError) {
+          // Non-fatal — the next forced sync retries the catalogue upload.
+          // eslint-disable-next-line no-console
+          console.error('[SyncService] Catalogue push failed:', catalogueError);
+        }
+      }
+    }
+
     // ── Pull loop (only if push didn't error out) ─────────────────────────
     if (!hadRetryableError) {
       try {
-        pullResponse = await _httpPull(config.apiBaseUrl, resolvedToken, config.signal);
+        pullResponse = await _httpPullAll(config.apiBaseUrl, resolvedToken, config.signal);
 
-        // Upsert products and stores from server into local SQLite
+        // Apply the server snapshot into local SQLite in a single batched
+        // transaction (replaces N×3 per-row invoke roundtrips).
         if (isTauriEnvironment()) {
-          for (const product of pullResponse.products) {
-            try {
-              await invoke('upsert_product_from_server', { product });
-            } catch {
-              // non-fatal upsert failure
-            }
-          }
-          for (const store of pullResponse.stores) {
-            try {
-              await invoke('upsert_store_from_server', { store });
-            } catch {
-              // non-fatal upsert failure
-            }
-          }
-          if (pullResponse.stock_balances && pullResponse.stock_balances.length > 0) {
-            for (const balance of pullResponse.stock_balances) {
-              try {
-                await invoke('upsert_stock_balance_from_server', { balance });
-              } catch {
-                // non-fatal upsert failure
-              }
-            }
+          try {
+            await invoke('apply_sync_pull', {
+              products: pullResponse.products,
+              stores: pullResponse.stores,
+              stock_balances: pullResponse.stock_balances ?? [],
+            });
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('[SyncService] Failed to apply sync pull snapshot:', err);
           }
         }
       } catch {
         // Pull failure is non-fatal — we still record a successful push sync time
       }
-      const syncTime = new Date().toISOString();
+      const syncTime = pullResponse?.server_time ?? new Date().toISOString();
       await _setLastSyncTimestamp(syncTime);
       _mockLastSyncAt = syncTime;
     }

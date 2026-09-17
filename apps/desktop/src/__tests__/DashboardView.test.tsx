@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, ToastProvider } from '@invenTory/ui';
+import { StoreProvider } from '../context/StoreContext';
 import { DashboardView } from '../views/DashboardView';
 import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
@@ -10,14 +11,29 @@ import { ClientSyncState } from '../types/sync';
 import { InventoryTransaction } from '../types/transaction';
 
 // Mock Recharts to avoid width/height warnings in jsdom
-vi.mock('recharts', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('recharts')>();
-  return {
-    ...actual,
-    ResponsiveContainer: ({ children }: { children: React.ReactElement }): React.ReactElement =>
-      React.cloneElement(children, { width: 400, height: 300 } as Record<string, unknown>),
-  };
-});
+vi.mock('recharts', () => ({
+  ResponsiveContainer: ({ children }: { children: React.ReactElement }): React.ReactElement =>
+    React.cloneElement(children, { width: 400, height: 300 } as Record<string, unknown>),
+  LineChart: ({ children }: { children: React.ReactNode }): React.ReactElement => (
+    <div data-testid="line-chart">{children}</div>
+  ),
+  Line: (): React.ReactElement => <line />,
+  XAxis: (): React.ReactElement => <g />,
+  YAxis: (): React.ReactElement => <g />,
+  CartesianGrid: (): React.ReactElement => <g />,
+  Tooltip: (): React.ReactElement => <g />,
+  Legend: (): React.ReactElement => <g />,
+  PieChart: ({ children }: { children: React.ReactNode }): React.ReactElement => (
+    <div data-testid="pie-chart">{children}</div>
+  ),
+  Pie: (): React.ReactElement => <g />,
+  Cell: (): React.ReactElement => <g />,
+  BarChart: ({ children }: { children: React.ReactNode }): React.ReactElement => (
+    <div data-testid="bar-chart">{children}</div>
+  ),
+  Bar: (): React.ReactElement => <rect />,
+  ReferenceLine: (): React.ReactElement => <line />,
+}));
 
 function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
   return render(
@@ -26,6 +42,8 @@ function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> 
     </ThemeProvider>,
   );
 }
+
+const now = Date.now();
 
 const mockProducts = [
   {
@@ -38,8 +56,8 @@ const mockProducts = [
     low_stock_threshold: 10,
     stock_quantity: 50,
     serial_tracking_enabled: false,
-    created_at: '2026-09-01T10:00:00Z',
-    updated_at: '2026-09-01T10:00:00Z',
+    created_at: new Date(now - 3 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 3 * 86_400_000).toISOString(),
   },
   {
     id: 'PROD-2',
@@ -51,8 +69,8 @@ const mockProducts = [
     low_stock_threshold: 5,
     stock_quantity: 3,
     serial_tracking_enabled: false,
-    created_at: '2026-08-15T10:00:00Z',
-    updated_at: '2026-08-15T10:00:00Z',
+    created_at: new Date(now - 20 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 20 * 86_400_000).toISOString(),
   },
   {
     id: 'PROD-3',
@@ -64,8 +82,8 @@ const mockProducts = [
     low_stock_threshold: null,
     stock_quantity: 100,
     serial_tracking_enabled: false,
-    created_at: '2026-09-05T10:00:00Z',
-    updated_at: '2026-09-05T10:00:00Z',
+    created_at: new Date(now - 2 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 2 * 86_400_000).toISOString(),
   },
   {
     id: 'PROD-4',
@@ -77,8 +95,8 @@ const mockProducts = [
     low_stock_threshold: 20,
     stock_quantity: 0,
     serial_tracking_enabled: false,
-    created_at: '2026-09-10T10:00:00Z',
-    updated_at: '2026-09-10T10:00:00Z',
+    created_at: new Date(now - 1 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 1 * 86_400_000).toISOString(),
   },
 ];
 
@@ -90,8 +108,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'RECEIPT',
     stock_bucket: 'AVAILABLE',
     quantity_delta: 50,
-    occurred_at: '2026-09-08T10:00:00Z',
-    recorded_at: '2026-09-08T10:00:00Z',
+    occurred_at: new Date(now - 4 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 4 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: 'PO-001',
@@ -112,8 +130,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'SALE',
     stock_bucket: 'AVAILABLE',
     quantity_delta: -5,
-    occurred_at: '2026-09-09T10:00:00Z',
-    recorded_at: '2026-09-09T10:00:00Z',
+    occurred_at: new Date(now - 3 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 3 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: 'SL-001',
@@ -134,8 +152,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'SALE',
     stock_bucket: 'AVAILABLE',
     quantity_delta: -2,
-    occurred_at: '2026-09-10T10:00:00Z',
-    recorded_at: '2026-09-10T10:00:00Z',
+    occurred_at: new Date(now - 2 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 2 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: null,
@@ -156,8 +174,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'RECEIPT',
     stock_bucket: 'AVAILABLE',
     quantity_delta: 100,
-    occurred_at: '2026-09-11T10:00:00Z',
-    recorded_at: '2026-09-11T10:00:00Z',
+    occurred_at: new Date(now - 1 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 1 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: 'PO-002',
@@ -516,5 +534,83 @@ describe('DashboardView — Analytics Dashboard', () => {
 
     // Verify that the deleted product shows a fallback message
     expect(screen.getByText(/Unknown Product.*PROD-DELETED/)).toBeInTheDocument();
+  });
+});
+
+describe('DashboardView — active-store scoping', () => {
+  function renderScoped(activeStoreId: string | null): void {
+    render(
+      <ThemeProvider>
+        <ToastProvider>
+          <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={() => {}}>
+            <DashboardView
+              stores={mockStores}
+              loading={false}
+              error={null}
+              onRetry={() => {}}
+              userRole="ADMIN"
+            />
+          </StoreProvider>
+        </ToastProvider>
+      </ThemeProvider>,
+    );
+  }
+
+  it('fetches balances for the active store only', async () => {
+    const balancesSpy = vi.spyOn(tauriTransactionService, 'getStockBalancesForStore');
+    renderScoped('STORE-1');
+
+    await waitFor(() => {
+      expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(balancesSpy).toHaveBeenCalledWith('STORE-1');
+    });
+    expect(balancesSpy).not.toHaveBeenCalledWith('STORE-2');
+  });
+
+  it('scopes tiles and subtitle to the active store', async () => {
+    // STORE-1 holds PROD-1 (50 units) and PROD-2 (3 units).
+    vi.spyOn(tauriTransactionService, 'getStockBalancesForStore').mockImplementation(
+      async (storeId: string) =>
+        storeId === 'STORE-1'
+          ? new Map([
+              ['PROD-1', 50],
+              ['PROD-2', 3],
+            ])
+          : new Map(),
+    );
+    // Fresh creation dates so the in-range product count is deterministic.
+    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(
+      mockProducts.map((p) => ({ ...p, created_at: new Date().toISOString() })),
+    );
+    renderScoped('STORE-1');
+
+    // Scoped subtitle names the store.
+    await waitFor(() => {
+      expect(screen.getByText('Live overview of Store Alpha')).toBeInTheDocument();
+    });
+    // Scoped totals: 2 products, 53 units (waits for the scoped balance load).
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-total-products')).toHaveTextContent('2');
+    });
+    expect(screen.getByTestId('kpi-total-stock')).toHaveTextContent('53');
+    // Cross-store tile is replaced by Low Stock in scoped view.
+    expect(screen.getByTestId('kpi-low-stock')).toBeInTheDocument();
+    expect(screen.queryByTestId('kpi-cross-store')).not.toBeInTheDocument();
+    // Recent activity excludes STORE-2's receipt (Cable Gamma).
+    await waitFor(() => {
+      expect(screen.getByTestId('recent-activity-list')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Cable Gamma')).not.toBeInTheDocument();
+  });
+
+  it('aggregates globally without an active store', async () => {
+    renderScoped(null);
+
+    await waitFor(() => {
+      expect(screen.getByText('Live overview of your stock, sales and stores')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('kpi-cross-store')).toBeInTheDocument();
   });
 });

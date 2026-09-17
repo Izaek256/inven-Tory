@@ -21,13 +21,13 @@ describe('Property 2: Non-Tauri service throws', (): void => {
   describe('tauriProductService', (): void => {
     it('getProducts throws when not in Tauri environment', async (): Promise<void> => {
       await expect(tauriProductService.getProducts()).rejects.toThrow(
-        '[TauriProductService] getProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[ProductService] getProducts() requires the desktop app runtime.',
       );
     });
 
     it('searchProducts throws when not in Tauri environment', async (): Promise<void> => {
       await expect(tauriProductService.searchProducts('test')).rejects.toThrow(
-        '[TauriProductService] searchProducts() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[ProductService] searchProducts() requires the desktop app runtime.',
       );
     });
 
@@ -39,9 +39,7 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           category: 'Test',
           unit: 'pcs',
         }),
-      ).rejects.toThrow(
-        '[TauriProductService] createProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[ProductService] createProduct() requires the desktop app runtime.');
     });
 
     it('updateProduct throws when not in Tauri environment', async (): Promise<void> => {
@@ -53,14 +51,12 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           unit: 'pcs',
           serial_tracking_enabled: false,
         }),
-      ).rejects.toThrow(
-        '[TauriProductService] updateProduct() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[ProductService] updateProduct() requires the desktop app runtime.');
     });
 
     it('toggleProductActive throws when not in Tauri environment', async (): Promise<void> => {
       await expect(tauriProductService.toggleProductActive('PROD-001', false)).rejects.toThrow(
-        '[TauriProductService] toggleProductActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[ProductService] toggleProductActive() requires the desktop app runtime.',
       );
     });
   });
@@ -68,7 +64,7 @@ describe('Property 2: Non-Tauri service throws', (): void => {
   describe('tauriStoreService', (): void => {
     it('getStores throws when not in Tauri environment', async (): Promise<void> => {
       await expect(tauriStoreService.getStores()).rejects.toThrow(
-        '[TauriStoreService] getStores() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[StoreService] getStores() requires the desktop app runtime.',
       );
     });
 
@@ -78,9 +74,7 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           code: 'TEST',
           name: 'Test Store',
         }),
-      ).rejects.toThrow(
-        '[TauriStoreService] createStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[StoreService] createStore() requires the desktop app runtime.');
     });
 
     it('updateStore throws when not in Tauri environment', async (): Promise<void> => {
@@ -89,20 +83,18 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           id: 'STORE-001',
           name: 'Updated Name',
         }),
-      ).rejects.toThrow(
-        '[TauriStoreService] updateStore() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[StoreService] updateStore() requires the desktop app runtime.');
     });
 
     it('toggleStoreActive throws when not in Tauri environment', async (): Promise<void> => {
       await expect(tauriStoreService.toggleStoreActive('STORE-001', false)).rejects.toThrow(
-        '[TauriStoreService] toggleStoreActive() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[StoreService] toggleStoreActive() requires the desktop app runtime.',
       );
     });
 
     it('registerDevice throws when not in Tauri environment', async (): Promise<void> => {
       await expect(tauriStoreService.registerDevice('STORE-001', 'Test Device')).rejects.toThrow(
-        '[TauriStoreService] registerDevice() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[StoreService] registerDevice() requires the desktop app runtime.',
       );
     });
   });
@@ -118,9 +110,7 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           user_id: 'USER-001',
           device_id: 'DEV-001',
         }),
-      ).rejects.toThrow(
-        '[TauriTransactionService] receiveStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransactionService] receiveStock() requires the desktop app runtime.');
     });
 
     it('sellStock throws when not in Tauri environment', async (): Promise<void> => {
@@ -133,9 +123,7 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           user_id: 'USER-001',
           device_id: 'DEV-001',
         }),
-      ).rejects.toThrow(
-        '[TauriTransactionService] sellStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransactionService] sellStock() requires the desktop app runtime.');
     });
 
     it('returnStock throws when not in Tauri environment', async (): Promise<void> => {
@@ -149,9 +137,7 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           user_id: 'USER-001',
           device_id: 'DEV-001',
         }),
-      ).rejects.toThrow(
-        '[TauriTransactionService] returnStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransactionService] returnStock() requires the desktop app runtime.');
     });
 
     it('moveStockBucket throws when not in Tauri environment', async (): Promise<void> => {
@@ -166,24 +152,20 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           user_id: 'USER-001',
           device_id: 'DEV-001',
         }),
-      ).rejects.toThrow(
-        '[TauriTransactionService] moveStockBucket() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransactionService] moveStockBucket() requires the desktop app runtime.');
     });
 
     it('getStockBalance throws when not in Tauri environment', async (): Promise<void> => {
       await expect(
         tauriTransactionService.getStockBalance('STORE-001', 'PROD-001'),
-      ).rejects.toThrow(
-        '[TauriTransactionService] getStockBalance() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransactionService] getStockBalance() requires the desktop app runtime.');
     });
 
     it('getStockBalanceForBucket throws when not in Tauri environment', async (): Promise<void> => {
       await expect(
         tauriTransactionService.getStockBalanceForBucket('STORE-001', 'PROD-001', 'AVAILABLE'),
       ).rejects.toThrow(
-        '[TauriTransactionService] getStockBalanceForBucket() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[TransactionService] getStockBalanceForBucket() requires the desktop app runtime.',
       );
     });
 
@@ -197,16 +179,14 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           user_id: 'USER-001',
           device_id: 'DEV-001',
         }),
-      ).rejects.toThrow(
-        '[TauriTransactionService] adjustStock() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransactionService] adjustStock() requires the desktop app runtime.');
     });
   });
 
   describe('tauriTransferService', (): void => {
     it('getTransfers throws when not in Tauri environment', async (): Promise<void> => {
       await expect(tauriTransferService.getTransfers()).rejects.toThrow(
-        '[TauriTransferService] getTransfers() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[TransferService] getTransfers() requires the desktop app runtime.',
       );
     });
 
@@ -219,40 +199,32 @@ describe('Property 2: Non-Tauri service throws', (): void => {
           quantity: 5,
           created_by_user_id: 'USER-001',
         }),
-      ).rejects.toThrow(
-        '[TauriTransferService] createTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransferService] createTransfer() requires the desktop app runtime.');
     });
 
     it('dispatchTransfer throws when not in Tauri environment', async (): Promise<void> => {
       await expect(
         tauriTransferService.dispatchTransfer('TRF-001', 'USER-001', 'DEV-001'),
-      ).rejects.toThrow(
-        '[TauriTransferService] dispatchTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransferService] dispatchTransfer() requires the desktop app runtime.');
     });
 
     it('receiveTransfer throws when not in Tauri environment', async (): Promise<void> => {
       await expect(
         tauriTransferService.receiveTransfer('TRF-001', 'USER-001', 'DEV-001'),
-      ).rejects.toThrow(
-        '[TauriTransferService] receiveTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransferService] receiveTransfer() requires the desktop app runtime.');
     });
 
     it('cancelTransfer throws when not in Tauri environment', async (): Promise<void> => {
       await expect(
         tauriTransferService.cancelTransfer('TRF-001', 'USER-001', 'DEV-001'),
-      ).rejects.toThrow(
-        '[TauriTransferService] cancelTransfer() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
-      );
+      ).rejects.toThrow('[TransferService] cancelTransfer() requires the desktop app runtime.');
     });
 
     it('markTransferException throws when not in Tauri environment', async (): Promise<void> => {
       await expect(
         tauriTransferService.markTransferException('TRF-001', 'Test note'),
       ).rejects.toThrow(
-        '[TauriTransferService] markTransferException() requires the Tauri runtime. Non-Tauri environments are not supported in production.',
+        '[TransferService] markTransferException() requires the desktop app runtime.',
       );
     });
   });
