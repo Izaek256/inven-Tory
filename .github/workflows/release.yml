@@ -51,6 +51,7 @@ jobs:
         with:
           projectPath: apps/desktop
           releaseId: ${{ github.event.release.id }}
+          args: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY == '' && '--config ''{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}''' || '' }}
           
   create-manifest:
     needs: release
