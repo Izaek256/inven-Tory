@@ -4,13 +4,17 @@
  * Tests the enhanced useGenesisState hook with restore functionality.
  */
 import { renderHook, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { useGenesisState } from '../hooks/useGenesisState';
 
 // Mock Tauri invoke
 vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('useGenesisState — Basic Genesis Functionality', () => {
   it('initializes with loading state', () => {
@@ -157,7 +161,7 @@ describe('useGenesisState — Run Genesis', () => {
     expect(genesisResult.result?.message).toBe('Genesis failed');
   });
 
-  it('converts camelCase to snake_case for Rust backend', async () => {
+  it('passes camelCase parameters to run_genesis command for Tauri backend', async () => {
     const { invoke } = await import('@tauri-apps/api/core');
     vi.mocked(invoke)
       .mockResolvedValueOnce({
@@ -198,13 +202,13 @@ describe('useGenesisState — Run Genesis', () => {
     expect(invoke).toHaveBeenCalledWith('run_genesis', {
       username: 'testuser',
       email: 'test@example.com',
-      full_name: 'Test User',
+      fullName: 'Test User',
       password: 'password123',
       role: 'GLOBAL_ADMIN',
-      store_code: 'MAIN',
-      store_name: 'My Store',
-      store_address: undefined,
-      api_base_url: undefined,
+      storeCode: 'MAIN',
+      storeName: 'My Store',
+      storeAddress: undefined,
+      apiBaseUrl: undefined,
     });
   });
 });

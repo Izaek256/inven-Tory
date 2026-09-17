@@ -43,6 +43,8 @@ function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> 
   );
 }
 
+const now = Date.now();
+
 const mockProducts = [
   {
     id: 'PROD-1',
@@ -54,8 +56,8 @@ const mockProducts = [
     low_stock_threshold: 10,
     stock_quantity: 50,
     serial_tracking_enabled: false,
-    created_at: '2026-09-01T10:00:00Z',
-    updated_at: '2026-09-01T10:00:00Z',
+    created_at: new Date(now - 3 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 3 * 86_400_000).toISOString(),
   },
   {
     id: 'PROD-2',
@@ -67,8 +69,8 @@ const mockProducts = [
     low_stock_threshold: 5,
     stock_quantity: 3,
     serial_tracking_enabled: false,
-    created_at: '2026-08-15T10:00:00Z',
-    updated_at: '2026-08-15T10:00:00Z',
+    created_at: new Date(now - 20 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 20 * 86_400_000).toISOString(),
   },
   {
     id: 'PROD-3',
@@ -80,8 +82,8 @@ const mockProducts = [
     low_stock_threshold: null,
     stock_quantity: 100,
     serial_tracking_enabled: false,
-    created_at: '2026-09-05T10:00:00Z',
-    updated_at: '2026-09-05T10:00:00Z',
+    created_at: new Date(now - 2 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 2 * 86_400_000).toISOString(),
   },
   {
     id: 'PROD-4',
@@ -93,8 +95,8 @@ const mockProducts = [
     low_stock_threshold: 20,
     stock_quantity: 0,
     serial_tracking_enabled: false,
-    created_at: '2026-09-10T10:00:00Z',
-    updated_at: '2026-09-10T10:00:00Z',
+    created_at: new Date(now - 1 * 86_400_000).toISOString(),
+    updated_at: new Date(now - 1 * 86_400_000).toISOString(),
   },
 ];
 
@@ -106,8 +108,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'RECEIPT',
     stock_bucket: 'AVAILABLE',
     quantity_delta: 50,
-    occurred_at: '2026-09-08T10:00:00Z',
-    recorded_at: '2026-09-08T10:00:00Z',
+    occurred_at: new Date(now - 4 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 4 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: 'PO-001',
@@ -128,8 +130,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'SALE',
     stock_bucket: 'AVAILABLE',
     quantity_delta: -5,
-    occurred_at: '2026-09-09T10:00:00Z',
-    recorded_at: '2026-09-09T10:00:00Z',
+    occurred_at: new Date(now - 3 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 3 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: 'SL-001',
@@ -150,8 +152,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'SALE',
     stock_bucket: 'AVAILABLE',
     quantity_delta: -2,
-    occurred_at: '2026-09-10T10:00:00Z',
-    recorded_at: '2026-09-10T10:00:00Z',
+    occurred_at: new Date(now - 2 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 2 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: null,
@@ -172,8 +174,8 @@ const mockTransactions: InventoryTransaction[] = [
     movement_type: 'RECEIPT',
     stock_bucket: 'AVAILABLE',
     quantity_delta: 100,
-    occurred_at: '2026-09-11T10:00:00Z',
-    recorded_at: '2026-09-11T10:00:00Z',
+    occurred_at: new Date(now - 1 * 86_400_000).toISOString(),
+    recorded_at: new Date(now - 1 * 86_400_000).toISOString(),
     user_id: 'U1',
     device_id: 'D1',
     reference_number: 'PO-002',
