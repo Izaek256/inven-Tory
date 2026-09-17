@@ -96,6 +96,7 @@ jobs:
 
   build-desktop:
     name: Build Desktop (Tauri)
+    if: github.ref == 'refs/heads/main'
     strategy:
       matrix:
         include:
