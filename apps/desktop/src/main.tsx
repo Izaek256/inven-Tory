@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { UpdaterProvider } from './context/UpdaterContext';
 
 import { ThemeProvider, ToastProvider } from '@invenTory/ui';
 import '@invenTory/ui/tokens.css';
@@ -21,7 +22,9 @@ ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <ThemeProvider>
       <ToastProvider>
-        <App />
+        <UpdaterProvider>
+          <App />
+        </UpdaterProvider>
       </ToastProvider>
     </ThemeProvider>
   </React.StrictMode>,
