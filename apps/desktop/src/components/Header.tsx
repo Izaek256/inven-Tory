@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { getVersion } from '@tauri-apps/api/app';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
@@ -54,6 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>('');
 
   // Updater state
   const { progress, isDownloading } = useUpdater();
@@ -62,6 +64,13 @@ export const Header: React.FC<HeaderProps> = ({
   // across the whole app immediately (data-theme on <html> element).
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
+
+  // Fetch app version from Tauri on mount
+  useEffect(() => {
+    getVersion()
+      .then((v) => setAppVersion(v))
+      .catch(() => setAppVersion(''));
+  }, []);
 
   const triggerManualSync = async (): Promise<void> => {
     try {
@@ -150,7 +159,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Box size={18} aria-hidden="true" />
         </div>
         <h1 className="brand-title">invenTory</h1>
-        <span className="brand-version">v1.1.0</span>
+        {appVersion && <span className="brand-version">v{appVersion}</span>}
       </div>
 
       <div className="header-controls">

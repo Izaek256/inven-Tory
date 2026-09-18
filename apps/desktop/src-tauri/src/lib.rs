@@ -209,6 +209,31 @@ fn get_db_path() -> PathBuf {
         return PathBuf::from(env_path);
     }
 
+    // Production builds: resolve a consistent path in the user's app data
+    // directory so the database survives reinstalls and working-directory
+    // changes. The relative-path fallback below is kept for dev/test only.
+    {
+        let app_data = if cfg!(target_os = "windows") {
+            env::var("APPDATA")
+                .ok()
+                .map(|d| PathBuf::from(d).join("invenTory").join("data"))
+        } else if cfg!(target_os = "macos") {
+            env::var("HOME")
+                .ok()
+                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data"))
+        } else {
+            env::var("HOME")
+                .ok()
+                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data"))
+        };
+        if let Some(dir) = app_data {
+            if dir.exists() {
+                return dir.join("inven_tory_local.db");
+            }
+        }
+    }
+
+    // Dev/test fallback: walk up from cwd looking for an existing DB
     let candidates = [
         "packages/storage/inven_tory_local.db",
         "../packages/storage/inven_tory_local.db",
@@ -224,6 +249,31 @@ fn get_db_path() -> PathBuf {
         let p = Path::new(cand);
         if p.exists() {
             return p.to_path_buf();
+        }
+    }
+
+    // Last resort: create in a stable app-data location so the path never
+    // drifts between launches.
+    {
+        let fallback = if cfg!(target_os = "windows") {
+            env::var("APPDATA")
+                .ok()
+                .map(|d| PathBuf::from(d).join("invenTory").join("data").join("inven_tory_local.db"))
+        } else if cfg!(target_os = "macos") {
+            env::var("HOME")
+                .ok()
+                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data").join("inven_tory_local.db"))
+        } else {
+            env::var("HOME")
+                .ok()
+                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data").join("inven_tory_local.db"))
+        };
+        if let Some(path) = fallback {
+            // Ensure parent directory exists
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            return path;
         }
     }
 
@@ -5079,12 +5129,15 @@ pub fn apply_restore_background(
     #[tauri::command]
     pub async fn check_app_update(app: tauri::AppHandle) -> Result<Option<serde_json::Value>, String> {
         use tauri_plugin_updater::UpdaterExt;
+        println!("[UPDATER] check_app_update called");
         let updater = app.updater().map_err(|e| format!("Failed to init updater: {}", e))?;
+        println!("[UPDATER] updater initialized, calling check()...");
         match updater.check().await {
             Ok(Some(update)) => {
                 let version = update.version.clone();
                 let date = update.date.map(|d| d.to_string());
                 let body = update.body.clone();
+                println!("[UPDATER] Update available: version={}, date={:?}", version, date);
                 Ok(Some(serde_json::json!({
                     "available": true,
                     "version": version,
@@ -5092,11 +5145,15 @@ pub fn apply_restore_background(
                     "body": body,
                 })))
             }
-            Ok(None) => Ok(Some(serde_json::json!({
-                "available": false,
-            }))),
+            Ok(None) => {
+                println!("[UPDATER] No update available (app is up to date)");
+                Ok(Some(serde_json::json!({
+                    "available": false,
+                })))
+            }
             Err(e) => {
                 // Don't fail the command if update check fails (network issues, etc.)
+                println!("[UPDATER] Update check error: {}", e);
                 Ok(Some(serde_json::json!({
                     "available": false,
                     "error": e.to_string(),

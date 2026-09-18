@@ -83,6 +83,9 @@ export const UpdaterProvider: React.FC<UpdaterProviderProps> = ({ children }) =>
       const info = await checkAppUpdate();
       if (info.available) {
         setUpdateInfo(info);
+      } else if (info.error) {
+        // Preserve error info so the UI can display it
+        setUpdateInfo({ available: false, error: info.error });
       } else {
         setUpdateInfo(null);
       }
