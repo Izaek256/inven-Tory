@@ -227,7 +227,10 @@ fn get_db_path() -> PathBuf {
                 .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data"))
         };
         if let Some(dir) = app_data {
-            if dir.exists() {
+            if cfg!(not(debug_assertions)) || dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    eprintln!("[DB] Failed to create app data directory {:?}: {}", dir, e);
+                }
                 return dir.join("inven_tory_local.db");
             }
         }
@@ -816,17 +819,21 @@ fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
     
     let has_any_store = conn.query_row("SELECT COUNT(*) FROM stores WHERE is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
     let has_user_with_pin = conn.query_row("SELECT COUNT(*) FROM users WHERE pin_hash IS NOT NULL AND is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
+    let has_any_user = conn.query_row("SELECT COUNT(*) FROM users WHERE is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
+
+    let is_restore_completed = conn.query_row(
+        "SELECT 1 FROM kv_store WHERE key = 'restore_completed' AND value = 'true'",
+        [],
+        |_| Ok(true)
+    ).unwrap_or(false);
+
+    // ready is true if:
+    // 1. A user with pin_hash exists (local genesis setup)
+    // 2. restore_completed flag exists in kv_store (cloud restore)
+    // 3. At least one active user AND at least one active store exist in database (setup or restore completed)
+    let ready = has_user_with_pin || is_restore_completed || (has_any_user && has_any_store);
     
-    // PRIMARY signal: has_user_with_pin is the authoritative check
-    // Users with pin_hash means genesis/restore completed successfully
-    let ready = has_user_with_pin;
-    
-    // Clear restore_completed flag if users don't have pin_hash (cleanup stale state)
-    if !ready {
-        let _ = conn.execute("DELETE FROM kv_store WHERE key = 'restore_completed'", []);
-    }
-    
-    GenesisState { ready, has_user_with_pin, has_any_store, has_tables }
+    GenesisState { ready, has_user_with_pin: has_user_with_pin || has_any_user, has_any_store, has_tables }
 }
 
 #[tauri::command]
