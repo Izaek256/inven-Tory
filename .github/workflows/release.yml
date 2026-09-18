@@ -76,13 +76,14 @@ jobs:
           
   create-manifest:
     needs: release
-    if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         uses: actions/download-artifact@v4
         
       - name: Create manifest
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         run: |
           # Extract version from tag
           VERSION=${GITHUB_REF#refs/tags/v}
@@ -145,6 +146,7 @@ jobs:
           EOF
           
       - name: Upload manifest
+        if: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
