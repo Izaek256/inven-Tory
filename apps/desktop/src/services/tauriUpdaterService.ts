@@ -13,7 +13,11 @@ export interface UpdateInfo {
 export async function checkAppUpdate(): Promise<UpdateInfo> {
   if (isTauriEnvironment()) {
     try {
+      // eslint-disable-next-line no-console
+      console.log('[UpdaterService] Calling check_app_update...');
       const result = await invoke<UpdateInfo | null>('check_app_update');
+      // eslint-disable-next-line no-console
+      console.log('[UpdaterService] check_app_update returned:', JSON.stringify(result));
       return result ?? { available: false };
     } catch (err) {
       // eslint-disable-next-line no-console

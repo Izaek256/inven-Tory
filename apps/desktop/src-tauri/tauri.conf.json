@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "invenTory",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "identifier": "com.inventorytory.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -42,10 +42,11 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/Izaek256/inven-Tory/releases/latest/download/latest-{target}.json"
+        "https://github.com/Izaek256/inven-Tory/releases/latest/download/latest-windows-x86_64.json",
+        "https://github.com/Izaek256/inven-Tory/releases/latest/download/latest-linux-x86_64.json"
       ],
-      "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENEMjdGMDg1NzgyMTI1NzgKUldSNEpTRjRoZkFuemE1SnNzL2NBeldic2NOT3JGdnhZUzhsU2pNdjRzeTlXNUVtK2M4YitidjcK"
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3OTU1MkYwODI0NzU4RDEKUldUUldFZUM4RktWMTZlelRsb1NrM3VEY0c5bWlETmx0eFhaYTRvekxoOTh0aG5DSmplYXFtcGQK"
     }
   }
 }
