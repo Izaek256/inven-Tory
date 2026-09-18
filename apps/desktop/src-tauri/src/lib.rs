@@ -809,8 +809,16 @@ fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
         Err(_) => return GenesisState { ready: false, has_user_with_pin: false, has_any_store: false, has_tables: false },
     };
     
-    // Check if tables exist first
-    let has_tables = conn.execute("SELECT 1 FROM stores LIMIT 1", []).map(|_| true).unwrap_or(false);
+    // Check if tables exist by inspecting the schema — NOT via execute() on a
+    // SELECT, which errors in rusqlite 0.31 when the query returns rows.
+    let has_tables = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='stores'",
+            [],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
     
     // If no tables exist, genesis is definitely needed
     if !has_tables {
