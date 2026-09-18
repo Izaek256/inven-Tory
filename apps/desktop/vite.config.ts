@@ -8,6 +8,8 @@ export default defineConfig({
   plugins: [react()],
   // Prevent Vite from obscuring Rust compilation errors
   clearScreen: false,
+  // Use relative paths for Tauri desktop app
+  base: './',
   server: {
     port: 1420,
     strictPort: true,

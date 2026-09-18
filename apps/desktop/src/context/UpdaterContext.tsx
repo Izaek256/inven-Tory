@@ -49,31 +49,46 @@ export const UpdaterProvider: React.FC<UpdaterProviderProps> = ({ children }) =>
 
   // Listen for progress events from Rust backend
   useEffect(() => {
-    const unlisten = listen<{ downloaded: number; total: number | null; stage: string }>(
-      'updater://progress',
-      (event) => {
-        const { downloaded, total, stage } = event.payload;
-        const percent =
-          total && total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
+    let unlistenFn: (() => void) | null = null;
 
-        setProgress({
-          downloaded,
-          total,
-          stage: stage as UpdateStage,
-          percent,
-        });
+    const setupListener = async (): Promise<void> => {
+      try {
+        const unlisten = await listen<{ downloaded: number; total: number | null; stage: string }>(
+          'updater://progress',
+          (event) => {
+            const { downloaded, total, stage } = event.payload;
+            const percent =
+              total && total > 0 ? Math.min(100, Math.round((downloaded / total) * 100)) : 0;
 
-        if (stage === 'complete') {
-          setIsDownloading(false);
-          // App will restart automatically from Rust side
-        } else if (stage === 'installing') {
-          setProgress((prev) => ({ ...prev, percent: 100 }));
-        }
-      },
-    );
+            setProgress({
+              downloaded,
+              total,
+              stage: stage as UpdateStage,
+              percent,
+            });
+
+            if (stage === 'complete') {
+              setIsDownloading(false);
+              // App will restart automatically from Rust side
+            } else if (stage === 'installing') {
+              setProgress((prev) => ({ ...prev, percent: 100 }));
+            }
+          },
+        );
+        unlistenFn = unlisten;
+      } catch (err) {
+        // Silently handle event listener errors - update may not be available
+        // eslint-disable-next-line no-console
+        console.info('[UpdaterContext] Event listener setup failed (expected in dev/web):', err);
+      }
+    };
+
+    void setupListener();
 
     return (): void => {
-      unlisten.then((fn) => fn());
+      if (unlistenFn) {
+        unlistenFn();
+      }
     };
   }, []);
 
