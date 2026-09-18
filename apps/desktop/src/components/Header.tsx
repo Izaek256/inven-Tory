@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { getVersion } from '@tauri-apps/api/app';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
@@ -55,7 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState<string>('');
+  const [appVersion, setAppVersion] = useState<string>(import.meta.env.VITE_APP_VERSION || '');
 
   // Updater state
   const { progress, isDownloading } = useUpdater();
@@ -65,11 +64,16 @@ export const Header: React.FC<HeaderProps> = ({
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
 
-  // Fetch app version from Tauri on mount
+  // Override with real Tauri version when running in the desktop app
   useEffect(() => {
-    getVersion()
-      .then((v) => setAppVersion(v))
-      .catch(() => setAppVersion(''));
+    import('@tauri-apps/api/app')
+      .then(({ getVersion }) => getVersion())
+      .then((v) => {
+        if (v) setAppVersion(v);
+      })
+      .catch(() => {
+        // Not running in Tauri — keep the VITE_APP_VERSION fallback
+      });
   }, []);
 
   const triggerManualSync = async (): Promise<void> => {
@@ -159,7 +163,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Box size={18} aria-hidden="true" />
         </div>
         <h1 className="brand-title">invenTory</h1>
-        {appVersion && <span className="brand-version">v{appVersion}</span>}
+        <span className="brand-version">v{appVersion}</span>
       </div>
 
       <div className="header-controls">

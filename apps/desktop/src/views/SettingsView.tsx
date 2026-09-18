@@ -8,7 +8,6 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
-import { getVersion } from '@tauri-apps/api/app';
 import {
   Settings,
   LogOut,
@@ -76,7 +75,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
   // App version
-  const [appVersion, setAppVersion] = useState<string>('');
+  const [appVersion] = useState<string>(import.meta.env.VITE_APP_VERSION || '');
 
   // Delete all data state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
@@ -118,9 +117,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
   useEffect(() => {
     void fetchStores();
     void fetchBackups();
-    getVersion()
-      .then((v) => setAppVersion(v))
-      .catch(() => setAppVersion(''));
   }, [fetchStores, fetchBackups]);
 
   const handleLogout = async (): Promise<void> => {
@@ -870,8 +866,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
                 System Information
               </h3>
               <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                invenTory{appVersion ? ` v${appVersion}` : ''} — Desktop app. Works offline; your
-                data stays on this device.
+                invenTory v{appVersion} — Desktop app. Works offline; your data stays on this
+                device.
               </p>
             </div>
           </div>
