@@ -258,22 +258,22 @@ fn get_db_path() -> PathBuf {
         let fallback = if cfg!(target_os = "windows") {
             env::var("APPDATA")
                 .ok()
-                .map(|d| PathBuf::from(d).join("invenTory").join("data").join("inven_tory_local.db"))
+                .map(|d| PathBuf::from(d).join("invenTory").join("data"))
         } else if cfg!(target_os = "macos") {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data").join("inven_tory_local.db"))
+                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data"))
         } else {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data").join("inven_tory_local.db"))
+                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data"))
         };
-        if let Some(path) = fallback {
+        if let Some(dir) = fallback {
             // Ensure parent directory exists
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                eprintln!("[DB] Failed to create app data directory {:?}: {}", dir, e);
             }
-            return path;
+            return dir.join("inven_tory_local.db");
         }
     }
 
@@ -779,15 +779,27 @@ fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
         Ok(c) => c,
         Err(_) => return GenesisState { ready: false, has_user_with_pin: false, has_any_store: false, has_tables: false },
     };
+    
+    // Check if tables exist first
     let has_tables = conn.execute("SELECT 1 FROM stores LIMIT 1", []).map(|_| true).unwrap_or(false);
+    
+    // If no tables exist, genesis is definitely needed
+    if !has_tables {
+        return GenesisState { ready: false, has_user_with_pin: false, has_any_store: false, has_tables: false };
+    }
+    
     let has_any_store = conn.query_row("SELECT COUNT(*) FROM stores WHERE is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
     let has_user_with_pin = conn.query_row("SELECT COUNT(*) FROM users WHERE pin_hash IS NOT NULL AND is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
-    // Also check if a restore was completed — but only use it as a secondary
-    // signal. The PRIMARY signal is has_user_with_pin: if users with pin_hash
-    // exist, genesis is done. The restore_completed flag alone is NOT enough
-    // because it can persist after DB files are cleared.
-    let restore_completed = conn.execute("SELECT 1 FROM kv_store WHERE key = 'restore_completed' AND value = 'true'", []).map(|_| true).unwrap_or(false);
-    let ready = has_user_with_pin || (restore_completed && has_any_store);
+    
+    // PRIMARY signal: has_user_with_pin is the authoritative check
+    // Users with pin_hash means genesis/restore completed successfully
+    let ready = has_user_with_pin;
+    
+    // Clear restore_completed flag if users don't have pin_hash (cleanup stale state)
+    if !ready {
+        let _ = conn.execute("DELETE FROM kv_store WHERE key = 'restore_completed'", []);
+    }
+    
     GenesisState { ready, has_user_with_pin, has_any_store, has_tables }
 }
 
