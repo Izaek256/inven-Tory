@@ -86,11 +86,45 @@ jobs:
           # Extract version from tag
           VERSION=${GITHUB_REF#refs/tags/v}
 
-          # Extract signatures from downloaded artifacts
-          WIN_SIG=$(cat windows-installer/invenTory_*_x64-setup.exe.sig 2>/dev/null || echo '')
-          LINUX_SIG=$(cat linux-appimage/invenTory_*_amd64.AppImage.sig 2>/dev/null || echo '')
+          # Locate the downloaded artifacts (download-artifact v4 places each
+          # artifact in a subdirectory named after the artifact when no `path`
+          # is given, and does NOT merge them into one folder)
+          WIN_SIG_FILE=$(find windows-installer -name 'invenTory_*_x64-setup.exe.sig' -print -quit)
+          LINUX_SIG_FILE=$(find linux-appimage -name 'invenTory_*_amd64.AppImage.sig' -print -quit)
 
-          # Create the manifest file
+          # Fail loudly if signatures are missing — we never want empty sigs in the manifest
+          if [ -z "$WIN_SIG_FILE" ] || [ ! -f "$WIN_SIG_FILE" ]; then
+            echo "::error::Windows signature file not found. Expected windows-installer/invenTory_*_x64-setup.exe.sig"
+            exit 1
+          fi
+          if [ -z "$LINUX_SIG_FILE" ] || [ ! -f "$LINUX_SIG_FILE" ]; then
+            echo "::error::Linux signature file not found. Expected linux-appimage/invenTory_*_amd64.AppImage.sig"
+            exit 1
+          fi
+
+          WIN_SIG=$(cat "$WIN_SIG_FILE")
+          LINUX_SIG=$(cat "$LINUX_SIG_FILE")
+
+          # Build windows manifest
+          cat > latest-windows-x86_64.json << EOF
+          {
+            "version": "${VERSION}",
+            "notes": "Release ${VERSION}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${WIN_SIG}",
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_x64-setup.exe"
+              },
+              "linux-x86_64": {
+                "signature": "${LINUX_SIG}",
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/invenTory_${VERSION}_amd64.AppImage"
+              }
+            }
+          }
+          EOF
+
+          # Build linux manifest (linux target points at the AppImage; windows points at the NSIS installer)
           cat > latest-linux-x86_64.json << EOF
           {
             "version": "${VERSION}",
@@ -108,7 +142,6 @@ jobs:
             }
           }
           EOF
-          cp latest-linux-x86_64.json latest-windows-x86_64.json
           
       - name: Upload manifest
         uses: softprops/action-gh-release@v2
