@@ -247,25 +247,34 @@ export function App(): React.ReactElement {
         typeof import.meta !== 'undefined'
           ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
           : undefined;
-      const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
-      // Start background sync immediately
-      startBackgroundSync({ apiBaseUrl }, 30_000);
+      // Only start sync if we have a configured API base URL (not local dev server)
+      // This prevents unnecessary connection attempts in production builds
+      const apiBaseUrl = envBaseUrl ? envBaseUrl.replace(/\/+$/, '') : null;
 
-      // Trigger initial sync immediately (token upgrade should be synchronous now)
-      void triggerSync({ apiBaseUrl, force: true })
-        .then(() => {
-          return fetchStores();
-        })
-        .catch((err) => {
-          // Silently handle sync errors - app should work offline
-          // eslint-disable-next-line no-console
-          console.info('[App] Initial sync failed (expected if offline):', err);
-        });
+      if (apiBaseUrl && !apiBaseUrl.includes('localhost') && !apiBaseUrl.includes('127.0.0.1')) {
+        // Start background sync with configured server
+        startBackgroundSync({ apiBaseUrl }, 30_000);
 
-      return (): void => {
-        stopBackgroundSync();
-      };
+        // Trigger initial sync immediately
+        void triggerSync({ apiBaseUrl, force: true })
+          .then(() => {
+            return fetchStores();
+          })
+          .catch((err) => {
+            // Silently handle sync errors - app should work offline
+            // eslint-disable-next-line no-console
+            console.info('[App] Initial sync failed (expected if offline):', err);
+          });
+
+        return (): void => {
+          stopBackgroundSync();
+        };
+      } else {
+        // No API server configured - run in offline mode
+        // Just fetch stores from local database
+        void fetchStores();
+      }
     }
   }, [authState, fetchStores]);
 
@@ -277,17 +286,21 @@ export function App(): React.ReactElement {
           typeof import.meta !== 'undefined'
             ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
             : undefined;
-        const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
 
-        void triggerSync({ apiBaseUrl, force: true })
-          .then(() => {
-            return fetchStores();
-          })
-          .catch((err) => {
-            // Silently handle sync errors - app should work offline
-            // eslint-disable-next-line no-console
-            console.info('[App] Reconnection sync failed (expected if offline):', err);
-          });
+        // Only attempt sync if we have a configured API base URL (not local dev server)
+        const apiBaseUrl = envBaseUrl ? envBaseUrl.replace(/\/+$/, '') : null;
+
+        if (apiBaseUrl && !apiBaseUrl.includes('localhost') && !apiBaseUrl.includes('127.0.0.1')) {
+          void triggerSync({ apiBaseUrl, force: true })
+            .then(() => {
+              return fetchStores();
+            })
+            .catch((err) => {
+              // Silently handle sync errors - app should work offline
+              // eslint-disable-next-line no-console
+              console.info('[App] Reconnection sync failed (expected if offline):', err);
+            });
+        }
       }
     };
 
