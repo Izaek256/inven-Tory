@@ -227,7 +227,10 @@ fn get_db_path() -> PathBuf {
                 .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data"))
         };
         if let Some(dir) = app_data {
-            if dir.exists() {
+            if cfg!(not(debug_assertions)) || dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(&dir) {
+                    eprintln!("[DB] Failed to create app data directory {:?}: {}", dir, e);
+                }
                 return dir.join("inven_tory_local.db");
             }
         }
@@ -258,22 +261,22 @@ fn get_db_path() -> PathBuf {
         let fallback = if cfg!(target_os = "windows") {
             env::var("APPDATA")
                 .ok()
-                .map(|d| PathBuf::from(d).join("invenTory").join("data").join("inven_tory_local.db"))
+                .map(|d| PathBuf::from(d).join("invenTory").join("data"))
         } else if cfg!(target_os = "macos") {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data").join("inven_tory_local.db"))
+                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data"))
         } else {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data").join("inven_tory_local.db"))
+                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data"))
         };
-        if let Some(path) = fallback {
+        if let Some(dir) = fallback {
             // Ensure parent directory exists
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                eprintln!("[DB] Failed to create app data directory {:?}: {}", dir, e);
             }
-            return path;
+            return dir.join("inven_tory_local.db");
         }
     }
 
@@ -611,6 +614,31 @@ fn ensure_day_books_tables(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("Failed to create day_books tables: {}", e))
 }
 
+/// Ensure the kv_store table exists and has the updated_at column.
+/// This function should be called from any place that creates or uses kv_store.
+fn ensure_kv_store_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS kv_store (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );",
+    )
+    .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+
+    // Migrate existing kv_store table if it doesn't have updated_at column
+    let has_updated_at: bool = conn
+        .query_row("SELECT COUNT(*) FROM pragma_table_info('kv_store') WHERE name='updated_at'", [], |row| row.get::<_, i32>(0).map(|c| c > 0))
+        .unwrap_or(false);
+    
+    if !has_updated_at {
+        eprintln!("[DB] Migrating kv_store table to add updated_at column");
+        let _ = conn.execute("ALTER TABLE kv_store ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP", []);
+    }
+    
+    Ok(())
+}
+
 
 pub mod commands {
     use super::*;
@@ -742,7 +770,7 @@ fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS kv_store (
             key VARCHAR(255) PRIMARY KEY,
             value TEXT,
-            updated_at DATETIME NOT NULL
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         );",
     ).map_err(|e| format!("Failed to create schema tables: {}", e))?;
 
@@ -753,6 +781,7 @@ fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
         ("outbox_events", "retry_count INTEGER NOT NULL DEFAULT 0"),
         ("outbox_events", "next_attempt_at DATETIME"),
         ("outbox_events", "last_error TEXT"),
+        ("kv_store", "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"),
     ];
     for (table, col_def) in migrations {
         let col_name = col_def.split_whitespace().next().unwrap_or("");
@@ -779,16 +808,40 @@ fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
         Ok(c) => c,
         Err(_) => return GenesisState { ready: false, has_user_with_pin: false, has_any_store: false, has_tables: false },
     };
-    let has_tables = conn.execute("SELECT 1 FROM stores LIMIT 1", []).map(|_| true).unwrap_or(false);
+    
+    // Check if tables exist by inspecting the schema — NOT via execute() on a
+    // SELECT, which errors in rusqlite 0.31 when the query returns rows.
+    let has_tables = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='stores'",
+            [],
+            |row| row.get::<_, i32>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+    
+    // If no tables exist, genesis is definitely needed
+    if !has_tables {
+        return GenesisState { ready: false, has_user_with_pin: false, has_any_store: false, has_tables: false };
+    }
+    
     let has_any_store = conn.query_row("SELECT COUNT(*) FROM stores WHERE is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
     let has_user_with_pin = conn.query_row("SELECT COUNT(*) FROM users WHERE pin_hash IS NOT NULL AND is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
-    // Also check if a restore was completed — but only use it as a secondary
-    // signal. The PRIMARY signal is has_user_with_pin: if users with pin_hash
-    // exist, genesis is done. The restore_completed flag alone is NOT enough
-    // because it can persist after DB files are cleared.
-    let restore_completed = conn.execute("SELECT 1 FROM kv_store WHERE key = 'restore_completed' AND value = 'true'", []).map(|_| true).unwrap_or(false);
-    let ready = has_user_with_pin || (restore_completed && has_any_store);
-    GenesisState { ready, has_user_with_pin, has_any_store, has_tables }
+    let has_any_user = conn.query_row("SELECT COUNT(*) FROM users WHERE is_active = 1", [], |row| { let c: i32 = row.get(0)?; Ok(c > 0) }).unwrap_or(false);
+
+    let is_restore_completed = conn.query_row(
+        "SELECT 1 FROM kv_store WHERE key = 'restore_completed' AND value = 'true'",
+        [],
+        |_| Ok(true)
+    ).unwrap_or(false);
+
+    // ready is true if:
+    // 1. A user with pin_hash exists (local genesis setup)
+    // 2. restore_completed flag exists in kv_store (cloud restore)
+    // 3. At least one active user AND at least one active store exist in database (setup or restore completed)
+    let ready = has_user_with_pin || is_restore_completed || (has_any_user && has_any_store);
+    
+    GenesisState { ready, has_user_with_pin: has_user_with_pin || has_any_user, has_any_store, has_tables }
 }
 
 #[tauri::command]
@@ -1085,8 +1138,7 @@ fn do_restore(api_base_url: String, username: String, password: String, db_path:
 
     // Persist a flag so check_genesis_state knows restore completed successfully
     {
-        let kv_table_sql = "CREATE TABLE IF NOT EXISTS kv_store (key VARCHAR(255) PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL)";
-        let _ = conn.execute_batch(kv_table_sql);
+        let _ = ensure_kv_store_table(&conn);
         let now = chrono::Utc::now().to_rfc3339();
         let _ = conn.execute(
             "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES ('restore_completed', 'true', ?1)",
@@ -4567,12 +4619,8 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        // Ensure the kv_store table exists (created lazily on first write)
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
-        )
-        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+        // Ensure the kv_store table exists and has updated_at column
+        ensure_kv_store_table(&conn)?;
 
         let result: Option<String> = conn
             .query_row(
@@ -5504,11 +5552,7 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
-        )
-        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+        ensure_kv_store_table(&conn)?;
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
@@ -5563,11 +5607,7 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
-        )
-        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+        ensure_kv_store_table(&conn)?;
 
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
