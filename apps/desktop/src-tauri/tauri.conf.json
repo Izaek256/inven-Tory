@@ -42,9 +42,10 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/Izaek256/inven-Tory/releases/latest/download/latest-{target}.json"
+        "https://github.com/Izaek256/inven-Tory/releases/latest/download/latest-windows-x86_64.json",
+        "https://github.com/Izaek256/inven-Tory/releases/latest/download/latest-linux-x86_64.json"
       ],
-      "dialog": true,
+      "dialog": false,
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3OTU1MkYwODI0NzU4RDEKUldUUldFZUM4RktWMTZlelRsb1NrM3VEY0c5bWlETmx0eFhaYTRvekxoOTh0aG5DSmplYXFtcGQK"
     }
   }

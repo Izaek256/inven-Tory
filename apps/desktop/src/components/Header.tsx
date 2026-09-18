@@ -54,6 +54,7 @@ export const Header: React.FC<HeaderProps> = ({
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>(import.meta.env.VITE_APP_VERSION || '');
 
   // Updater state
   const { progress, isDownloading } = useUpdater();
@@ -62,6 +63,18 @@ export const Header: React.FC<HeaderProps> = ({
   // across the whole app immediately (data-theme on <html> element).
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
+
+  // Override with real Tauri version when running in the desktop app
+  useEffect(() => {
+    import('@tauri-apps/api/app')
+      .then(({ getVersion }) => getVersion())
+      .then((v) => {
+        if (v) setAppVersion(v);
+      })
+      .catch(() => {
+        // Not running in Tauri — keep the VITE_APP_VERSION fallback
+      });
+  }, []);
 
   const triggerManualSync = async (): Promise<void> => {
     try {
@@ -150,7 +163,7 @@ export const Header: React.FC<HeaderProps> = ({
           <Box size={18} aria-hidden="true" />
         </div>
         <h1 className="brand-title">invenTory</h1>
-        <span className="brand-version">v1.1.0</span>
+        <span className="brand-version">v{appVersion}</span>
       </div>
 
       <div className="header-controls">

@@ -74,6 +74,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
   const { updateInfo, progress, isDownloading, checkForUpdates, startUpdate } = useUpdater();
   const [checkingUpdate, setCheckingUpdate] = useState(false);
 
+  // App version
+  const [appVersion] = useState<string>(import.meta.env.VITE_APP_VERSION || '');
+
   // Delete all data state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteConfirmStoreName, setDeleteConfirmStoreName] = useState('');
@@ -863,7 +866,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
                 System Information
               </h3>
               <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                invenTory v1.1.0 — Desktop app. Works offline; your data stays on this device.
+                invenTory v{appVersion} — Desktop app. Works offline; your data stays on this
+                device.
               </p>
             </div>
           </div>
