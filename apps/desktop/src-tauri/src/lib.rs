@@ -611,6 +611,31 @@ fn ensure_day_books_tables(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("Failed to create day_books tables: {}", e))
 }
 
+/// Ensure the kv_store table exists and has the updated_at column.
+/// This function should be called from any place that creates or uses kv_store.
+fn ensure_kv_store_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS kv_store (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );",
+    )
+    .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+
+    // Migrate existing kv_store table if it doesn't have updated_at column
+    let has_updated_at: bool = conn
+        .query_row("SELECT COUNT(*) FROM pragma_table_info('kv_store') WHERE name='updated_at'", [], |row| row.get::<_, i32>(0).map(|c| c > 0))
+        .unwrap_or(false);
+    
+    if !has_updated_at {
+        eprintln!("[DB] Migrating kv_store table to add updated_at column");
+        let _ = conn.execute("ALTER TABLE kv_store ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP", []);
+    }
+    
+    Ok(())
+}
+
 
 pub mod commands {
     use super::*;
@@ -742,7 +767,7 @@ fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS kv_store (
             key VARCHAR(255) PRIMARY KEY,
             value TEXT,
-            updated_at DATETIME NOT NULL
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
         );",
     ).map_err(|e| format!("Failed to create schema tables: {}", e))?;
 
@@ -753,6 +778,7 @@ fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
         ("outbox_events", "retry_count INTEGER NOT NULL DEFAULT 0"),
         ("outbox_events", "next_attempt_at DATETIME"),
         ("outbox_events", "last_error TEXT"),
+        ("kv_store", "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"),
     ];
     for (table, col_def) in migrations {
         let col_name = col_def.split_whitespace().next().unwrap_or("");
@@ -1097,8 +1123,7 @@ fn do_restore(api_base_url: String, username: String, password: String, db_path:
 
     // Persist a flag so check_genesis_state knows restore completed successfully
     {
-        let kv_table_sql = "CREATE TABLE IF NOT EXISTS kv_store (key VARCHAR(255) PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL)";
-        let _ = conn.execute_batch(kv_table_sql);
+        let _ = ensure_kv_store_table(&conn);
         let now = chrono::Utc::now().to_rfc3339();
         let _ = conn.execute(
             "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES ('restore_completed', 'true', ?1)",
@@ -4579,12 +4604,8 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        // Ensure the kv_store table exists (created lazily on first write)
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
-        )
-        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+        // Ensure the kv_store table exists and has updated_at column
+        ensure_kv_store_table(&conn)?;
 
         let result: Option<String> = conn
             .query_row(
@@ -5516,11 +5537,7 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
-        )
-        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+        ensure_kv_store_table(&conn)?;
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
@@ -5575,11 +5592,7 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS kv_store \
-             (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at DATETIME NOT NULL);",
-        )
-        .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
+        ensure_kv_store_table(&conn)?;
 
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(

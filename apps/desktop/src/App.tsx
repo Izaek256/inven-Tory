@@ -258,8 +258,9 @@ export function App(): React.ReactElement {
           return fetchStores();
         })
         .catch((err) => {
+          // Silently handle sync errors - app should work offline
           // eslint-disable-next-line no-console
-          console.error('[App] SYNC ERROR:', err);
+          console.info('[App] Initial sync failed (expected if offline):', err);
         });
 
       return (): void => {
@@ -282,7 +283,11 @@ export function App(): React.ReactElement {
           .then(() => {
             return fetchStores();
           })
-          .catch(() => undefined);
+          .catch((err) => {
+            // Silently handle sync errors - app should work offline
+            // eslint-disable-next-line no-console
+            console.info('[App] Reconnection sync failed (expected if offline):', err);
+          });
       }
     };
 
