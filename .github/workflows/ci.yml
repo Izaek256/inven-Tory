@@ -158,17 +158,18 @@ jobs:
         run: |
           cd apps/desktop
 
-          # Patch tauri.conf.json: enable devtools + skip bundling for CI
+          # Patch tauri.conf.json: enable devtools + skip WiX bundling on Windows
           node -e "
             const fs = require('fs');
             const cfg = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
             if (cfg.app && cfg.app.windows && cfg.app.windows[0]) {
               cfg.app.windows[0].devtools = true;
             }
-            // Skip all bundle targets — we only need the raw binary for
-            // smoke testing.  Avoids WiX 'file not found' on Windows CI.
-            if (cfg.bundle) {
-              cfg.bundle.targets = [];
+            // On Windows, only build NSIS — skip MSI which requires WiX
+            // and fails with 'file not found' on GitHub Actions runners.
+            // Linux keeps its default targets (AppImage, deb).
+            if (process.platform === 'win32' && cfg.bundle) {
+              cfg.bundle.targets = ['nsis'];
             }
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(cfg, null, 2) + '\n');
           "
