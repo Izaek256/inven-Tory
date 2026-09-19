@@ -158,12 +158,17 @@ jobs:
         run: |
           cd apps/desktop
 
-          # Patch tauri.conf.json to enable devtools for CI smoke tests
+          # Patch tauri.conf.json: enable devtools + skip bundling for CI
           node -e "
             const fs = require('fs');
             const cfg = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
             if (cfg.app && cfg.app.windows && cfg.app.windows[0]) {
               cfg.app.windows[0].devtools = true;
+            }
+            // Skip all bundle targets — we only need the raw binary for
+            // smoke testing.  Avoids WiX 'file not found' on Windows CI.
+            if (cfg.bundle) {
+              cfg.bundle.targets = [];
             }
             fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(cfg, null, 2) + '\n');
           "
@@ -171,11 +176,7 @@ jobs:
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             npx tauri build --features debug
           else
-            # Skip MSI/NSIS bundling for CI test builds — we only need the
-            # raw executable for the smoke test.  This avoids the WiX
-            # "file not found" issue on GitHub Actions Windows runners.
             npx tauri build --features debug \
-              --bundles none \
               --config '{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}'
           fi
 
