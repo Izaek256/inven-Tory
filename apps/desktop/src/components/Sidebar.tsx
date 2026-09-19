@@ -16,6 +16,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onToggleCollapse,
 }) => {
   const [moreOpen, setMoreOpen] = useState(false);
+  const [hoveredItem, setHoveredItem] = useState<string | null>(null);
 
   useEffect(() => {
     const isMoreView = MORE_NAV_ITEMS.some((item) => item.id === currentView);
@@ -41,9 +42,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         className={`nav-item ${isActive ? 'active' : ''}`}
         onClick={(): void => onNavigate(item.id)}
         data-testid={`nav-${item.id}`}
+        title={collapsed ? item.label : undefined}
+        onMouseEnter={() => collapsed && setHoveredItem(item.id)}
+        onMouseLeave={() => collapsed && setHoveredItem(null)}
       >
         <Icon size={18} />
         {!collapsed && <span>{item.label}</span>}
+        {collapsed && hoveredItem === item.id && <span className="nav-tooltip">{item.label}</span>}
       </button>
     );
   };
@@ -61,9 +66,13 @@ export const Sidebar: React.FC<SidebarProps> = ({
         onClick={() => setMoreOpen(!moreOpen)}
         aria-expanded={moreOpen}
         data-testid="nav-more-toggle"
+        title={collapsed ? 'More' : undefined}
+        onMouseEnter={() => collapsed && setHoveredItem('more')}
+        onMouseLeave={() => collapsed && setHoveredItem(null)}
       >
         {!collapsed && <span>More</span>}
         {moreOpen ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+        {collapsed && hoveredItem === 'more' && <span className="nav-tooltip">More</span>}
       </button>
 
       {moreOpen && (
@@ -78,9 +87,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className={`nav-item ${isActive ? 'active' : ''}`}
                 onClick={() => handleMoreClick(item.id)}
                 data-testid={`nav-${item.id}`}
+                title={collapsed ? item.label : undefined}
+                onMouseEnter={() => collapsed && setHoveredItem(item.id)}
+                onMouseLeave={() => collapsed && setHoveredItem(null)}
               >
                 <Icon size={18} />
                 {!collapsed && <span>{item.label}</span>}
+                {collapsed && hoveredItem === item.id && (
+                  <span className="nav-tooltip">{item.label}</span>
+                )}
               </button>
             );
           })}

@@ -87,12 +87,9 @@ function _formatRelativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-function _classifyStock(
-  quantity: number,
-  threshold: number | null | undefined,
-): 'in' | 'low' | 'out' {
+function _classifyStock(quantity: number): 'in' | 'low' | 'out' {
   if (quantity <= 0) return 'out';
-  if (threshold != null && quantity <= threshold) return 'low';
+  if (quantity < 5) return 'low';
   return 'in';
 }
 
@@ -437,7 +434,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       }
       const entry = byCategory.get(cat)!;
       const totalQty = qtyOf(p);
-      const cls = _classifyStock(totalQty, p.low_stock_threshold);
+      const cls = _classifyStock(totalQty);
       if (cls === 'in') entry.in++;
       else if (cls === 'low') entry.low++;
       else entry.out++;
@@ -492,11 +489,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       .slice(0, 10);
   }, [transactionsInRange, transactionsPriorRange, products]);
 
+  const LOW_STOCK_THRESHOLD = 5;
+
   const lowStockAlerts = useMemo(() => {
     return scopedProducts
       .filter((p) => {
         const totalQty = qtyOf(p);
-        return p.low_stock_threshold != null && totalQty <= p.low_stock_threshold;
+        return totalQty > 0 && totalQty < LOW_STOCK_THRESHOLD;
       })
       .map((p) => {
         const totalQty = qtyOf(p);
@@ -504,7 +503,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           product_id: p.id,
           product_name: p.name,
           current_stock: totalQty,
-          threshold: p.low_stock_threshold ?? null,
+          threshold: LOW_STOCK_THRESHOLD,
           category: p.category,
         };
       })
