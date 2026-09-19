@@ -269,7 +269,7 @@ jobs:
             New-Item -ItemType Directory -Path $installDir -Force | Out-Null
             Start-Process $nsisExe.FullName -ArgumentList "/S /D=$installDir" -Wait
             Start-Sleep 3
-            $appExe = Get-ChildItem -Path $installDir -Filter "invenTory.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            $appExe = Get-ChildItem -Path $installDir -Filter "inven-tory-desktop.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
           } else {
             # No installer — raw binary from --bundles none
             Write-Host "No NSIS installer found, using raw binary"
