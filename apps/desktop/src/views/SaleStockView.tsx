@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Check, AlertCircle, Eye, EyeOff, ArrowUpCircle } from 'lucide-react';
+import { Check, AlertCircle, ArrowUpCircle } from 'lucide-react';
 import { searchProductsFts5, getProductsByStore } from '../services/tauriProductService';
 import {
   sellStock,
@@ -8,7 +8,7 @@ import {
 } from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { CreateTransactionInput } from '../types/transaction';
-import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem, Button } from '@invenTory/ui';
+import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem } from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 // ─── Entry log (session-level committed rows) ─────────────────────────────────
@@ -55,7 +55,6 @@ export const SaleStockView: React.FC = () => {
   const { activeStoreId } = useActiveStore();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<boolean>(false);
-  const [showEntryLog, setShowEntryLog] = useState<boolean>(true);
   const [entryLog, setEntryLog] = useState<EntryLogItem[]>([]);
 
   // Right-panel state: all products (shown by default) + live search results
@@ -428,17 +427,6 @@ export const SaleStockView: React.FC = () => {
             </p>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setShowEntryLog(!showEntryLog)}
-            data-testid="toggle-entry-log"
-          >
-            {showEntryLog ? <EyeOff size={16} /> : <Eye size={16} />}
-            <span>{showEntryLog ? 'Hide Log' : 'Show Log'}</span>
-          </Button>
-        </div>
       </div>
 
       {/* Toasts */}
@@ -496,7 +484,7 @@ export const SaleStockView: React.FC = () => {
           />
 
           {/* ── Session entry log ──────────────────────────────────────── */}
-          {showEntryLog && entryLog.length > 0 && (
+          {entryLog.length > 0 && (
             <div style={{ marginTop: '24px' }}>
               <h3
                 style={{

@@ -99,6 +99,32 @@ export async function getProducts(): Promise<Product[]> {
   throw new Error('[ProductService] getProducts() requires the desktop app runtime.');
 }
 
+export async function getProductsPaginated(limit: number, offset: number): Promise<Product[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<Product[]>('get_products_paginated', { limit, offset });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[ProductService] getProductsPaginated failed:', err);
+      throw new Error(`Failed to load products: ${String(err)}`);
+    }
+  }
+  throw new Error('[ProductService] getProductsPaginated() requires the desktop app runtime.');
+}
+
+export async function getProductsCount(): Promise<number> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<number>('get_products_count');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[ProductService] getProductsCount failed:', err);
+      throw new Error(`Failed to count products: ${String(err)}`);
+    }
+  }
+  throw new Error('[ProductService] getProductsCount() requires the desktop app runtime.');
+}
+
 export async function searchProducts(query: string, storeId?: string | null): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {

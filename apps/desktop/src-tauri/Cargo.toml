@@ -1,11 +1,15 @@
 [package]
 name = "inven-tory-desktop"
-version = "1.1.2"
+version = "1.1.4"
 description = "invenTory desktop app"
 authors = ["invenTory Team"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[features]
+default = []
+debug = ["tauri/devtools"]
 
 [lib]
 name = "inven_tory_desktop_lib"

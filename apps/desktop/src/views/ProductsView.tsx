@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
 import { Store } from '../types/store';
-import { getProducts, createProduct, updateProduct } from '../services/tauriProductService';
+import {
+  getProductsPaginated,
+  getProductsCount,
+  createProduct,
+  updateProduct,
+} from '../services/tauriProductService';
 import { getStockBalancesForStore } from '../services/tauriTransactionService';
 import { getStores } from '../services/tauriStoreService';
 import { ProductModal } from '../components/ProductModal';
@@ -18,13 +24,14 @@ interface ProductsViewProps {
 export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }) => {
   const { activeStoreId } = useActiveStore();
   const [products, setProducts] = useState<Product[]>([]);
+  const [totalProducts, setTotalProducts] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [offset, setOffset] = useState(0);
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const LIMIT = 50;
+  const PAGE_SIZE = 50;
 
   // Cross-store breakdown state (Task I): per-product, per-store AVAILABLE qty.
   const [stores, setStores] = useState<Store[]>([]);
@@ -45,8 +52,21 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     setLoading(true);
     setError(null);
     try {
-      const data = await getProducts();
+      let data: Product[];
+      let count: number;
+      if (searchQuery.trim()) {
+        // Use search_products for search queries (it has its own LIMIT 100)
+        data = await invoke<Product[]>('search_products', { query: searchQuery, storeId: null });
+        count = data.length;
+      } else {
+        // Use paginated get_products for normal listing
+        [data, count] = await Promise.all([
+          getProductsPaginated(PAGE_SIZE, (currentPage - 1) * PAGE_SIZE),
+          getProductsCount(),
+        ]);
+      }
       setProducts(data);
+      setTotalProducts(count);
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[ProductsView] Failed to fetch products:', err);
@@ -54,7 +74,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [currentPage, searchQuery]);
 
   // Store list — read-only reference data for the breakdown columns
   useEffect(() => {
@@ -113,41 +133,28 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   }, [fetchProductsList]);
 
   // Filtered products list — search only (Category/Status columns removed
-  // per Phase 3, Task I)
-  const filteredProducts = products.filter((p) => {
-    const term = searchQuery.toLowerCase().trim();
-    const matchesSearch =
-      !term ||
-      p.name.toLowerCase().includes(term) ||
-      p.sku.toLowerCase().includes(term) ||
-      (p.brand && p.brand.toLowerCase().includes(term)) ||
-      (p.model && p.model.toLowerCase().includes(term)) ||
-      (p.barcode && p.barcode.toLowerCase().includes(term)) ||
-      (p.alternate_names && p.alternate_names.toLowerCase().includes(term)) ||
-      p.category.toLowerCase().includes(term);
-    return matchesSearch;
-  });
+  // per Phase 3, Task I). When search is active, we use the already-loaded
+  // products (which came from search_products) and don't paginate.
+  // When no search, we use server-side pagination.
+  const isSearching = searchQuery.trim().length > 0;
+  const filteredProducts = isSearching
+    ? products // Already filtered by search_products on the backend
+    : products; // Already paginated by get_products_paginated on the backend
 
-  // Pagination: show 100 products per page
-  const paginatedProducts = filteredProducts.slice(offset, offset + LIMIT);
-  // Note: pagination values (totalPages, currentPage) computed inline when needed
+  const totalPages = Math.ceil(totalProducts / PAGE_SIZE);
 
   const handlePreviousPage = (): void => {
-    const newOffset = Math.max(0, offset - LIMIT);
-    setOffset(newOffset);
+    setCurrentPage((prev) => Math.max(1, prev - 1));
   };
 
   const handleNextPage = (): void => {
-    const newOffset = offset + LIMIT;
-    if (newOffset < filteredProducts.length) {
-      setOffset(newOffset);
-    }
+    setCurrentPage((prev) => Math.min(totalPages, prev + 1));
   };
 
-  // Reset pagination when search query changes or products are reloaded
+  // Reset pagination when search query changes
   useEffect(() => {
-    setOffset(0);
-  }, [searchQuery, products.length]);
+    setCurrentPage(1);
+  }, [searchQuery]);
 
   const handleOpenCreateModal = (): void => {
     setActionError(null);
@@ -457,17 +464,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
               Product Master List ({filteredProducts.length})
             </h3>
           </div>
-          {filteredProducts.length > LIMIT && (
+          {filteredProducts.length > 0 && totalPages > 1 && (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <span style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>
-                Showing {offset + 1}-{Math.min(offset + LIMIT, filteredProducts.length)} of{' '}
-                {filteredProducts.length} products
+                Showing {(currentPage - 1) * PAGE_SIZE + 1}-
+                {Math.min(currentPage * PAGE_SIZE, totalProducts)} of {totalProducts} products (Page{' '}
+                {currentPage} of {totalPages})
               </span>
               <Button
                 variant="secondary"
                 size="sm"
                 onClick={handlePreviousPage}
-                disabled={offset === 0}
+                disabled={currentPage === 1}
               >
                 <ChevronLeft size={14} />
                 Previous
@@ -476,7 +484,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
                 variant="secondary"
                 size="sm"
                 onClick={handleNextPage}
-                disabled={offset + LIMIT >= filteredProducts.length}
+                disabled={currentPage >= totalPages}
               >
                 Next
                 <ChevronRight size={14} />
@@ -508,7 +516,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           <div className="products-cross-store-wrap">
             <DataTable
               columns={columns}
-              rows={paginatedProducts}
+              rows={filteredProducts}
               rowKey={(p) => p.id}
               data-testid="products-table"
               emptySlot={

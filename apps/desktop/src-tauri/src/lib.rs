@@ -201,7 +201,7 @@ pub struct InventoryTransaction {
     pub original_transaction_id: Option<String>,
 }
 
-fn get_db_path() -> PathBuf {
+pub fn get_db_path() -> PathBuf {
     if let Ok(env_path) = env::var("INVEN_TORY_DB_PATH") {
         return PathBuf::from(env_path);
     }
@@ -220,11 +220,11 @@ fn get_db_path() -> PathBuf {
         } else if cfg!(target_os = "macos") {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data"))
+                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.invenTory.desktop").join("data"))
         } else {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data"))
+                .map(|d| PathBuf::from(d).join(".local").join("share").join("invenTory").join("data"))
         };
         if let Some(dir) = app_data {
             if cfg!(not(debug_assertions)) || dir.exists() {
@@ -265,11 +265,11 @@ fn get_db_path() -> PathBuf {
         } else if cfg!(target_os = "macos") {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.inventorytory.desktop").join("data"))
+                .map(|d| PathBuf::from(d).join("Library").join("Application Support").join("com.invenTory.desktop").join("data"))
         } else {
             env::var("HOME")
                 .ok()
-                .map(|d| PathBuf::from(d).join(".local").join("share").join("inventorytory").join("data"))
+                .map(|d| PathBuf::from(d).join(".local").join("share").join("invenTory").join("data"))
         };
         if let Some(dir) = fallback {
             // Ensure parent directory exists
@@ -698,6 +698,11 @@ fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
         );
         CREATE UNIQUE INDEX IF NOT EXISTS ix_products_sku ON products (sku);
         CREATE INDEX IF NOT EXISTS ix_products_barcode ON products (barcode);
+        CREATE INDEX IF NOT EXISTS ix_products_name ON products (name);
+        CREATE INDEX IF NOT EXISTS ix_products_category ON products (category);
+        CREATE INDEX IF NOT EXISTS ix_products_brand ON products (brand);
+        CREATE INDEX IF NOT EXISTS ix_products_model ON products (model);
+        CREATE INDEX IF NOT EXISTS ix_products_is_active ON products (is_active);
 
         CREATE TABLE IF NOT EXISTS stock_balances (
             id VARCHAR(36) PRIMARY KEY,
@@ -1882,9 +1887,18 @@ pub fn apply_restore_background(
 
     #[tauri::command]
     pub fn get_products() -> Result<Vec<Product>, String> {
+        get_products_paginated(None, None)
+    }
+
+    /// Get products with optional pagination. If limit/offset are None, returns all products.
+    #[tauri::command]
+    pub fn get_products_paginated(limit: Option<i32>, offset: Option<i32>) -> Result<Vec<Product>, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let lim = limit.unwrap_or(1000).min(5000);
+        let off = offset.unwrap_or(0);
 
         let mut stmt = conn
             .prepare(
@@ -1894,12 +1908,13 @@ pub fn apply_restore_background(
                  FROM products p \
                  LEFT JOIN stock_balances sb ON sb.product_id = p.id \
                  GROUP BY p.id \
-                 ORDER BY p.name ASC"
+                 ORDER BY p.name ASC \
+                 LIMIT ?1 OFFSET ?2"
             )
             .map_err(|e| format!("Failed to prepare database query: {}", e))?;
 
         let prod_iter = stmt
-            .query_map([], |row| {
+            .query_map(params![lim, off], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
                 let low_stock_threshold: Option<i32> = row.get(11)?;
@@ -1934,16 +1949,118 @@ pub fn apply_restore_background(
     }
 
     #[tauri::command]
+    pub fn get_products_count() -> Result<i32, String> {
+        let db_path = get_db_path();
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Failed to open database: {}", e))?;
+
+        let count: i32 = conn
+            .query_row("SELECT COUNT(*) FROM products WHERE is_active = 1", [], |row| row.get(0))
+            .map_err(|e| format!("Failed to count products: {}", e))?;
+
+        Ok(count)
+    }
+
+    #[tauri::command]
     pub fn search_products(query: String, store_id: Option<String>) -> Result<Vec<Product>, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        let term = format!("%{}%", query.trim().to_lowercase());
+        let term = query.trim().to_lowercase();
+        if term.is_empty() {
+            return Ok(Vec::new());
+        }
 
-        // When store_id is provided, stock_quantity is scoped to that store's
-        // AVAILABLE balance (correct for sale / receiving operations). Without
-        // it the quantity aggregates across all stores (catalogue total).
+        // Try FTS5 first for better performance on large datasets
+        let fts_result = (|| -> Result<Vec<Product>, String> {
+            // Check if FTS5 table exists
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='products_fts'",
+                    [],
+                    |row| row.get::<_, i32>(0),
+                )
+                .unwrap_or(0)
+                == 1;
+            if !exists {
+                return Err("FTS5 not available".to_string());
+            }
+
+            // Build tokenized prefix query for FTS5
+            let tokens: Vec<String> = term
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|s| !s.is_empty())
+                .map(|s| format!("\"{}\"*", s))
+                .collect();
+
+            if tokens.is_empty() {
+                return Err("No tokens".to_string());
+            }
+            let fts_query = tokens.join(" ");
+
+            let mut stmt = conn
+                .prepare(
+                    "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
+                     p.alternate_names, p.serial_tracking_enabled, p.is_active, p.low_stock_threshold, p.created_at, p.updated_at, \
+                     COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
+                     FROM ( \
+                        SELECT rowid, bm25(products_fts) AS rank \
+                        FROM products_fts \
+                        WHERE products_fts MATCH ?1 \
+                        ORDER BY rank ASC \
+                        LIMIT 100 \
+                     ) fts \
+                     JOIN products p ON p.rowid = fts.rowid \
+                     LEFT JOIN stock_balances sb \
+                        ON sb.product_id = p.id AND sb.stock_bucket = 'AVAILABLE' AND sb.store_id = COALESCE(?2, sb.store_id) \
+                     GROUP BY p.id \
+                     ORDER BY fts.rank ASC"
+                )
+                .map_err(|e| format!("Failed to prepare FTS5 search query: {}", e))?;
+
+            let prod_iter = stmt
+                .query_map(params![fts_query, store_id], |row| {
+                    let st_int: i32 = row.get(9)?;
+                    let active_int: i32 = row.get(10)?;
+                    let low_stock_threshold: Option<i32> = row.get(11)?;
+                    let stock_qty: i32 = row.get(14)?;
+                    Ok(Product {
+                        id: row.get(0)?,
+                        sku: row.get(1)?,
+                        name: row.get(2)?,
+                        brand: row.get(3)?,
+                        model: row.get(4)?,
+                        category: row.get(5)?,
+                        unit: row.get(6)?,
+                        barcode: row.get(7)?,
+                        alternate_names: row.get(8)?,
+                        serial_tracking_enabled: st_int != 0,
+                        is_active: active_int != 0,
+                        low_stock_threshold,
+                        created_at: row.get(12)?,
+                        updated_at: row.get(13)?,
+                        stock_quantity: Some(stock_qty),
+                    })
+                })
+                .map_err(|e| format!("Failed to execute FTS5 product search: {}", e))?;
+
+            let mut products = Vec::new();
+            for prod in prod_iter {
+                let p = prod.map_err(|e| format!("Failed to read FTS5 product record: {}", e))?;
+                products.push(p);
+            }
+            Ok(products)
+        })();
+
+        if let Ok(products) = fts_result {
+            if !products.is_empty() {
+                return Ok(products);
+            }
+        }
+
+        // Fallback to LIKE query if FTS5 returned 0 results or encountered an issue
+        let like_term = format!("%{}%", term);
         let mut stmt = conn
             .prepare(
                 "SELECT p.id, p.sku, p.name, p.brand, p.model, p.category, p.unit, p.barcode, \
@@ -1954,12 +2071,13 @@ pub fn apply_restore_background(
                  WHERE LOWER(p.name) LIKE ?1 OR LOWER(p.sku) LIKE ?1 OR LOWER(COALESCE(p.model, '')) LIKE ?1 \
                     OR LOWER(COALESCE(p.barcode, '')) LIKE ?1 OR LOWER(COALESCE(p.alternate_names, '')) LIKE ?1 \
                  GROUP BY p.id \
-                 ORDER BY p.name ASC"
+                 ORDER BY p.name ASC \
+                 LIMIT 100"
             )
             .map_err(|e| format!("Failed to prepare search query: {}", e))?;
 
         let prod_iter = stmt
-            .query_map(params![term, store_id], |row| {
+            .query_map(params![like_term, store_id], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
                 let low_stock_threshold: Option<i32> = row.get(11)?;
@@ -2463,7 +2581,7 @@ pub fn apply_restore_background(
     #[tauri::command]
     pub fn receive_stock(input: ReceiveStockInput) -> Result<InventoryTransaction, String> {
         let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
+        let mut conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
         // Validate inputs
@@ -2476,8 +2594,11 @@ pub fn apply_restore_background(
         let transaction_id = generate_id("TX");
         let now = now_iso();
 
+        // Use a transaction to batch all writes into a single fsync
+        let tx = conn.transaction().map_err(|e| format!("Failed to begin transaction: {}", e))?;
+
         // Insert RECEIPT transaction (FR-MOV-001, Section 13.1)
-        conn.execute(
+        tx.execute(
             "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, sync_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 transaction_id,
@@ -2491,15 +2612,14 @@ pub fn apply_restore_background(
                 input.user_id,
                 input.device_id,
                 input.reference_number,
-                input.supplier, // Store supplier in reason_code for now (full Supplier entity is Issue 21)
+                input.supplier,
                 "PENDING"
             ],
         )
         .map_err(|e| format!("Failed to insert inventory transaction: {}", e))?;
 
         // Update stock_balances projection (Section 9.4)
-        // Use UPSERT pattern: insert if not exists, otherwise update
-        conn.execute(
+        tx.execute(
             "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
             params![
                 format!("SB-{}-{}-AVAILABLE", input.store_id, input.product_id),
@@ -2530,7 +2650,7 @@ pub fn apply_restore_background(
         }))
         .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 outbox_id,
@@ -2543,6 +2663,9 @@ pub fn apply_restore_background(
             ],
         )
         .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
+
+        // Commit the transaction
+        tx.commit().map_err(|e| format!("Failed to commit transaction: {}", e))?;
 
         // Update day_books / day_book_entries (non-fatal — best effort)
         let _ = upsert_day_book_entry(
@@ -2607,7 +2730,7 @@ pub fn apply_restore_background(
     #[tauri::command]
     pub fn sell_stock(input: SellStockInput) -> Result<InventoryTransaction, String> {
         let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
+        let mut conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
         // Validate inputs
@@ -2646,8 +2769,11 @@ pub fn apply_restore_background(
         let now = now_iso();
         let quantity_delta = -input.quantity; // SALE is a negative delta
 
+        // Use a transaction to batch all writes into a single fsync
+        let tx = conn.transaction().map_err(|e| format!("Failed to begin transaction: {}", e))?;
+
         // Insert SALE transaction (FR-MOV-002, Section 13.2)
-        conn.execute(
+        tx.execute(
             "INSERT INTO inventory_transactions (transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, sync_status) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 transaction_id,
@@ -2667,7 +2793,7 @@ pub fn apply_restore_background(
         .map_err(|e| format!("Failed to insert inventory transaction: {}", e))?;
 
         // Decrease stock_balances projection (Section 9.4)
-        conn.execute(
+        tx.execute(
             "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(store_id, product_id, stock_bucket) DO UPDATE SET quantity = quantity + ?5, updated_at = ?6",
             params![
                 format!("SB-{}-{}-AVAILABLE", input.store_id, input.product_id),
@@ -2697,7 +2823,7 @@ pub fn apply_restore_background(
         }))
         .map_err(|e| format!("Failed to prepare sync data: {}", e))?;
 
-        conn.execute(
+        tx.execute(
             "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 outbox_id,
@@ -2710,6 +2836,9 @@ pub fn apply_restore_background(
             ],
         )
         .map_err(|e| format!("Failed to queue change for sync: {}", e))?;
+
+        // Commit the transaction
+        tx.commit().map_err(|e| format!("Failed to commit transaction: {}", e))?;
 
         // Update day_books / day_book_entries (non-fatal)
         let _ = upsert_day_book_entry(
@@ -5268,28 +5397,22 @@ pub fn apply_restore_background(
 
     /// Delete all product-related data from local SQLite (GLOBAL_ADMIN only).
     /// This wipes products, stock_balances, inventory_transactions, day_books, day_book_entries,
-    /// transfers, outbox_events, and devices. Users and stores are preserved.
+    /// transfers, outbox_events, and devices. Users and stores are preserved (including active status).
     #[tauri::command]
     pub fn delete_all_data(confirm_store_name: String) -> Result<String, String> {
         let db_path = get_db_path();
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        // Verify the store name matches the active store (security check)
+        // Verify the store name matches an active store (security check)
+        // Check if any active store matches the provided name (case-insensitive, trimmed)
         let store_name: String = conn
             .query_row(
-                "SELECT name FROM stores WHERE is_active = 1 LIMIT 1",
-                [],
+                "SELECT name FROM stores WHERE is_active = 1 AND TRIM(LOWER(name)) = TRIM(LOWER(?1)) LIMIT 1",
+                params![confirm_store_name],
                 |row| row.get(0),
             )
-            .map_err(|_| "No active store found".to_string())?;
-
-        if store_name != confirm_store_name {
-            return Err(format!(
-                "Store name confirmation failed. Expected '{}', got '{}'.",
-                store_name, confirm_store_name
-            ));
-        }
+            .map_err(|_| format!("No active store found with name '{}'", confirm_store_name))?;
 
         let now = now_iso();
 
@@ -5319,19 +5442,13 @@ pub fn apply_restore_background(
         conn.execute("DELETE FROM devices", [])
             .map_err(|e| format!("Failed to delete devices: {}", e))?;
 
-        // Reset stores to inactive except the first one (keep one store for re-auth)
+        // Preserve ALL stores with their active status intact
+        // Only update the updated_at timestamp
         conn.execute(
-            "UPDATE stores SET is_active = 0, updated_at = ?1 WHERE code != (SELECT code FROM stores ORDER BY id LIMIT 1)",
+            "UPDATE stores SET updated_at = ?1",
             params![now],
         )
-        .map_err(|e| format!("Failed to deactivate stores: {}", e))?;
-
-        // Reset the first store to active
-        conn.execute(
-            "UPDATE stores SET is_active = 1, updated_at = ?1 WHERE code = (SELECT code FROM stores ORDER BY id LIMIT 1)",
-            params![now],
-        )
-        .map_err(|e| format!("Failed to activate primary store: {}", e))?;
+        .map_err(|e| format!("Failed to update stores timestamp: {}", e))?;
 
         // Clear kv_store (sync timestamps, etc.)
         conn.execute("DELETE FROM kv_store", [])
@@ -5357,7 +5474,7 @@ pub fn apply_restore_background(
         .ok();
 
         Ok(format!(
-            "All product-related data wiped successfully. Store '{}' preserved for authentication.",
+            "All product-related data wiped successfully. Store '{}' and all user accounts preserved.",
             store_name
         ))
     }
@@ -5642,6 +5759,11 @@ pub fn run() {
                  CREATE INDEX IF NOT EXISTS idx_inventory_tx_movement_date ON inventory_transactions(movement_type, occurred_at); \
                  CREATE INDEX IF NOT EXISTS idx_stock_balances_store_product ON stock_balances(store_id, product_id, stock_bucket); \
                  CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku); \
+                 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name); \
+                 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category); \
+                 CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand); \
+                 CREATE INDEX IF NOT EXISTS idx_products_model ON products(model); \
+                 CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active); \
                  CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at); \
                  CREATE INDEX IF NOT EXISTS idx_stores_updated_at ON stores(updated_at);",
             );
@@ -5664,6 +5786,8 @@ pub fn run() {
             commands::toggle_store_active,
             commands::register_device,
             commands::get_products,
+            commands::get_products_paginated,
+            commands::get_products_count,
             commands::get_products_by_store,
             commands::search_products,
             commands::search_products_fts5,
