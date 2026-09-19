@@ -102,7 +102,7 @@ jobs:
 
   build-desktop:
     name: Build Desktop (Tauri)
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/ci-build-launch-failure'
+    if: github.ref == 'refs/heads/main'
     strategy:
       matrix:
         include:
