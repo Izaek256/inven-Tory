@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "invenTory",
-  "version": "1.1.3",
-  "identifier": "com.inventorytory.desktop",
+  "version": "1.1.4",
+  "identifier": "com.invenTory.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -39,7 +39,15 @@
       "icons/icon.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "category": "Business",
+    "shortDescription": "Offline-first inventory management system",
+    "longDescription": "invenTory is an offline-first inventory management system for managing products, stock movements, transfers, returns, adjustments, and multiple stores.",
+    "homepage": "https://github.com/Izaek256/inven-Tory",
+    "publisher": "Phantom Technologies",
+    "copyright": "Copyright © 2026 Phantom Technologies",
+    "license": "MIT",
+    "licenseFile": "../../../LICENSE"
   },
   "plugins": {
     "updater": {
@@ -48,7 +56,8 @@
         "https://github.com/Izaek256/inven-Tory/releases/latest/download/latest-linux-x86_64.json"
       ],
       "dialog": false,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ3OTU1MkYwODI0NzU4RDEKUldUUldFZUM4RktWMTZlelRsb1NrM3VEY0c5bWlETmx0eFhaYTRvekxoOTh0aG5DSmplYXFtcGQK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4NjQwMDRGQTc4NEM1ClJXVEZoS2RQQUdUWUFIWWVIU01BU21hTCtoSUY1eHo5RlhCZzRQcVEySy8vZWNYTEhJOHlQZDFtCg=="
+
     }
   }
 }

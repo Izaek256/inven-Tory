@@ -1,6 +1,6 @@
 {
   "name": "@invenTory/mobile",
-  "version": "1.1.0",
+  "version": "1.1.4",
   "private": true,
   "description": "invenTory read-only mobile companion — React + TypeScript (FR-MOBILE)",
   "scripts": {

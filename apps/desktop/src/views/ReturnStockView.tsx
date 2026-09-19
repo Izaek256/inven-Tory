@@ -471,9 +471,9 @@ export const ReturnStockView: React.FC = () => {
               value={stockBucket}
               onChange={(e): void => setStockBucket(e.target.value as StockBucket)}
               options={[
-                { value: 'AVAILABLE', label: 'AVAILABLE — Saleable / Good Condition' },
-                { value: 'DAMAGED', label: 'DAMAGED — Damaged / Defective Stock' },
-                { value: 'QUARANTINE', label: 'QUARANTINE — Under Inspection / Quarantine' },
+                { value: 'AVAILABLE', label: 'AVAILABLE - Saleable / Good Condition' },
+                { value: 'DAMAGED', label: 'DAMAGED - Damaged / Defective Stock' },
+                { value: 'QUARANTINE', label: 'QUARANTINE - Under Inspection / Quarantine' },
               ]}
             />
 
@@ -601,10 +601,10 @@ export const ReturnStockView: React.FC = () => {
                       <strong>Bucket:</strong> {entry.stockBucket}
                     </div>
                     <div>
-                      <strong>Ref:</strong> {entry.referenceNumber || '—'}
+                      <strong>Ref:</strong> {entry.referenceNumber || '-'}
                     </div>
                     <div>
-                      <strong>Reason:</strong> {entry.reason || '—'}
+                      <strong>Reason:</strong> {entry.reason || '-'}
                     </div>
                     <div>
                       <strong>Time:</strong> {entry.timestamp}

@@ -1,6 +1,6 @@
 {
   "name": "@invenTory/web",
-  "version": "1.1.0",
+  "version": "1.1.4",
   "private": true,
   "description": "invenTory remote management dashboard — React + TypeScript",
   "scripts": {

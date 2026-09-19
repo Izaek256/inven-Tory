@@ -3,10 +3,16 @@ name: CI
 on:
   push:
     branches:
-      - '**'
+      - "**"
   pull_request:
-    branches: [ develop, main ]
+    branches: [develop, main]
   workflow_dispatch:
+    inputs:
+      debug_build:
+        description: "Build with devtools + verbose logging (for blank-window diagnosis)"
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   lint-python:
@@ -18,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install lint tools
         run: |
@@ -40,7 +46,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -61,8 +67,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install Node dependencies
         run: npm ci
@@ -85,8 +91,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install Node dependencies
         run: npm ci
@@ -107,13 +113,20 @@ jobs:
 
     runs-on: ${{ matrix.runner }}
 
+    env:
+      # Always build CI desktop with the debug feature so devtools are
+      # available for smoke-test console capture.  This flag only affects
+      # the Rust binary (enables WebKit devtools); it does NOT change the
+      # frontend bundle or ship debug UI to end users.
+      BUILD_DEBUG: ${{ github.event.inputs.debug_build == 'true' || true }}
+
     steps:
       - uses: actions/checkout@v5
 
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -122,26 +135,214 @@ jobs:
         if: matrix.target == 'linux-x86_64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-0 xvfb
 
       - name: Install frontend dependencies
         run: |
           cd apps/desktop
           npm ci
 
+      # ── Build ───────────────────────────────────────────────────────
+      # We always pass --features debug so devtools are available for the
+      # smoke-test.  The debug feature only enables WebKit devtools at the
+      # Rust level; it does not alter the frontend bundle.
+      #
+      # To enable devtools in the window config we temporarily patch
+      # tauri.conf.json before building.  This avoids --config shell
+      # escaping issues on Windows (PowerShell / cmd.exe).
       - name: Build Tauri app
         shell: bash
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
         run: |
           cd apps/desktop
-          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            npm run tauri build
-          else
-            npm run tauri build -- --config '{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}'
+
+          # Fail loudly if the build-time API URL is missing — this is the
+          # #1 cause of blank-window CI builds.  The secret must be set in
+          # GitHub repo Settings → Secrets → Actions.
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "::error::VITE_API_BASE_URL secret is not set. The built app will open to a blank window."
+            echo "Set it in GitHub repo Settings → Secrets and variables → Actions."
+            exit 1
           fi
 
+          # Patch tauri.conf.json: enable devtools + skip WiX bundling on Windows
+          node -e "
+            const fs = require('fs');
+            const cfg = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+            if (cfg.app && cfg.app.windows && cfg.app.windows[0]) {
+              cfg.app.windows[0].devtools = true;
+            }
+            // On Windows, only build NSIS — skip MSI which requires WiX
+            // and fails with 'file not found' on GitHub Actions runners.
+            // Linux keeps its default targets (AppImage, deb).
+            if (process.platform === 'win32' && cfg.bundle) {
+              cfg.bundle.targets = ['nsis'];
+            }
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(cfg, null, 2) + '\n');
+          "
+
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            npx tauri build --features debug
+          else
+            npx tauri build --features debug \
+              --config '{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}'
+          fi
+
+      # ── Smoke test: Linux ───────────────────────────────────────────
+      # Launches the actual binary (not just --version), lets it try to
+      # render for a few seconds, then captures all output.  WebKitGTK
+      # prints diagnostics to stderr; we also set env vars that help it
+      # render under Xvfb.
+      - name: Smoke test Linux build
+        if: matrix.target == 'linux-x86_64'
+        env:
+          INVEN_TORY_DEBUG_STARTUP: "1"
+        run: |
+          cd apps/desktop/src-tauri/target/release
+          LOG_DIR="$GITHUB_WORKSPACE/smoke-logs"
+          mkdir -p "$LOG_DIR"
+
+          # Prefer AppImage if it exists (full bundle), otherwise use raw binary
+          BUNDLE_DIR="bundle/appimage"
+          if ls "$BUNDLE_DIR"/*.AppImage 1>/dev/null 2>&1; then
+            chmod +x "$BUNDLE_DIR"/*.AppImage
+            APP=$(ls "$BUNDLE_DIR"/*.AppImage | head -1)
+            echo "--- Launching $APP under Xvfb (15s budget) ---"
+            timeout 15 xvfb-run -a \
+              --server-args="-screen 0 1024x768x24" \
+              env \
+                INVEN_TORY_DEBUG_STARTUP=1 \
+                WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+              "./$APP" \
+              > "$LOG_DIR/app-stdout.log" 2> "$LOG_DIR/app-stderr.log" || true
+          else
+            # No AppImage — raw binary from --bundles none
+            APP="./inven-tory-desktop"
+            if [ ! -f "$APP" ]; then
+              echo "ERROR: Binary not found at $APP"
+              ls -la
+              exit 1
+            fi
+            echo "--- Launching $APP under Xvfb (15s budget) ---"
+            timeout 15 xvfb-run -a \
+              --server-args="-screen 0 1024x768x24" \
+              env \
+                INVEN_TORY_DEBUG_STARTUP=1 \
+                WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+              "$APP" \
+              > "$LOG_DIR/app-stdout.log" 2> "$LOG_DIR/app-stderr.log" || true
+          fi
+
+          echo "--- Exit code: $? ---"
+
+          # Copy the Rust-side debug log if the app created one
+          find "$HOME/.local/share" -name "startup_debug.log" -exec cp {} "$LOG_DIR/" \; 2>/dev/null || true
+          find "$HOME/.config"     -name "startup_debug.log" -exec cp {} "$LOG_DIR/" \; 2>/dev/null || true
+          find /tmp                -name "startup_debug.log" -exec cp {} "$LOG_DIR/" \; 2>/dev/null || true
+
+          # Also grab any startup_crash.log the panic hook may have written
+          find "$HOME/.local/share" -name "startup_crash.log" -exec cp {} "$LOG_DIR/" \; 2>/dev/null || true
+          find "$HOME/.config"     -name "startup_crash.log" -exec cp {} "$LOG_DIR/" \; 2>/dev/null || true
+
+          echo "=== Captured logs ==="
+          ls -la "$LOG_DIR/"
+          echo "=== stdout ==="
+          cat "$LOG_DIR/app-stdout.log" || true
+          echo "=== stderr ==="
+          cat "$LOG_DIR/app-stderr.log" || true
+
+      # ── Smoke test: Windows ─────────────────────────────────────────
+      # Runs the built exe directly (no installer needed).  If an NSIS
+      # installer exists it will use that; otherwise falls back to the
+      # raw binary from --bundles none.
+      - name: Smoke test Windows build
+        if: matrix.target == 'windows-x86_64'
+        shell: pwsh
+        env:
+          INVEN_TORY_DEBUG_STARTUP: "1"
+        run: |
+          $logDir = "$env:GITHUB_WORKSPACE\smoke-logs"
+          New-Item -ItemType Directory -Path $logDir -Force | Out-Null
+
+          # Prefer NSIS installer if it exists
+          $nsisDir = "apps/desktop/src-tauri/target/release/bundle/nsis"
+          $nsisExe = Get-ChildItem "$nsisDir/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+          if ($nsisExe) {
+            Write-Host "Found NSIS installer: $($nsisExe.FullName)"
+            $installDir = "$env:TEMP\invenTory_smoke_test"
+            New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+            Start-Process $nsisExe.FullName -ArgumentList "/S /D=$installDir" -Wait
+            Start-Sleep 3
+            $appExe = Get-ChildItem -Path $installDir -Filter "inven-tory-desktop.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          } else {
+            # No installer — raw binary from --bundles none
+            Write-Host "No NSIS installer found, using raw binary"
+            $appExe = Get-ChildItem "apps/desktop/src-tauri/target/release/inven-tory-desktop.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          if (-not $appExe) {
+            Write-Error "App executable not found. Listing release dir:"
+            Get-ChildItem "apps/desktop/src-tauri/target/release" -ErrorAction SilentlyContinue
+            exit 1
+          }
+
+          Write-Host "Launching $($appExe.FullName) ..."
+
+          # Launch the app and let it run for up to 12 seconds.  We do NOT
+          # pass --version -- we want the real startup path so Tauri, the
+          # webview, and the React bundle all initialize.
+          $proc = Start-Process $appExe.FullName `
+            -PassThru `
+            -RedirectStandardOutput "$logDir\app-stdout.log" `
+            -RedirectStandardError  "$logDir\app-stderr.log"
+
+          # Wait up to 12 seconds for the app to start rendering
+          $deadline = (Get-Date).AddSeconds(12)
+          while (-not $proc.HasExited -and (Get-Date) -lt $deadline) {
+            Start-Sleep 1
+          }
+          if (-not $proc.HasExited) {
+            Write-Host "App did not exit within 12s -- killing"
+            $proc.Kill()
+          }
+
+          # Copy the Rust-side debug log if the app created one
+          $candidates = @(
+            "$env:APPDATA\invenTory",
+            "$env:LOCALAPPDATA\invenTory",
+            "$env:APPDATA\com.invenTory.desktop",
+            "$env:LOCALAPPDATA\com.invenTory.desktop"
+          )
+          foreach ($dir in $candidates) {
+            if (Test-Path "$dir\startup_debug.log") {
+              Copy-Item "$dir\startup_debug.log" "$logDir\" -Force
+              break
+            }
+          }
+
+          echo "=== Captured logs ==="
+          Get-ChildItem $logDir
+          echo "=== stdout ==="
+          Get-Content "$logDir\app-stdout.log" -ErrorAction SilentlyContinue
+          echo "=== stderr ==="
+          Get-Content "$logDir\app-stderr.log" -ErrorAction SilentlyContinue
+
+      # ── Upload smoke-test logs ──────────────────────────────────────
+      - name: Upload smoke-test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-logs-${{ matrix.target }}
+          path: smoke-logs/
+          retention-days: 14
+
+      # ── Upload build artifacts ──────────────────────────────────────
       - name: Upload Windows artifacts
         if: matrix.target == 'windows-x86_64'
         uses: actions/upload-artifact@v4
