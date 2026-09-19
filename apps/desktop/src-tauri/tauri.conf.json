@@ -47,7 +47,7 @@
     "publisher": "Phantom Technologies",
     "copyright": "Copyright © 2026 Phantom Technologies",
     "license": "MIT",
-    "licenseFile": "../../LICENSE"
+    "licenseFile": "../../../LICENSE"
   },
   "plugins": {
     "updater": {
