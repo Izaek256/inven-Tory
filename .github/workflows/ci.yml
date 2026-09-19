@@ -3,13 +3,13 @@ name: CI
 on:
   push:
     branches:
-      - '**'
+      - "**"
   pull_request:
-    branches: [ develop, main ]
+    branches: [develop, main]
   workflow_dispatch:
     inputs:
       debug_build:
-        description: 'Build with devtools + verbose logging (for blank-window diagnosis)'
+        description: "Build with devtools + verbose logging (for blank-window diagnosis)"
         required: false
         default: false
         type: boolean
@@ -24,7 +24,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install lint tools
         run: |
@@ -46,7 +46,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
@@ -67,8 +67,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install Node dependencies
         run: npm ci
@@ -91,8 +91,8 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install Node dependencies
         run: npm ci
@@ -126,7 +126,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '22'
+          node-version: "22"
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -171,12 +171,16 @@ jobs:
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
             npm run tauri build -- --features debug
           else
+            # Skip MSI/NSIS bundling for CI test builds — we only need the
+            # raw executable for the smoke test.  This avoids the WiX
+            # "file not found" issue on GitHub Actions Windows runners.
             npm run tauri build -- --features debug \
+              --bundles none \
               --config '{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}'
           fi
 
       # ── Smoke test: Linux ───────────────────────────────────────────
-      # Launches the actual AppImage (not just --version), lets it try to
+      # Launches the actual binary (not just --version), lets it try to
       # render for a few seconds, then captures all output.  WebKitGTK
       # prints diagnostics to stderr; we also set env vars that help it
       # render under Xvfb.
@@ -185,25 +189,42 @@ jobs:
         env:
           INVEN_TORY_DEBUG_STARTUP: "1"
         run: |
-          cd apps/desktop/src-tauri/target/release/bundle/appimage
-          chmod +x *.AppImage
-
+          cd apps/desktop/src-tauri/target/release
           LOG_DIR="$GITHUB_WORKSPACE/smoke-logs"
           mkdir -p "$LOG_DIR"
-          APPIMAGE=$(ls invenTory_*.AppImage | head -1)
 
-          echo "--- Launching $APPIMAGE under Xvfb (10s budget) ---"
-
-          # Run the real app under Xvfb.  Capture both stdout and stderr.
-          # The timeout kills it after 10 s so CI doesn't hang.
-          timeout 15 xvfb-run -a \
-            --server-args="-screen 0 1024x768x24" \
-            env \
-              INVEN_TORY_DEBUG_STARTUP=1 \
-              WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-              WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-            "./$APPIMAGE" \
-            > "$LOG_DIR/app-stdout.log" 2> "$LOG_DIR/app-stderr.log" || true
+          # Prefer AppImage if it exists (full bundle), otherwise use raw binary
+          BUNDLE_DIR="bundle/appimage"
+          if ls "$BUNDLE_DIR"/*.AppImage 1>/dev/null 2>&1; then
+            chmod +x "$BUNDLE_DIR"/*.AppImage
+            APP=$(ls "$BUNDLE_DIR"/*.AppImage | head -1)
+            echo "--- Launching $APP under Xvfb (15s budget) ---"
+            timeout 15 xvfb-run -a \
+              --server-args="-screen 0 1024x768x24" \
+              env \
+                INVEN_TORY_DEBUG_STARTUP=1 \
+                WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+              "./$APP" \
+              > "$LOG_DIR/app-stdout.log" 2> "$LOG_DIR/app-stderr.log" || true
+          else
+            # No AppImage — raw binary from --bundles none
+            APP="./inven-tory-desktop"
+            if [ ! -f "$APP" ]; then
+              echo "ERROR: Binary not found at $APP"
+              ls -la
+              exit 1
+            fi
+            echo "--- Launching $APP under Xvfb (15s budget) ---"
+            timeout 15 xvfb-run -a \
+              --server-args="-screen 0 1024x768x24" \
+              env \
+                INVEN_TORY_DEBUG_STARTUP=1 \
+                WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+              "$APP" \
+              > "$LOG_DIR/app-stdout.log" 2> "$LOG_DIR/app-stderr.log" || true
+          fi
 
           echo "--- Exit code: $? ---"
 
@@ -224,31 +245,38 @@ jobs:
           cat "$LOG_DIR/app-stderr.log" || true
 
       # ── Smoke test: Windows ─────────────────────────────────────────
-      # Silent-installs the NSIS build, launches the installed exe (not
-      # --version), lets it try to render, then captures all output.
+      # Runs the built exe directly (no installer needed).  If an NSIS
+      # installer exists it will use that; otherwise falls back to the
+      # raw binary from --bundles none.
       - name: Smoke test Windows build
         if: matrix.target == 'windows-x86_64'
         shell: pwsh
         env:
           INVEN_TORY_DEBUG_STARTUP: "1"
         run: |
-          $installDir = "$env:TEMP\invenTory_smoke_test"
-          $logDir     = "$env:GITHUB_WORKSPACE\smoke-logs"
+          $logDir = "$env:GITHUB_WORKSPACE\smoke-logs"
           New-Item -ItemType Directory -Path $logDir -Force | Out-Null
-          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 
-          # Silent install
+          # Prefer NSIS installer if it exists
           $nsisDir = "apps/desktop/src-tauri/target/release/bundle/nsis"
-          $exe = Get-ChildItem $nsisDir/*.exe | Select-Object -First 1
-          Write-Host "Installing to $installDir ..."
-          Start-Process $exe.FullName -ArgumentList "/S /D=$installDir" -Wait
-          Start-Sleep 3
+          $nsisExe = Get-ChildItem "$nsisDir/*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-          # Find the installed app
-          $appExe = Get-ChildItem -Path $installDir -Filter "invenTory.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($nsisExe) {
+            Write-Host "Found NSIS installer: $($nsisExe.FullName)"
+            $installDir = "$env:TEMP\invenTory_smoke_test"
+            New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+            Start-Process $nsisExe.FullName -ArgumentList "/S /D=$installDir" -Wait
+            Start-Sleep 3
+            $appExe = Get-ChildItem -Path $installDir -Filter "invenTory.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+          } else {
+            # No installer — raw binary from --bundles none
+            Write-Host "No NSIS installer found, using raw binary"
+            $appExe = Get-ChildItem "apps/desktop/src-tauri/target/release/inven-tory-desktop.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
           if (-not $appExe) {
-            Write-Error "Installed app not found in $installDir"
-            Get-ChildItem -Path $installDir -Recurse
+            Write-Error "App executable not found. Listing release dir:"
+            Get-ChildItem "apps/desktop/src-tauri/target/release" -ErrorAction SilentlyContinue
             exit 1
           }
 
@@ -256,8 +284,7 @@ jobs:
 
           # Launch the app and let it run for up to 12 seconds.  We do NOT
           # pass --version -- we want the real startup path so Tauri, the
-          # webview, and the React bundle all initialize.  If the window is
-          # blank, this will capture whatever the webview writes to stderr.
+          # webview, and the React bundle all initialize.
           $proc = Start-Process $appExe.FullName `
             -PassThru `
             -RedirectStandardOutput "$logDir\app-stdout.log" `
@@ -274,7 +301,6 @@ jobs:
           }
 
           # Copy the Rust-side debug log if the app created one
-          # The panic hook writes to the app data dir next to the DB
           $candidates = @(
             "$env:APPDATA\invenTory",
             "$env:LOCALAPPDATA\invenTory",
@@ -284,17 +310,15 @@ jobs:
           foreach ($dir in $candidates) {
             if (Test-Path "$dir\startup_debug.log") {
               Copy-Item "$dir\startup_debug.log" "$logDir\" -Force
-            }
-            if (Test-Path "$dir\startup_crash.log") {
-              Copy-Item "$dir\startup_crash.log" "$logDir\" -Force
+              break
             }
           }
 
-          Write-Host "=== Captured logs ==="
+          echo "=== Captured logs ==="
           Get-ChildItem $logDir
-          Write-Host "=== stdout ==="
+          echo "=== stdout ==="
           Get-Content "$logDir\app-stdout.log" -ErrorAction SilentlyContinue
-          Write-Host "=== stderr ==="
+          echo "=== stderr ==="
           Get-Content "$logDir\app-stderr.log" -ErrorAction SilentlyContinue
 
       # ── Upload smoke-test logs ──────────────────────────────────────
