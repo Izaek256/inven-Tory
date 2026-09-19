@@ -44,6 +44,10 @@ describe('Product CRUD & Master Catalog (FR-PROD-001–002)', () => {
     vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(
       initialProducts.map((p) => ({ ...p, store_id: 'STORE-A' })),
     );
+    vi.spyOn(tauriProductService, 'getProductsPaginated').mockResolvedValue(
+      initialProducts.map((p) => ({ ...p, store_id: 'STORE-A' })),
+    );
+    vi.spyOn(tauriProductService, 'getProductsCount').mockResolvedValue(initialProducts.length);
   });
 
   it('renders products catalogue and table', async () => {
@@ -72,7 +76,9 @@ describe('Product CRUD & Master Catalog (FR-PROD-001–002)', () => {
       target: { value: 'iPhone' },
     });
 
-    expect(screen.getByText('Apple iPhone 15 Pro 256GB')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText('Apple iPhone 15 Pro 256GB')).toBeInTheDocument();
+    });
     expect(screen.queryByText('Sony WH-1000XM5 Headphones')).not.toBeInTheDocument();
   });
 

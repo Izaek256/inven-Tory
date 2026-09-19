@@ -4,6 +4,7 @@ import type { Store, Device } from '../types/store';
 import type { Product } from '../types/product';
 import type { InventoryTransaction, MovementType, StockBucket } from '../types/transaction';
 import type { OutboxEventRow } from '../types/sync';
+import type { BackupInfo } from '../services/tauriDataService';
 
 // Polyfill ResizeObserver for recharts (not implemented in jsdom)
 const g = globalThis as Record<string, unknown>;
@@ -201,6 +202,42 @@ vi.mock('@tauri-apps/api/core', () => {
         ]);
       }
 
+      case 'get_products_paginated':
+        return Promise.resolve<Product[]>([
+          {
+            id: 'PROD-1',
+            sku: 'WIDGET-A',
+            name: 'Widget Alpha',
+            category: 'Electronics',
+            unit: 'pcs',
+            is_active: true,
+            low_stock_threshold: 10,
+            stock_quantity: 50,
+            serial_tracking_enabled: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: 'PROD-2',
+            sku: 'GADGET-B',
+            name: 'Gadget Beta',
+            category: 'Electronics',
+            unit: 'pcs',
+            is_active: true,
+            low_stock_threshold: 5,
+            stock_quantity: 3,
+            serial_tracking_enabled: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ]);
+
+      case 'get_products_count':
+        return Promise.resolve(2);
+
+      case 'list_local_backups':
+        return Promise.resolve<BackupInfo[]>([]);
+
       case 'search_products_fts5':
       case 'search_products': {
         const query = ((args as { query?: string })?.query || '').toLowerCase();
@@ -255,6 +292,36 @@ vi.mock('@tauri-apps/api/core', () => {
             low_stock_threshold: 5,
             stock_quantity: 3,
             serial_tracking_enabled: false,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: 'PROD-01',
+            sku: 'ELEC-IPHONE15PRO',
+            name: 'Apple iPhone 15 Pro 256GB',
+            brand: 'Apple',
+            model: 'A3102',
+            category: 'Smartphones',
+            unit: 'pcs',
+            barcode: '195949012345',
+            alternate_names: 'iPhone 15 Pro',
+            serial_tracking_enabled: true,
+            is_active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+          {
+            id: 'PROD-02',
+            sku: 'ELEC-SONY-XM5',
+            name: 'Sony WH-1000XM5 Headphones',
+            brand: 'Sony',
+            model: 'XM5',
+            category: 'Audio',
+            unit: 'pcs',
+            barcode: '027242922112',
+            alternate_names: 'Sony XM5',
+            serial_tracking_enabled: false,
+            is_active: true,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
