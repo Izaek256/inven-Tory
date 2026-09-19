@@ -146,6 +146,10 @@ jobs:
       # We always pass --features debug so devtools are available for the
       # smoke-test.  The debug feature only enables WebKit devtools at the
       # Rust level; it does not alter the frontend bundle.
+      #
+      # To enable devtools in the window config we temporarily patch
+      # tauri.conf.json before building.  This avoids --config shell
+      # escaping issues on Windows (PowerShell / cmd.exe).
       - name: Build Tauri app
         shell: bash
         env:
@@ -153,15 +157,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           cd apps/desktop
-          # Always enable devtools via --config so the smoke test can
-          # inspect the webview if needed.  Merge all config overrides
-          # into a single JSON object to avoid duplicate --config flags.
+
+          # Patch tauri.conf.json to enable devtools for CI smoke tests
+          node -e "
+            const fs = require('fs');
+            const cfg = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json','utf8'));
+            if (cfg.app && cfg.app.windows && cfg.app.windows[0]) {
+              cfg.app.windows[0].devtools = true;
+            }
+            fs.writeFileSync('src-tauri/tauri.conf.json', JSON.stringify(cfg, null, 2) + '\n');
+          "
+
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            npm run tauri build -- --features debug \
-              --config '{"app":{"windows":[{"devtools":true}]}}'
+            npm run tauri build -- --features debug
           else
             npm run tauri build -- --features debug \
-              --config '{"app":{"windows":[{"devtools":true}]},"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}'
+              --config '{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}'
           fi
 
       # ── Smoke test: Linux ───────────────────────────────────────────
