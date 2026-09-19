@@ -155,8 +155,18 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
         run: |
           cd apps/desktop
+
+          # Fail loudly if the build-time API URL is missing — this is the
+          # #1 cause of blank-window CI builds.  The secret must be set in
+          # GitHub repo Settings → Secrets → Actions.
+          if [ -z "$VITE_API_BASE_URL" ]; then
+            echo "::error::VITE_API_BASE_URL secret is not set. The built app will open to a blank window."
+            echo "Set it in GitHub repo Settings → Secrets and variables → Actions."
+            exit 1
+          fi
 
           # Patch tauri.conf.json: enable devtools + skip WiX bundling on Windows
           node -e "
