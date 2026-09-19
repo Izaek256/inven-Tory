@@ -169,12 +169,12 @@ jobs:
           "
 
           if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            npm run tauri build -- --features debug
+            npx tauri build --features debug
           else
             # Skip MSI/NSIS bundling for CI test builds — we only need the
             # raw executable for the smoke test.  This avoids the WiX
             # "file not found" issue on GitHub Actions Windows runners.
-            npm run tauri build -- --features debug \
+            npx tauri build --features debug \
               --bundles none \
               --config '{"bundle":{"createUpdaterArtifacts":false},"plugins":{"updater":{"pubkey":""}}}'
           fi
