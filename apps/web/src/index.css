@@ -59,10 +59,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--it-green-text);
-  font-weight: 700;
-  font-size: 14px;
-  font-family: var(--it-font-mono);
+  object-fit: contain;
   flex-shrink: 0;
 }
 
@@ -118,6 +115,7 @@ body {
   padding: 20px 16px;
   gap: 4px;
   flex-shrink: 0;
+  overflow: visible;
 }
 
 .nav-item {
@@ -135,6 +133,7 @@ body {
   width: 100%;
   text-align: left;
   transition: all 0.2s ease;
+  position: relative;
 }
 
 .nav-item:hover {
@@ -152,6 +151,39 @@ body {
 .nav-item:focus-visible {
   outline: none;
   box-shadow: var(--it-focus-ring);
+}
+
+/* Tooltip for collapsed sidebar (matches desktop pattern) */
+.nav-tooltip {
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 8px;
+  padding: 4px 8px;
+  background-color: var(--it-text-primary);
+  color: var(--it-bg);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: var(--it-r-sm);
+  white-space: nowrap;
+  z-index: 100;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
+}
+
+.nav-item:hover .nav-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.nav-item:focus-within .nav-tooltip {
+  opacity: 1;
+  visibility: visible;
 }
 
 /* Main content */
@@ -1021,7 +1053,7 @@ body {
   text-align: right;
 }
 
-/* ── Brand icon as Lucide glyph (Task J — both apps) ─────────────────────── */
+/* ── Brand icon: real product mark (favicon.svg) ─────────────────────────── */
 
 .brand-icon-glyph {
   width: 32px;
@@ -1036,9 +1068,11 @@ body {
   flex-shrink: 0;
 }
 
-.brand-icon-glyph svg {
-  width: 18px;
-  height: 18px;
+.brand-icon-glyph svg,
+.brand-icon-glyph img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
 }
 
 /* ── Misc utilities ───────────────────────────────────────────────────────── */

@@ -38,6 +38,7 @@ import {
 import {
   deleteAllData,
   wipeServerData,
+  clearLocalBusinessCaches,
   listLocalBackups,
   createLocalBackup,
   restoreFromBackup,
@@ -237,19 +238,40 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
         return;
       }
 
-      // Then try to wipe server data (best effort)
+      // Then wipe server data too when a session token exists. A failed
+      // server wipe must block the reload: otherwise the next background sync
+      // would pull the surviving server data straight back into the pages.
+      let serverWipeError: string | null = null;
       try {
         const { getAccessToken } = await import('../services/tauriAuthService');
         const token = await getAccessToken();
         if (token) {
-          await wipeServerData(deleteConfirmStoreName, token);
+          try {
+            await wipeServerData(deleteConfirmStoreName, token);
+          } catch (err) {
+            serverWipeError = err instanceof Error ? err.message : String(err);
+          }
         }
       } catch {
-        // Server wipe is best-effort; local wipe is the critical path
+        // getAccessToken itself failed — offline; local wipe still stands.
+      }
+
+      if (serverWipeError) {
+        setDeleteError(
+          `Local data wiped, but server wipe failed: ${serverWipeError}. ` +
+            `Server data was NOT deleted and would reappear after the next sync. ` +
+            `Fix the issue and retry before reloading.`,
+        );
+        setDeleteLoading(false);
+        return;
       }
 
       setDeleteModalOpen(false);
       setDeleteConfirmStoreName('');
+      // Clear business-data caches that survive a reload (localStorage).
+      // Auth session + device ID live in the Tauri secure store (auth.dat)
+      // and sessionStorage — NEVER touched here so login still works.
+      clearLocalBusinessCaches();
       // Reload the page to reset all state
       window.location.reload();
     } catch (err) {

@@ -430,13 +430,11 @@ async def test_dashboard_metrics_happy_path(
     # Cross-store: p1 is in two stores; p2 only in one.
     assert data["cross_store"]["products_in_multiple_stores"] >= 1
 
-    # Receipt-linked sales: one receipt (RCP-1) with two line items today.
+    # Receipt-linked sales: one receipt (RCP-1) with two line items on the
+    # seeded SALE date (1h ago — may be yesterday near midnight UTC).
+    expected_date = (datetime.now(UTC) - timedelta(hours=1)).date().isoformat()
     today_row = next(
-        (
-            r
-            for r in data["receipt_linked_sales"]
-            if r["date"] == datetime.now(UTC).date().isoformat()
-        ),
+        (r for r in data["receipt_linked_sales"] if r["date"] == expected_date),
         None,
     )
     assert today_row is not None

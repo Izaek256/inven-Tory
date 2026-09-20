@@ -24,7 +24,7 @@ def test_health_response_body() -> None:
     response = client.get("/health")
     body = response.json()
     assert body["status"] == "ok"
-    assert body["version"] == "1.1.0"
+    assert body["version"] == "1.1.5"
 
 
 def test_openapi_schema_accessible() -> None:

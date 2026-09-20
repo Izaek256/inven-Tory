@@ -55,10 +55,8 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--it-green-text);
-  font-weight: 700;
-  font-size: 14px;
-  font-family: var(--it-font-mono);
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .brand-title {
@@ -294,6 +292,11 @@ body {
 }
 
 .nav-item:hover .nav-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+.nav-item:focus-within .nav-tooltip {
   opacity: 1;
   visibility: visible;
 }
@@ -652,7 +655,7 @@ body {
   margin: 0;
 }
 
-/* ── Brand icon as Lucide glyph (Task J — both apps) ─────────────────────── */
+/* ── Brand icon: real product mark (favicon.svg) ─────────────────────────── */
 
 .brand-icon-glyph {
   width: 32px;
@@ -667,9 +670,11 @@ body {
   flex-shrink: 0;
 }
 
-.brand-icon-glyph svg {
-  width: 18px;
-  height: 18px;
+.brand-icon-glyph svg,
+.brand-icon-glyph img {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
 }
 
 /* ── Desktop header user/theme grouped menu (Task J) ─────────────────────── */

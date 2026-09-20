@@ -850,19 +850,22 @@ async def wipe_all_data(
 
     from sqlalchemy import text
 
-    # Verify the store name matches the first active store
-    store_result = await db.execute(
-        text("SELECT name FROM stores WHERE is_active = 1 ORDER BY id LIMIT 1")
-    )
-    store_name = store_result.scalar_one_or_none()
+    # Verify the store name matches an active store (case-insensitive,
+    # consistent with the desktop client's local wipe confirmation).
+    store_result = await db.execute(text("SELECT name FROM stores WHERE is_active = true"))
+    active_names = [row[0] for row in store_result.all()]
 
-    if store_name is None:
+    if not active_names:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active store found")
 
-    if store_name != request.confirm_store_name:
+    provided = (request.confirm_store_name or "").strip().lower()
+    store_name = next((n for n in active_names if n.strip().lower() == provided), None)
+
+    if store_name is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Store name confirmation failed. Expected '{store_name}', got '{request.confirm_store_name}'.",
+            detail="Store name confirmation failed. No active store matches "
+            f"'{request.confirm_store_name}'.",
         )
 
     wiped_tables: list[str] = []
@@ -895,7 +898,7 @@ async def wipe_all_data(
     # Deactivate all stores except the first one
     await db.execute(
         text(
-            "UPDATE stores SET is_active = 0, updated_at = :now WHERE code != (SELECT code FROM stores ORDER BY id LIMIT 1)"
+            "UPDATE stores SET is_active = false, updated_at = :now WHERE code != (SELECT code FROM stores ORDER BY id LIMIT 1)"
         ),
         {"now": datetime.now(UTC)},
     )
@@ -903,7 +906,7 @@ async def wipe_all_data(
     # Ensure the first store is active
     await db.execute(
         text(
-            "UPDATE stores SET is_active = 1, updated_at = :now WHERE code = (SELECT code FROM stores ORDER BY id LIMIT 1)"
+            "UPDATE stores SET is_active = true, updated_at = :now WHERE code = (SELECT code FROM stores ORDER BY id LIMIT 1)"
         ),
         {"now": datetime.now(UTC)},
     )

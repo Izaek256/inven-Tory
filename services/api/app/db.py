@@ -49,7 +49,7 @@ def build_engine(database_url: str | None = None) -> AsyncEngine:
     the error on its very first query.
     """
     url = database_url or settings.database_url
-    echo = settings.environment == "development"
+    echo = settings.sql_echo
 
     # pool_reset_on_return is not supported for aiosqlite (tests); only
     # pass it for real PostgreSQL URLs.

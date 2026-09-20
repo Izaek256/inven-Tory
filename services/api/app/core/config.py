@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     # Log any API request or SQL statement that takes longer than this many
     # milliseconds.  Set to 0 to disable slow-query logging entirely.
     slow_query_threshold_ms: int = 500
+    sql_echo: bool = False
 
     @field_validator("environment")
     @classmethod
