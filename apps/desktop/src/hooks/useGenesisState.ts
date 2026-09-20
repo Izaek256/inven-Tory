@@ -94,6 +94,7 @@ export function useGenesisState(): UseGenesisStateReturn {
   const checkState = useCallback(async (): Promise<GenesisState | null> => {
     try {
       const result = await invoke<GenesisState>('check_genesis_state');
+      setError(null);
       setState(result);
       return result;
     } catch (err) {
@@ -167,7 +168,10 @@ export function useGenesisState(): UseGenesisStateReturn {
     error,
     checkState,
     runGenesis,
-    needsGenesis: state ? !state.ready : true,
+    // NB: unknown (null) state means "not yet asked", never "genesis needed".
+    // Defaulting to true here blanked the whole window whenever the backend
+    // check failed, because App entered the wizard flow with no state.
+    needsGenesis: state ? !state.ready : false,
     validateRestore: useCallback(
       async (params: { apiBaseUrl: string; username: string; password: string }) => {
         try {
