@@ -4,7 +4,6 @@ import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
 import { Badge, useTheme } from '@invenTory/ui';
 import {
-  Box,
   LogOut,
   Store as StoreIcon,
   ChevronDown,
@@ -160,7 +159,7 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="app-header" data-testid="app-header">
       <div className="header-brand">
         <div className="brand-icon-glyph">
-          <Box size={18} aria-hidden="true" />
+          <img src="/favicon.svg" alt="" aria-hidden="true" />
         </div>
         <h1 className="brand-title">invenTory</h1>
         <span className="brand-version">v{appVersion}</span>

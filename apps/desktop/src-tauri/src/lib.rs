@@ -5397,7 +5397,7 @@ pub fn apply_restore_background(
 
     /// Delete all product-related data from local SQLite (GLOBAL_ADMIN only).
     /// This wipes products, stock_balances, inventory_transactions, day_books, day_book_entries,
-    /// transfers, outbox_events, and devices. Users and stores are preserved (including active status).
+    /// transfers, outbox_events, sync_receipts (if present), and devices. Users and stores are preserved (including active status).
     #[tauri::command]
     pub fn delete_all_data(confirm_store_name: String) -> Result<String, String> {
         let db_path = get_db_path();
@@ -5441,6 +5441,10 @@ pub fn apply_restore_background(
         
         conn.execute("DELETE FROM devices", [])
             .map_err(|e| format!("Failed to delete devices: {}", e))?;
+
+        // sync_receipts only exists on newer DBs / server-side schema —
+        // ignore the error if the table doesn't exist locally.
+        let _ = conn.execute("DELETE FROM sync_receipts", []);
 
         // Preserve ALL stores with their active status intact
         // Only update the updated_at timestamp

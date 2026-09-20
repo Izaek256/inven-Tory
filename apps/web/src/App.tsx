@@ -10,7 +10,6 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Box,
   LayoutDashboard,
   Package,
   Warehouse,
@@ -90,11 +89,11 @@ function TopBar({
   return (
     <header className="app-header app-header--mockup" data-testid="web-header">
       <div className="header-brand">
-        <div className="brand-icon-glyph" style={{ background: 'var(--it-green)', border: 'none' }}>
-          <Box size={18} color="#fff" aria-hidden="true" />
+        <div className="brand-icon-glyph">
+          <img src="/favicon.svg" alt="" aria-hidden="true" />
         </div>
         <h1 className="brand-title">invenTory</h1>
-        <span className="brand-version">v1.1.0</span>
+        <span className="brand-version">v1.1.5</span>
       </div>
 
       <form
@@ -191,6 +190,7 @@ function App(): React.ReactElement {
     typeof navigator !== 'undefined' ? navigator.onLine : true,
   );
   const [collapsed, setCollapsed] = useState(false);
+  const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth < BOTTOM_NAV_BREAKPOINT : false,
   );
@@ -346,9 +346,17 @@ function App(): React.ReactElement {
                   data-testid={`nav-${item.id}`}
                   onClick={() => handleSelectView(item.id)}
                   title={collapsed ? item.label : undefined}
+                  aria-label={item.label}
+                  onMouseEnter={() => collapsed && setHoveredItem(item.id)}
+                  onMouseLeave={() => setHoveredItem(null)}
+                  onFocus={() => collapsed && setHoveredItem(item.id)}
+                  onBlur={() => setHoveredItem(null)}
                 >
                   <item.icon size={18} aria-hidden="true" />
                   {!collapsed && <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>}
+                  {collapsed && hoveredItem === item.id && (
+                    <span className="nav-tooltip">{item.label}</span>
+                  )}
                 </button>
               ))}
               {/* hidden legacy for test compat — Recent Activity */}

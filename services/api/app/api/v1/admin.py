@@ -188,6 +188,10 @@ async def run_genesis(
 
     await db.commit()
 
+    logger.info(
+        "Genesis completed: user=%s store_id=%s store_code=%s", username, store_id, store_code
+    )
+
     return GenesisResponse(
         success=True,
         message="Genesis complete on central server.",

@@ -57,7 +57,12 @@ export function LoginView({ onLoginSuccess }: LoginViewProps): React.ReactElemen
     <div className="web-login-wrap" data-testid="login-view">
       <div className="web-login-card">
         <div className="web-login-brand">
-          <div className="brand-icon">IT</div>
+          <img
+            src="/favicon.svg"
+            alt="invenTory"
+            className="brand-icon"
+            style={{ objectFit: 'contain', padding: '4px' }}
+          />
           <div>
             <h1 className="web-login-title">invenTory</h1>
             <p className="web-login-subtitle">Remote Management Dashboard</p>
