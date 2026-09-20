@@ -407,7 +407,7 @@ async def push_events(
     rejected = len(receipts) - accepted
 
     logger.info(
-        "SYNC_PUSH device_id=%s events=%d products=%d accepted=%d rejected=%d user_id=%s",
+        "Sync push completed: device_id=%s events=%d products=%d accepted=%d rejected=%d user_id=%s",
         body.events[0].device_id if body.events else "unknown",
         len(body.events),
         len(body.products),
@@ -603,7 +603,7 @@ async def pull_data(
         pagination = None
 
     logger.info(
-        "SYNC_PULL user_id=%s since=%s limit=%s offset=%s products=%d stores=%d balances=%d "
+        "Sync pull completed: user_id=%s since=%s limit=%s offset=%s products=%d stores=%d balances=%d "
         "total_products=%d total_stores=%d total_balances=%d has_more=%s",
         current_user.id,
         since.isoformat() if since else None,

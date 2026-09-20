@@ -8,13 +8,12 @@ lives in services; domain rules live in packages/domain.
 import logging
 import time
 import traceback
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
 
 from app.api.v1 import (
@@ -59,6 +58,15 @@ def _cors_allow_origin_value(request: Request) -> str | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup sanity check for central database connectivity."""
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    logging.getLogger("sqlalchemy.engine").setLevel(
+        logging.WARNING if not settings.sql_echo else logging.INFO
+    )
+    logging.getLogger("sqlalchemy.pool").setLevel(logging.WARNING)
     import os
 
     if "PYTEST_CURRENT_TEST" not in os.environ and not settings.database_url.startswith("sqlite"):
@@ -84,7 +92,7 @@ app = FastAPI(
         "See the SRS for the non-negotiable design rule: never synchronize by "
         "overwriting quantities."
     ),
-    version="1.1.0",
+    version="1.1.5",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -108,31 +116,38 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def _log_slow_requests(request: Request, call_next: AsyncGenerator) -> Any:
+async def _log_requests(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """
-    Lightweight request-level timing (performance observability).
+    Unified request logger (performance observability).
 
-    Any request that takes longer than ``settings.slow_query_threshold_ms``
-    is logged at WARNING.  Set ``SLOW_QUERY_THRESHOLD_MS=0`` to disable.
-    Logs the method + path only — never query params, bodies or headers, so
-    no sensitive data leaks into the logs.
+    Logs every request concisely at INFO — never query params, bodies or
+    headers, so no sensitive data leaks into the logs.  Requests slower than
+    ``settings.slow_query_threshold_ms`` are logged at WARNING instead.
+    Set ``SLOW_QUERY_THRESHOLD_MS=0`` to disable the slow-request escalation
+    (all requests stay at INFO).
     """
     threshold = getattr(settings, "slow_query_threshold_ms", 0)
-    if not threshold or threshold <= 0:
-        return await call_next(request)
-
     started = time.monotonic()
-    try:
-        response = await call_next(request)
-    finally:
-        elapsed_ms = (time.monotonic() - started) * 1000
-        if elapsed_ms >= threshold:
-            logger.warning(
-                "SLOW_REQUEST %dms %s %s",
-                int(elapsed_ms),
-                request.method,
-                request.url.path,
-            )
+    response = await call_next(request)
+    elapsed_ms = (time.monotonic() - started) * 1000
+    if threshold and threshold > 0 and elapsed_ms >= threshold:
+        logger.warning(
+            "%s %s -> %s (%dms) [SLOW_REQUEST]",
+            request.method,
+            request.url.path,
+            response.status_code,
+            int(elapsed_ms),
+        )
+    else:
+        logger.info(
+            "%s %s -> %s (%dms)",
+            request.method,
+            request.url.path,
+            response.status_code,
+            int(elapsed_ms),
+        )
     return response
 
 
@@ -182,7 +197,7 @@ async def _global_json_exception_handler(request: Request, exc: Exception) -> JS
 @app.get("/health", tags=["health"])
 async def health_check() -> dict[str, str]:
     """Liveness probe — returns service version and status."""
-    return {"status": "ok", "version": "1.1.0"}
+    return {"status": "ok", "version": "1.1.5"}
 
 
 # ---------------------------------------------------------------------------

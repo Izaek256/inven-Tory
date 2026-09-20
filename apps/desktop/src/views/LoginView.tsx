@@ -16,7 +16,7 @@
  */
 
 import React, { useState } from 'react';
-import { LogIn, AlertCircle, Wifi } from 'lucide-react';
+import { LogIn, AlertCircle } from 'lucide-react';
 import { Button, TextInput } from '@invenTory/ui';
 import type { AuthSession } from '../types/auth';
 
@@ -102,24 +102,16 @@ export const LoginView: React.FC<LoginViewProps> = ({
             marginBottom: '32px',
           }}
         >
-          <div
+          <img
+            src="/favicon.svg"
+            alt="invenTory"
             style={{
               width: '40px',
               height: '40px',
-              backgroundColor: 'var(--it-green-surface)',
-              border: '1px solid var(--it-green-border)',
+              objectFit: 'contain',
               borderRadius: 'var(--it-r-md)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: 'var(--it-green-text)',
-              fontWeight: 700,
-              fontFamily: 'var(--it-font-mono)',
-              fontSize: '16px',
             }}
-          >
-            IT
-          </div>
+          />
           <div>
             <h1
               style={{
@@ -145,31 +137,6 @@ export const LoginView: React.FC<LoginViewProps> = ({
         >
           Sign In
         </h2>
-
-        {/* Device indicator (single-user mode: always present, informational) */}
-        {deviceId ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '8px 12px',
-              backgroundColor: 'var(--it-green-surface)',
-              border: '1px solid var(--it-green-border)',
-              borderRadius: 'var(--it-r-md)',
-              marginBottom: '20px',
-              fontSize: '12px',
-              color: 'var(--it-green-text)',
-            }}
-            data-testid="device-indicator"
-          >
-            <Wifi size={14} />
-            <span>
-              Device ready:{' '}
-              <code style={{ fontFamily: 'var(--it-font-mono)' }}>{deviceId.slice(0, 16)}…</code>
-            </span>
-          </div>
-        ) : null}
 
         {/* Error banner */}
         {error && (
