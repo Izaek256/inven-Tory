@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { ErrorBoundary } from './components/ErrorBoundary';
 import { UpdaterProvider } from './context/UpdaterContext';
 
 import { ThemeProvider, ToastProvider } from '@invenTory/ui';
@@ -21,14 +20,12 @@ if (!rootElement) {
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    <ErrorBoundary>
-      <ThemeProvider>
-        <ToastProvider>
-          <UpdaterProvider>
-            <App />
-          </UpdaterProvider>
-        </ToastProvider>
-      </ThemeProvider>
-    </ErrorBoundary>
+    <ThemeProvider>
+      <ToastProvider>
+        <UpdaterProvider>
+          <App />
+        </UpdaterProvider>
+      </ToastProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 );

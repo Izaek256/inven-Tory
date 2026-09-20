@@ -1,24 +1,12 @@
 # Auto detect text files and normalize line endings to LF
 * text=auto
 
-# Force specific files to use LF (prettier enforces LF: CRLF checkouts fail
-# `format:check` and the pre-push hook on Windows otherwise)
+# Force specific files to use LF
 *.toml text eol=lf
 *.json text eol=lf
 *.md text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
-*.ts text eol=lf
-*.tsx text eol=lf
-*.js text eol=lf
-*.jsx text eol=lf
-*.mjs text eol=lf
-*.cjs text eol=lf
-*.css text eol=lf
-*.html text eol=lf
-*.svg text eol=lf
-*.py text eol=lf
-*.rs text eol=lf
 
 # Windows-specific files can use CRLF
 *.bat text eol=crlf

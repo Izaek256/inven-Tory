@@ -175,10 +175,8 @@ export function App(): React.ReactElement {
         return;
       }
 
-      // Enter the wizard only once the backend state is known and says so.
-      // A failed check (state null) must surface an error panel, never a
-      // blank window — see the genesisCheckFailed branch in render.
-      if (genesis.state && !genesis.state.ready) {
+      // Check if genesis is needed
+      if (genesis.needsGenesis) {
         setShowGenesis(true);
         setAuthState('loading');
         return;
@@ -198,7 +196,7 @@ export function App(): React.ReactElement {
       setAuthState(s?.token_expired_offline ? 'expired_offline' : 'authenticated');
     };
     void bootstrap();
-  }, [genesis.loading, genesis.needsGenesis, genesis.state]);
+  }, [genesis.loading, genesis.needsGenesis]);
 
   // ---------------------------------------------------------------------------
   // Stores data
@@ -561,60 +559,9 @@ export function App(): React.ReactElement {
     }
   };
 
-  // Local-backend check failed (e.g. database unreachable): render an
-  // explicit error with retry instead of an empty window.
-  const genesisCheckFailed = !genesis.loading && genesis.state === null;
-
-  const handleGenesisRetry = (): void => {
-    setShowGenesis(false);
-    void genesis.checkState();
-  };
-
   return (
     <div className="app-container" data-testid="app-container">
-      {genesisCheckFailed && (
-        <div
-          style={{
-            minHeight: '60vh',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'var(--it-bg)',
-            padding: '24px',
-          }}
-          data-testid="genesis-check-error"
-          role="alert"
-        >
-          <div style={{ maxWidth: '480px', textAlign: 'center' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: 700, color: 'var(--it-text-primary)' }}>
-              Couldn&apos;t reach the local database
-            </h2>
-            <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '8px' }}>
-              {genesis.error ?? 'The app could not read its local data store.'} Your data is
-              untouched — retry or restart the app.
-            </p>
-            <button
-              type="button"
-              onClick={handleGenesisRetry}
-              data-testid="genesis-retry-btn"
-              style={{
-                marginTop: '16px',
-                padding: '8px 20px',
-                borderRadius: 'var(--it-r-md)',
-                border: '1px solid var(--it-green-border)',
-                backgroundColor: 'var(--it-green)',
-                color: '#fff',
-                fontSize: '14px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              Retry
-            </button>
-          </div>
-        </div>
-      )}
-      {!genesisCheckFailed && showGenesis && genesis.state && !genesis.state.ready && (
+      {showGenesis && genesis.state && !genesis.state.ready && (
         <GenesisWizard
           state={genesis.state}
           onComplete={handleGenesisComplete}
@@ -642,7 +589,7 @@ export function App(): React.ReactElement {
           restoreProgress={restoreProgress}
         />
       )}
-      {!genesisCheckFailed && !showGenesis && (
+      {!showGenesis && (
         <>
           {switchingStore.active && (
             <div className="store-switch-overlay" data-testid="store-switch-overlay">
