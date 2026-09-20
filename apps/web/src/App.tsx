@@ -93,7 +93,7 @@ function TopBar({
           <img src="/favicon.svg" alt="" aria-hidden="true" />
         </div>
         <h1 className="brand-title">invenTory</h1>
-        <span className="brand-version">v1.1.5</span>
+        <span className="brand-version">v1.1.6</span>
       </div>
 
       <form

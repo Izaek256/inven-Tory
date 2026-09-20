@@ -92,7 +92,7 @@ app = FastAPI(
         "See the SRS for the non-negotiable design rule: never synchronize by "
         "overwriting quantities."
     ),
-    version="1.1.5",
+    version="1.1.6",
     docs_url="/docs",
     redoc_url="/redoc",
     openapi_url="/openapi.json",
@@ -197,7 +197,7 @@ async def _global_json_exception_handler(request: Request, exc: Exception) -> JS
 @app.get("/health", tags=["health"])
 async def health_check() -> dict[str, str]:
     """Liveness probe — returns service version and status."""
-    return {"status": "ok", "version": "1.1.5"}
+    return {"status": "ok", "version": "1.1.6"}
 
 
 # ---------------------------------------------------------------------------
