@@ -77,6 +77,31 @@ describe('useGenesisState — Basic Genesis Functionality', () => {
       expect(result.current.needsGenesis).toBe(false);
     });
   });
+
+  it('does NOT claim genesis is needed before the backend answers (blank-window guard)', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    // Never resolve: state stays null while loading.
+    vi.mocked(invoke).mockReturnValue(new Promise(() => {}));
+
+    const { result } = renderHook(() => useGenesisState());
+
+    expect(result.current.state).toBeNull();
+    expect(result.current.needsGenesis).toBe(false);
+  });
+
+  it('surfaces check failure as error with null state (never blank)', async () => {
+    const { invoke } = await import('@tauri-apps/api/core');
+    vi.mocked(invoke).mockRejectedValue(new Error('database is locked'));
+
+    const { result } = renderHook(() => useGenesisState());
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+    expect(result.current.state).toBeNull();
+    expect(result.current.error).toBe('database is locked');
+    expect(result.current.needsGenesis).toBe(false);
+  });
 });
 
 describe('useGenesisState — Run Genesis', () => {
