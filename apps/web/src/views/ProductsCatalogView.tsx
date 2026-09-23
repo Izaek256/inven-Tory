@@ -54,26 +54,35 @@ function getStatus(total: number, threshold: number | null): 'in' | 'low' | 'out
   return 'in';
 }
 
+/**
+ * Scalable store breakdown — wrapping compact chips instead of one row per
+ * store, so cards and table rows stay compact no matter how many stores
+ * carry the product. Capped with a "+N more" chip; the full per-store
+ * picture lives one tap away in the product detail panel.
+ */
+const STORE_CHIP_MAX = 5;
+
 function StoreBreakdown({ quantities }: { quantities: StoreQuantity[] }): React.ReactElement {
   if (!quantities.length) return <span className="web-cell-empty">—</span>;
+  const visible = quantities.slice(0, STORE_CHIP_MAX);
+  const hidden = quantities.length - visible.length;
   return (
-    <span style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-      {quantities.map((sq) => (
+    <span className="store-chips">
+      {visible.map((sq) => (
         <span
           key={sq.store_id}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}
+          className="store-chip"
+          title={`${sq.store_name} — ${sq.quantity.toLocaleString()} units`}
         >
-          <StoreIcon
-            size={12}
-            aria-hidden="true"
-            style={{ color: 'var(--it-text-secondary)', flexShrink: 0 }}
-          />
-          <span style={{ fontWeight: 600 }}>{sq.store_name}</span>
-          <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--it-text-secondary)' }}>
-            {sq.quantity}
-          </span>
+          <span className="store-chip__name">{sq.store_name}</span>
+          <span className="store-chip__qty">{sq.quantity.toLocaleString()}</span>
         </span>
       ))}
+      {hidden > 0 && (
+        <span className="store-chip store-chip--more" title={`${hidden} more stores stock this`}>
+          +{hidden} more
+        </span>
+      )}
     </span>
   );
 }
@@ -193,12 +202,12 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
             style={{
               width: 36,
               height: 36,
-              borderRadius: 10,
-              background: 'rgba(34,197,94,0.14)',
+              borderRadius: 0,
+              background: 'var(--it-amber-surface)',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--it-green)',
+              color: 'var(--it-amber-text)',
             }}
           >
             <Package size={20} aria-hidden="true" />
@@ -408,7 +417,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                   data-testid={`catalog-card-${r.id}`}
                   style={{
                     border: '1px solid var(--it-border)',
-                    borderRadius: 12,
+                    borderRadius: 0,
                     background: 'var(--it-card)',
                     padding: 12,
                     display: 'flex',
@@ -436,10 +445,10 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                       {(r.total_quantity ?? 0).toLocaleString()}
                     </span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  <div className="prod-card__stores">
                     <StoreBreakdown quantities={r.store_quantities ?? []} />
                   </div>
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div className="prod-card__foot">
                     <Button
                       variant="ghost"
                       size="sm"
@@ -448,6 +457,10 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                     >
                       <Eye size={14} aria-hidden="true" /> View
                     </Button>
+                    <span className="prod-card__store-count">
+                      {(r.store_quantities ?? []).length} store
+                      {(r.store_quantities ?? []).length === 1 ? '' : 's'}
+                    </span>
                   </div>
                 </div>
               ))}
@@ -468,7 +481,11 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                 overflow: 'hidden',
               }}
             >
-              <table className="dash-table" data-testid="catalog-table" style={{ width: '100%' }}>
+              <table
+                className="dash-table catalog-table"
+                data-testid="catalog-table"
+                style={{ width: '100%' }}
+              >
                 <thead>
                   <tr>
                     <th>Product</th>
@@ -505,16 +522,25 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                       <td className="web-cell-mono" style={{ fontWeight: 700 }}>
                         {(r.total_quantity ?? 0).toLocaleString()}
                       </td>
-                      <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={(): void => setSelectedProduct(r)}
-                          data-testid={`view-product-${r.id}`}
-                          title={`View ${r.name}`}
+                      <td className="catalog-actions">
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: 6,
+                            justifyContent: 'flex-end',
+                            alignItems: 'center',
+                          }}
                         >
-                          <Eye size={14} aria-hidden="true" />
-                        </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={(): void => setSelectedProduct(r)}
+                            data-testid={`view-product-${r.id}`}
+                            title={`View ${r.name}`}
+                          >
+                            <Eye size={14} aria-hidden="true" />
+                          </Button>
+                        </div>
                       </td>
                     </tr>
                   ))}

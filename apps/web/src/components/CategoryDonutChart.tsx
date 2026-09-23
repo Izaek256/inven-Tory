@@ -1,18 +1,21 @@
-import React from 'react';
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from 'recharts';
+import React, { useMemo } from 'react';
 import type { CategoryDistributionPoint } from '../types/dashboard';
 
+/**
+ * CategoryDonutChart — artifact-style donut.
+ * Conic-gradient ring (no SVG text on the chart surface), center-hole total,
+ * square legend swatches. Teal-first artifact palette.
+ */
+
 const COLORS = [
-  'var(--it-green)',
-  'var(--it-blue, #3b82f6)',
-  'var(--it-amber, #f59e0b)',
-  'var(--it-purple, #8b5cf6)',
-  'var(--it-teal, #14b8a6)',
-  'var(--it-red, #ef4444)',
-  'var(--it-indigo, #6366f1)',
-  'var(--it-pink, #ec4899)',
-  'var(--it-orange, #f97316)',
-  'var(--it-cyan, #06b6d4)',
+  'var(--teal)',
+  'var(--amber)',
+  'var(--green)',
+  'var(--red)',
+  '#6d5a4a',
+  '#1f5b54',
+  '#7a4a0f',
+  '#2e7d4f',
 ];
 
 interface CategoryDonutChartProps {
@@ -23,7 +26,7 @@ interface CategoryDonutChartProps {
   testId?: string;
 }
 
-/** A single legend row: color dot + category name left, count + percentage right. */
+/** A single legend row: square swatch + category name left, count + percentage right. */
 function DonutLegendRow({
   color,
   category,
@@ -36,13 +39,13 @@ function DonutLegendRow({
   percentage: number;
 }): React.ReactElement {
   return (
-    <li style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13 }}>
+    <li style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12.5 }}>
       <span
         aria-hidden="true"
         style={{
-          width: 10,
-          height: 10,
-          borderRadius: '50%',
+          width: 9,
+          height: 9,
+          borderRadius: 0,
           backgroundColor: color,
           flexShrink: 0,
         }}
@@ -64,6 +67,8 @@ function DonutLegendRow({
           paddingLeft: 12,
           whiteSpace: 'nowrap',
           fontVariantNumeric: 'tabular-nums',
+          fontFamily: 'var(--it-font-mono)',
+          fontSize: 11.5,
         }}
       >
         {count} ({percentage}%)
@@ -75,10 +80,12 @@ function DonutLegendRow({
 export function CategoryDonutChart({
   data,
   totalProducts,
-  height = 280,
+  height = 210,
   testId,
 }: CategoryDonutChartProps): React.ReactElement | null {
-  if (!data.length) {
+  const sorted = useMemo(() => [...data].sort((a, b) => b.percentage - a.percentage), [data]);
+
+  if (!sorted.length) {
     return (
       <div
         data-testid={testId}
@@ -89,8 +96,8 @@ export function CategoryDonutChart({
           justifyContent: 'center',
           color: 'var(--it-text-secondary)',
           backgroundColor: 'var(--it-surface)',
-          borderRadius: 'var(--it-r-lg)',
           border: '1px solid var(--it-border)',
+          fontSize: 13,
         }}
       >
         No category data available
@@ -98,9 +105,6 @@ export function CategoryDonutChart({
     );
   }
 
-  // Sort descending by percentage so the legend reads largest-first and the
-  // slice order matches. Colors follow the sorted order (not the API order).
-  const sorted = [...data].sort((a, b) => b.percentage - a.percentage);
   const formattedData = sorted.map((d, i) => ({
     ...d,
     color: COLORS[i % COLORS.length],
@@ -110,98 +114,81 @@ export function CategoryDonutChart({
   // the API response, fall back to the sum of the slice counts.
   const total = totalProducts ?? formattedData.reduce((sum, d) => sum + d.count, 0);
 
+  // Conic-gradient ring: slices proportional to percentage (fallback to
+  // count-share when percentages sum to ~0).
+  const pctSum = formattedData.reduce((s, d) => s + d.percentage, 0);
+  const countSum = formattedData.reduce((s, d) => s + d.count, 0) || 1;
+  let acc = 0;
+  const stops = formattedData
+    .map((d) => {
+      const share = pctSum > 0 ? d.percentage / pctSum : d.count / countSum;
+      const from = acc * 100;
+      acc += share;
+      const to = acc * 100;
+      return `${d.color} ${from.toFixed(2)}% ${to.toFixed(2)}%`;
+    })
+    .join(', ');
+
   return (
     <div
       data-testid={testId}
       className="it-donut-layout"
       style={{
-        height,
+        minHeight: height,
         width: '100%',
         display: 'flex',
         alignItems: 'center',
-        gap: 16,
+        gap: 22,
       }}
     >
-      {/* Left ~45%: the donut itself — color-coded slices only, no text on the chart. */}
+      {/* Donut ring — pure color, no text on the chart surface. */}
       <div
         data-testid="donut-chart-area"
         className="it-donut-chart"
-        style={{ position: 'relative', flex: '0 0 58%', height: '100%' }}
+        style={{
+          width: 132,
+          height: 132,
+          flex: '0 0 132px',
+          borderRadius: '50%',
+          background: `conic-gradient(${stops})`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={formattedData}
-              cx="50%"
-              cy="50%"
-              innerRadius={58}
-              outerRadius={88}
-              paddingAngle={2}
-              dataKey="count"
-              nameKey="category"
-              // Draw-in sweep on first render (Task E).
-              isAnimationActive
-              animationDuration={600}
-              animationEasing="ease-out"
-              // No label / labelLine — the chart renders only color-coded slices.
-              // All category names, counts, and percentages appear exclusively in the legend.
-            >
-              {formattedData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.color} />
-              ))}
-            </Pie>
-            <Tooltip
-              contentStyle={{
-                backgroundColor: 'var(--it-card)',
-                border: '1px solid var(--it-border)',
-                borderRadius: 'var(--it-r-md)',
-                boxShadow: 'var(--it-shadow-lg)',
-              }}
-              formatter={(value: number, name: string) => [value, name]}
-              labelStyle={{ color: 'var(--it-text-primary)', fontWeight: 500 }}
-            />
-            {/* No recharts <Legend> — the legend is a plain HTML list below,
-                so it can show count + percentage per row and sort independently. */}
-          </PieChart>
-        </ResponsiveContainer>
-        {/* Center-of-ring total, absolutely positioned over the donut hole. */}
         <div
           data-testid="donut-center-total"
           aria-label={`${total} products total`}
           style={{
-            position: 'absolute',
-            inset: 0,
+            width: 82,
+            height: 82,
+            borderRadius: '50%',
+            background: 'var(--it-card)',
             display: 'flex',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            pointerEvents: 'none',
           }}
         >
           <span
             style={{
-              fontSize: 28,
-              fontWeight: 700,
+              fontSize: 20,
+              fontWeight: 600,
               lineHeight: 1,
               color: 'var(--it-text-primary)',
+              fontFamily: 'var(--it-font-mono)',
               fontVariantNumeric: 'tabular-nums',
             }}
           >
             {total.toLocaleString()}
           </span>
-          <span
-            style={{
-              fontSize: 12,
-              color: 'var(--it-text-secondary)',
-              marginTop: 4,
-            }}
-          >
+          <span style={{ fontSize: 10, color: 'var(--it-text-secondary)', marginTop: 2 }}>
             Products
           </span>
         </div>
       </div>
 
-      {/* Right ~55%: vertical legend — the ONLY place names/percentages appear. */}
+      {/* Legend — the ONLY place names/percentages appear. */}
       <ul
         data-testid="donut-legend"
         className="it-donut-legend"
@@ -211,10 +198,10 @@ export function CategoryDonutChart({
           padding: 0,
           display: 'flex',
           flexDirection: 'column',
-          gap: 8,
-          flex: '1 1 42%',
+          gap: 6,
+          flex: '1 1 auto',
           minWidth: 0,
-          maxHeight: '100%',
+          maxHeight: height,
           overflowY: 'auto',
         }}
       >

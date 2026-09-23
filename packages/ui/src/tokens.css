@@ -1,24 +1,54 @@
 /*
- * invenTory — Design Tokens
+ * invenTory — Design Tokens v1.2.0
  * packages/ui/src/tokens.css
  *
- * Two-pass token plan documented in implementation_plan.md.
- * All component styles derive from these properties — no hex literals elsewhere.
+ * Visual reference: inven-Tory___Redesign.html (v1.2.0 artifact)
+ * Source of truth for colors, typography, spacing, radii, and theming.
  *
  * Typefaces:
- *   Display/heading: Inter (already loaded via app)
- *   Data/numeric:    JetBrains Mono (loaded here)
+ *   UI / heading: Space Grotesk
+ *   Data / numeric: IBM Plex Mono
  */
 
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   Reference raw tokens (ink/paper) — available as --ink etc. globally
+   ───────────────────────────────────────────────────────────────────────────── */
+:root {
+  --ink: #12161b;
+  --ink-soft: #1c222a;
+  --ink-line: #2a323c;
+  --paper: #eff1ec;
+  --paper-raised: #f7f8f5;
+  --surface: #ffffff;
+  --line: #dce0d9;
+  --line-strong: #c4cac0;
+  --text: #14181c;
+  --text-muted: #62685f;
+  --text-faint: #92978c;
+  --amber: #db8a2a;
+  --amber-ink: #7a4a0f;
+  --amber-tint: #fbeedb;
+  --teal: #1f5b54;
+  --teal-tint: #e2eeeb;
+  --green: #2e7d4f;
+  --green-tint: #e4f1e7;
+  --red: #b3402f;
+  --red-tint: #f7e6e2;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --font-ui: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+}
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Shared (theme-invariant) tokens
    ───────────────────────────────────────────────────────────────────────────── */
 :root {
-  /* Typography */
-  --it-font-ui: 'Inter', system-ui, -apple-system, sans-serif;
-  --it-font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  /* Typography — maps reference fonts to --it-* namespace */
+  --it-font-ui: 'Space Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --it-font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
 
   /* Type scale */
   --it-text-xs: 11px;
@@ -45,204 +75,220 @@
   --it-sp-8: 32px;
   --it-sp-12: 48px;
 
-  /* Radius scale */
-  --it-r-sm: 4px;
-  --it-r-md: 8px;
-  --it-r-lg: 12px;
-  --it-r-pill: 999px;
+  /* Radius scale — v1.2.0 sharp corners (0 radius) */
+  --it-r-sm: 0px;
+  --it-r-md: 0px;
+  --it-r-lg: 0px;
+  --it-r-xl: 0px;
+  --it-r-pill: 0px;
 
-  /* Shadow scale */
+  /* Shadow scale — minimal, matches reference sheet flatness */
   --it-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.05);
-  --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.1);
+  --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.08);
+  --it-shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --it-shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.14);
 
   /* Motion */
   --it-ease: cubic-bezier(0.2, 0, 0, 1);
   --it-dur-fast: 120ms;
   --it-dur-base: 200ms;
 
-  /* Focus ring (shared) */
-  --it-focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.35);
-  --it-focus-ring-green: 0 0 0 3px rgba(22, 163, 74, 0.3);
-  --it-focus-ring-red: 0 0 0 3px rgba(220, 38, 38, 0.3);
+  /* Focus rings — reference uses amber outline + teal focus shadow */
+  --it-focus-ring: 0 0 0 3px var(--teal-tint);
+  --it-focus-ring-amber: 0 0 0 3px var(--amber-tint);
+  --it-focus-ring-green: 0 0 0 3px var(--green-tint);
+  --it-focus-ring-red: 0 0 0 3px var(--red-tint);
 
-  /* Sidebar badge indicator width */
-  --it-status-bar: 3px;
+  /* Sidebar badge indicator width (reference .tag left bar) */
+  --it-status-bar: 2px;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Light theme (default)
+   Light theme (default) — maps to reference --paper / --surface
    ───────────────────────────────────────────────────────────────────────────── */
 [data-theme='light'],
 :root {
-  --it-bg: #ffffff;
-  --it-surface: #f8f9fa;
-  --it-card: #ffffff;
-  --it-border: #e5e7eb;
-  --it-border-strong: #d1d5db;
+  --it-bg: var(--paper);
+  --it-surface: var(--paper-raised);
+  --it-card: var(--surface);
+  --it-border: var(--line);
+  --it-border-strong: var(--line-strong);
 
-  --it-text-primary: #0f172a;
-  --it-text-secondary: #64748b;
-  --it-text-disabled: #9ca3af;
+  --it-text-primary: var(--text);
+  --it-text-secondary: var(--text-muted);
+  --it-text-disabled: var(--text-faint);
 
-  /* Green — confirm / save / positive */
-  --it-green: #16a34a;
-  --it-green-hover: #15803d;
-  --it-green-active: #166534;
-  --it-green-surface: #dcfce7;
-  --it-green-text: #15803d;
-  --it-green-border: #86efac;
+  /* Green — positive / Receive */
+  --it-green: var(--green);
+  --it-green-hover: #256a42;
+  --it-green-active: #1e5a38;
+  --it-green-surface: var(--green-tint);
+  --it-green-text: var(--green);
+  --it-green-border: var(--green);
 
-  /* Red — cancel / destructive */
-  --it-red: #dc2626;
-  --it-red-hover: #b91c1c;
-  --it-red-active: #991b1b;
-  --it-red-surface: #fee2e2;
-  --it-red-text: #b91c1c;
-  --it-red-border: #fca5a5;
+  /* Red — destructive / Sale */
+  --it-red: var(--red);
+  --it-red-hover: #9a3426;
+  --it-red-active: #822b20;
+  --it-red-surface: var(--red-tint);
+  --it-red-text: var(--red);
+  --it-red-border: var(--red);
 
-  /* Gray — neutral / secondary */
-  --it-gray: #6b7280;
-  --it-gray-hover: #374151;
-  --it-gray-active: #1f2937;
-  --it-gray-surface: #f3f4f6;
-  --it-gray-text: #374151;
-  --it-gray-border: #d1d5db;
+  /* Gray — neutral / secondary (maps to line-strong) */
+  --it-gray: var(--text-muted);
+  --it-gray-hover: var(--text);
+  --it-gray-active: var(--ink);
+  --it-gray-surface: var(--paper);
+  --it-gray-text: var(--text-muted);
+  --it-gray-border: var(--line-strong);
 
-  /* Accent — used sparingly (sync count badge, external links) */
-  --it-accent: #2563eb;
-  --it-accent-surface: #eff6ff;
-  --it-accent-text: #1d4ed8;
-  --it-accent-border: #93c5fd;
+  /* Accent — maps to teal (reference secondary accent) */
+  --it-accent: var(--teal);
+  --it-accent-surface: var(--teal-tint);
+  --it-accent-text: var(--teal);
+  --it-accent-border: var(--teal);
 
-  /* Warning / amber */
-  --it-amber: #d97706;
-  --it-amber-surface: #fffbeb;
-  --it-amber-text: #92400e;
-  --it-amber-border: #fcd34d;
+  /* Warning / amber — primary CTA */
+  --it-amber: var(--amber);
+  --it-amber-hover: #c97c1f;
+  --it-amber-active: #b56e1c;
+  --it-amber-surface: var(--amber-tint);
+  --it-amber-text: var(--amber-ink);
+  --it-amber-border: var(--amber);
 
-  /* Blue */
-  --it-blue: #2563eb;
-  --it-blue-surface: #eff6ff;
-  --it-blue-text: #1d4ed8;
-  --it-blue-border: #93c5fd;
+  /* Blue — maps to teal in v1.2.0 palette (preserve for legacy but teal-ish) */
+  --it-blue: var(--teal);
+  --it-blue-surface: var(--teal-tint);
+  --it-blue-text: var(--teal);
+  --it-blue-border: var(--teal);
 
-  /* Purple */
-  --it-purple: #7c3aed;
-  --it-purple-surface: #f5f3ff;
-  --it-purple-text: #6d28d9;
-  --it-purple-border: #c4b5fd;
+  /* Purple — maps to muted with amber fallback */
+  --it-purple: #6d5a4a;
+  --it-purple-surface: var(--amber-tint);
+  --it-purple-text: var(--amber-ink);
+  --it-purple-border: var(--amber);
 
-  /* Teal */
-  --it-teal: #0d9488;
-  --it-teal-surface: #f0fdfa;
-  --it-teal-text: #0f766e;
-  --it-teal-border: #5eead4;
+  /* Teal — reference teal */
+  --it-teal: var(--teal);
+  --it-teal-surface: var(--teal-tint);
+  --it-teal-text: var(--teal);
+  --it-teal-border: var(--teal);
 
-  /* Orange */
-  --it-orange: #ea580c;
-  --it-orange-surface: #fff7ed;
-  --it-orange-text: #c2410c;
-  --it-orange-border: #fdba74;
+  /* Orange — maps to amber */
+  --it-orange: var(--amber);
+  --it-orange-surface: var(--amber-tint);
+  --it-orange-text: var(--amber-ink);
+  --it-orange-border: var(--amber);
 
-  /* Cyan */
-  --it-cyan: #0891b2;
-  --it-cyan-surface: #ecfeff;
-  --it-cyan-text: #0e7490;
-  --it-cyan-border: #67e8f9;
+  /* Cyan — maps to teal */
+  --it-cyan: var(--teal);
+  --it-cyan-surface: var(--teal-tint);
+  --it-cyan-text: var(--teal);
+  --it-cyan-border: var(--teal);
 
   /* Scrollbar */
-  --it-scrollbar: #d1d5db;
+  --it-scrollbar: var(--line-strong);
   --it-scrollbar-track: transparent;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
-   Dark theme
+   Dark theme — matches reference :root[data-theme="dark"]
    ───────────────────────────────────────────────────────────────────────────── */
 [data-theme='dark'] {
-  --it-bg: #0b1220;
-  --it-surface: #151c2e;
-  --it-card: #1a2236;
-  --it-border: #243041;
-  --it-border-strong: #2e3e56;
+  --paper: #14171b;
+  --paper-raised: #1a1e23;
+  --surface: #1b1f24;
+  --line: #2b3038;
+  --line-strong: #3a404a;
+  --text: #eceee9;
+  --text-muted: #9aa097;
+  --text-faint: #6b7169;
+  --amber-tint: #3a2a12;
+  --teal-tint: #16302b;
+  --green-tint: #16301f;
+  --red-tint: #341915;
 
-  --it-text-primary: #f1f5f9;
-  --it-text-secondary: #8b95a8;
-  --it-text-disabled: #4b5563;
+  --it-bg: var(--paper);
+  --it-surface: var(--paper-raised);
+  --it-card: var(--surface);
+  --it-border: var(--line);
+  --it-border-strong: var(--line-strong);
+
+  --it-text-primary: var(--text);
+  --it-text-secondary: var(--text-muted);
+  --it-text-disabled: var(--text-faint);
 
   /* Green */
-  --it-green: #22c55e;
-  --it-green-hover: #4ade80;
-  --it-green-active: #86efac;
-  --it-green-surface: rgba(34, 197, 94, 0.12);
-  --it-green-text: #4ade80;
-  --it-green-border: rgba(34, 197, 94, 0.3);
+  --it-green: #3a9a5c;
+  --it-green-hover: #4aad6e;
+  --it-green-active: #5fbf80;
+  --it-green-surface: var(--green-tint);
+  --it-green-text: #6fcf8a;
+  --it-green-border: #2e7d4f;
 
   /* Red */
-  --it-red: #ef4444;
-  --it-red-hover: #f87171;
-  --it-red-active: #fca5a5;
-  --it-red-surface: rgba(239, 68, 68, 0.12);
-  --it-red-text: #f87171;
-  --it-red-border: rgba(239, 68, 68, 0.3);
+  --it-red: #c85a4a;
+  --it-red-hover: #d46f60;
+  --it-red-active: #e08476;
+  --it-red-surface: var(--red-tint);
+  --it-red-text: #e8a090;
+  --it-red-border: #b3402f;
 
   /* Gray */
-  --it-gray: #9ca3af;
-  --it-gray-hover: #d1d5db;
-  --it-gray-active: #f3f4f6;
-  --it-gray-surface: rgba(156, 163, 175, 0.12);
-  --it-gray-text: #d1d5db;
-  --it-gray-border: rgba(156, 163, 175, 0.25);
+  --it-gray: #9aa097;
+  --it-gray-hover: #eceee9;
+  --it-gray-active: #ffffff;
+  --it-gray-surface: var(--paper-raised);
+  --it-gray-text: #9aa097;
+  --it-gray-border: var(--line-strong);
 
-  /* Accent */
-  --it-accent: #60a5fa;
-  --it-accent-surface: rgba(96, 165, 250, 0.1);
-  --it-accent-text: #93c5fd;
-  --it-accent-border: rgba(96, 165, 250, 0.25);
+  /* Accent / teal */
+  --it-accent: #3a9a95;
+  --it-accent-surface: var(--teal-tint);
+  --it-accent-text: #6fcfc8;
+  --it-accent-border: #1f5b54;
 
-  /* Warning / amber */
-  --it-amber: #f59e0b;
-  --it-amber-surface: rgba(245, 158, 11, 0.12);
-  --it-amber-text: #fcd34d;
-  --it-amber-border: rgba(245, 158, 11, 0.3);
+  /* Amber */
+  --it-amber: #db8a2a;
+  --it-amber-hover: #e99a3a;
+  --it-amber-active: #f0a84a;
+  --it-amber-surface: var(--amber-tint);
+  --it-amber-text: #f0c080;
+  --it-amber-border: #db8a2a;
 
-  /* Blue */
-  --it-blue: #3b82f6;
-  --it-blue-surface: rgba(59, 130, 246, 0.12);
-  --it-blue-text: #60a5fa;
-  --it-blue-border: rgba(59, 130, 246, 0.3);
+  --it-blue: #3a8a9a;
+  --it-blue-surface: var(--teal-tint);
+  --it-blue-text: #6fcfd8;
+  --it-blue-border: #1f5b54;
 
-  /* Purple */
-  --it-purple: #8b5cf6;
-  --it-purple-surface: rgba(139, 92, 246, 0.12);
-  --it-purple-text: #a78bfa;
-  --it-purple-border: rgba(139, 92, 246, 0.3);
+  --it-purple: #9a8a7a;
+  --it-purple-surface: var(--amber-tint);
+  --it-purple-text: #c9b8a8;
+  --it-purple-border: #db8a2a;
 
-  /* Teal */
-  --it-teal: #14b8a6;
-  --it-teal-surface: rgba(20, 184, 166, 0.12);
-  --it-teal-text: #5eead4;
-  --it-teal-border: rgba(20, 184, 166, 0.3);
+  --it-teal: #3a9a95;
+  --it-teal-surface: var(--teal-tint);
+  --it-teal-text: #6fcfc8;
+  --it-teal-border: #1f5b54;
 
-  /* Orange */
-  --it-orange: #f97316;
-  --it-orange-surface: rgba(249, 115, 22, 0.12);
-  --it-orange-text: #fb923c;
-  --it-orange-border: rgba(249, 115, 22, 0.3);
+  --it-orange: #db8a2a;
+  --it-orange-surface: var(--amber-tint);
+  --it-orange-text: #f0c080;
+  --it-orange-border: #db8a2a;
 
-  /* Cyan */
-  --it-cyan: #06b6d4;
-  --it-cyan-surface: rgba(6, 182, 214, 0.12);
-  --it-cyan-text: #22d3ee;
-  --it-cyan-border: rgba(6, 182, 214, 0.3);
+  --it-cyan: #3a9a95;
+  --it-cyan-surface: var(--teal-tint);
+  --it-cyan-text: #6fcfc8;
+  --it-cyan-border: #1f5b54;
 
-  /* Shadows are deeper in dark mode */
-  --it-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
-  --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
+  /* Shadows deeper in dark */
+  --it-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.45);
 
   /* Scrollbar */
-  --it-scrollbar: #2e3340;
+  --it-scrollbar: #3a404a;
   --it-scrollbar-track: transparent;
 }
 
@@ -251,61 +297,60 @@
    ───────────────────────────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme='light']) {
-    --it-bg: #0b1220;
-    --it-surface: #151c2e;
-    --it-card: #1a2236;
-    --it-border: #243041;
-    --it-border-strong: #2e3e56;
-    --it-text-primary: #f1f5f9;
-    --it-text-secondary: #8b95a8;
-    --it-text-disabled: #4b5563;
-    --it-green: #22c55e;
-    --it-green-hover: #4ade80;
-    --it-green-active: #86efac;
-    --it-green-surface: rgba(34, 197, 94, 0.12);
-    --it-green-text: #4ade80;
-    --it-green-border: rgba(34, 197, 94, 0.3);
-    --it-red: #ef4444;
-    --it-red-hover: #f87171;
-    --it-red-active: #fca5a5;
-    --it-red-surface: rgba(239, 68, 68, 0.12);
-    --it-red-text: #f87171;
-    --it-red-border: rgba(239, 68, 68, 0.3);
-    --it-gray: #9ca3af;
-    --it-gray-hover: #d1d5db;
-    --it-gray-active: #f3f4f6;
-    --it-gray-surface: rgba(156, 163, 175, 0.12);
-    --it-gray-text: #d1d5db;
-    --it-gray-border: rgba(156, 163, 175, 0.25);
-    --it-accent: #60a5fa;
-    --it-accent-surface: rgba(96, 165, 250, 0.1);
-    --it-accent-text: #93c5fd;
-    --it-accent-border: rgba(96, 165, 250, 0.25);
-    --it-amber: #f59e0b;
-    --it-amber-surface: rgba(245, 158, 11, 0.12);
-    --it-amber-text: #fcd34d;
-    --it-amber-border: rgba(245, 158, 11, 0.3);
-    --it-blue: #3b82f6;
-    --it-blue-surface: rgba(59, 130, 246, 0.12);
-    --it-blue-text: #60a5fa;
-    --it-blue-border: rgba(59, 130, 246, 0.3);
-    --it-purple: #8b5cf6;
-    --it-purple-surface: rgba(139, 92, 246, 0.12);
-    --it-purple-text: #a78bfa;
-    --it-purple-border: rgba(139, 92, 246, 0.3);
-    --it-teal: #14b8a6;
-    --it-teal-surface: rgba(20, 184, 166, 0.12);
-    --it-teal-text: #5eead4;
-    --it-teal-border: rgba(20, 184, 166, 0.3);
-    --it-orange: #f97316;
-    --it-orange-surface: rgba(249, 115, 22, 0.12);
-    --it-orange-text: #fb923c;
-    --it-orange-border: rgba(249, 115, 22, 0.3);
-    --it-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
-    --it-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
-    --it-shadow-md: 0 6px 20px rgba(0, 0, 0, 0.4);
-    --it-scrollbar: #2e3340;
-    --it-scrollbar-track: transparent;
+    --paper: #14171b;
+    --paper-raised: #1a1e23;
+    --surface: #1b1f24;
+    --line: #2b3038;
+    --line-strong: #3a404a;
+    --text: #eceee9;
+    --text-muted: #9aa097;
+    --text-faint: #6b7169;
+    --amber-tint: #3a2a12;
+    --teal-tint: #16302b;
+    --green-tint: #16301f;
+    --red-tint: #341915;
+
+    --it-bg: var(--paper);
+    --it-surface: var(--paper-raised);
+    --it-card: var(--surface);
+    --it-border: var(--line);
+    --it-border-strong: var(--line-strong);
+    --it-text-primary: var(--text);
+    --it-text-secondary: var(--text-muted);
+    --it-text-disabled: var(--text-faint);
+    --it-green: #3a9a5c;
+    --it-green-surface: var(--green-tint);
+    --it-green-text: #6fcf8a;
+    --it-green-border: #2e7d4f;
+    --it-red: #c85a4a;
+    --it-red-surface: var(--red-tint);
+    --it-red-text: #e8a090;
+    --it-red-border: #b3402f;
+    --it-gray: #9aa097;
+    --it-gray-surface: var(--paper-raised);
+    --it-gray-text: #9aa097;
+    --it-gray-border: var(--line-strong);
+    --it-accent: #3a9a95;
+    --it-accent-surface: var(--teal-tint);
+    --it-accent-text: #6fcfc8;
+    --it-accent-border: #1f5b54;
+    --it-amber: #db8a2a;
+    --it-amber-surface: var(--amber-tint);
+    --it-amber-text: #f0c080;
+    --it-amber-border: #db8a2a;
+    --it-blue: #3a8a9a;
+    --it-blue-surface: var(--teal-tint);
+    --it-blue-text: #6fcfd8;
+    --it-blue-border: #1f5b54;
+    --it-teal: #3a9a95;
+    --it-teal-surface: var(--teal-tint);
+    --it-teal-text: #6fcfc8;
+    --it-teal-border: #1f5b54;
+    --it-orange: #db8a2a;
+    --it-orange-surface: var(--amber-tint);
+    --it-cyan: #3a9a95;
+    --it-cyan-surface: var(--teal-tint);
+    --it-scrollbar: #3a404a;
   }
 }
 
@@ -327,25 +372,35 @@ html {
   background-color: var(--it-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  scroll-padding-top: env(safe-area-inset-top, 0px);
 }
 
-/* Scrollbars */
+body {
+  background: var(--it-bg);
+  color: var(--it-text-primary);
+  font-family: var(--it-font-ui);
+}
+
+/* Scrollbars — reference: 10px thumb with paper border */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: var(--it-scrollbar-track);
 }
 ::-webkit-scrollbar-thumb {
   background: var(--it-scrollbar);
-  border-radius: var(--it-r-pill);
+  border: 2px solid var(--it-bg);
+  border-radius: 0;
 }
 
-/* Focus visible (global) — components override with colour-specific rings */
+/* Focus visible — reference amber outline */
 :focus-visible {
-  outline: none;
-  box-shadow: var(--it-focus-ring);
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
 }
 
 /* Reduced motion */

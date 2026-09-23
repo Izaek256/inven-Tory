@@ -613,22 +613,24 @@ export function App(): React.ReactElement {
               </div>
             </div>
           )}
-          <Header
-            stores={stores}
-            activeStoreId={activeStoreId}
-            onSelectStore={handleSelectStoreAndReload}
-            interactiveTimeMs={interactiveTimeMs}
-            currentUser={session}
-            onLogout={handleLogout}
-            restoreProgress={restoreProgress}
-          />
+          {authState !== 'loading' && authState !== 'unauthenticated' && (
+            <Sidebar
+              currentView={currentView}
+              onNavigate={setCurrentView}
+              collapsed={sidebarCollapsed}
+              onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+            />
+          )}
           <div className="app-body">
-            {authState !== 'loading' && authState !== 'unauthenticated' && (
-              <Sidebar
-                currentView={currentView}
-                onNavigate={setCurrentView}
-                collapsed={sidebarCollapsed}
-                onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
+            {authState !== 'unauthenticated' && authState !== 'loading' && (
+              <Header
+                stores={stores}
+                activeStoreId={activeStoreId}
+                onSelectStore={handleSelectStoreAndReload}
+                interactiveTimeMs={interactiveTimeMs}
+                currentUser={session}
+                onLogout={handleLogout}
+                restoreProgress={restoreProgress}
               />
             )}
             <main className="app-content">

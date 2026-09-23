@@ -57,12 +57,12 @@ export function RecentActivityView({
             style={{
               width: 36,
               height: 36,
-              borderRadius: 10,
-              background: 'rgba(34,197,94,0.14)',
+              borderRadius: 0,
+              background: 'var(--it-amber-surface)',
               display: 'inline-flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: 'var(--it-green)',
+              color: 'var(--it-amber-text)',
             }}
           >
             <Activity size={20} aria-hidden="true" />
@@ -90,10 +90,11 @@ export function RecentActivityView({
               width: '100%',
               height: 36,
               padding: '0 12px 0 34px',
-              border: '1px solid var(--it-border)',
+              border: '1px solid var(--it-border-strong)',
               background: 'var(--it-surface)',
-              borderRadius: 10,
+              borderRadius: 0,
               fontSize: 13,
+              fontFamily: 'var(--it-font-mono)',
             }}
           />
         </div>

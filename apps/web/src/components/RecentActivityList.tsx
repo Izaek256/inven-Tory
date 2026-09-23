@@ -82,6 +82,7 @@ export function RecentActivityRow({ item }: { item: RecentActivityItem }): React
     hour12: false,
   });
   const qtySign = NEGATIVE_ACTIVITY_TYPES.has(item.type) ? '−' : '+';
+  const qtyColor = NEGATIVE_ACTIVITY_TYPES.has(item.type) ? 'var(--red)' : 'var(--green)';
   return (
     <div
       className="activity-row"
@@ -136,7 +137,14 @@ export function RecentActivityRow({ item }: { item: RecentActivityItem }): React
         {formatActionLabel(item.type)}
       </span>
       <span
-        style={{ flex: 0.5, fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 600 }}
+        style={{
+          flex: 0.5,
+          fontVariantNumeric: 'tabular-nums',
+          fontFamily: 'var(--it-font-mono)',
+          fontSize: 12,
+          fontWeight: 600,
+          color: qtyColor,
+        }}
         data-testid="activity-qty"
       >
         {qtySign}
@@ -160,8 +168,9 @@ export function RecentActivityRow({ item }: { item: RecentActivityItem }): React
         title={occurredAbsolute}
         style={{
           flex: 0.7,
-          fontSize: 12,
-          color: 'var(--it-text-secondary)',
+          fontSize: 11.5,
+          fontFamily: 'var(--it-font-mono)',
+          color: 'var(--it-text-disabled)',
           whiteSpace: 'nowrap',
           textAlign: 'right',
         }}
