@@ -1,11 +1,10 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Store } from '../types/store';
 import { getPendingOutboxCount } from '../services/tauriTransactionService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
-import { Badge, useTheme } from '@invenTory/ui';
+import { useTheme } from '@invenTory/ui';
 import {
   LogOut,
-  Store as StoreIcon,
   ChevronDown,
   Moon,
   Sun,
@@ -53,27 +52,31 @@ export const Header: React.FC<HeaderProps> = ({
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
-  const [appVersion, setAppVersion] = useState<string>(import.meta.env.VITE_APP_VERSION || '');
+  const userMenuRef = useRef<HTMLDivElement>(null);
+  void useTheme;
 
-  // Updater state
   const { progress, isDownloading } = useUpdater();
-
-  // Theme — delegates to the app-wide ThemeProvider so changes are reflected
-  // across the whole app immediately (data-theme on <html> element).
   const { theme, toggleTheme } = useTheme();
   const isDark = theme === 'dark';
 
-  // Override with real Tauri version when running in the desktop app
+  // Close user dropdown on outside click / Esc – reference hidden menu behavior
   useEffect(() => {
-    import('@tauri-apps/api/app')
-      .then(({ getVersion }) => getVersion())
-      .then((v) => {
-        if (v) setAppVersion(v);
-      })
-      .catch(() => {
-        // Not running in Tauri — keep the VITE_APP_VERSION fallback
-      });
-  }, []);
+    if (!userMenuOpen) return;
+    const onDocClick = (e: MouseEvent): void => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setUserMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return (): void => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [userMenuOpen]);
 
   const triggerManualSync = async (): Promise<void> => {
     try {
@@ -113,32 +116,25 @@ export const Header: React.FC<HeaderProps> = ({
     const fetchPendingCount = async (): Promise<void> => {
       try {
         const count = await getPendingOutboxCount();
-        if (isMounted) {
-          setPendingSyncCount(count);
-        }
+        if (isMounted) setPendingSyncCount(count);
       } catch {
-        // Ignore background polling errors
+        // ignore
       }
     };
-
     fetchPendingCount();
     const interval = setInterval(fetchPendingCount, 5000);
 
-    // Fetch last sync timestamp on mount and every 5 s
     const fetchLastSync = async (): Promise<void> => {
       try {
         const ts = await getLastSyncTimestamp();
-        if (isMounted) {
-          setLastSyncAt(ts);
-        }
+        if (isMounted) setLastSyncAt(ts);
       } catch {
-        // Ignore errors
+        // ignore
       }
     };
     fetchLastSync();
     const syncInterval = setInterval(fetchLastSync, 5000);
 
-    // Refresh pending count and last sync immediately after a sync cycle completes
     const handleSyncComplete = (): void => {
       void fetchPendingCount();
       void fetchLastSync();
@@ -155,75 +151,36 @@ export const Header: React.FC<HeaderProps> = ({
     };
   }, []);
 
+  const currentStore =
+    stores.length > 0 ? stores.find((s) => s.id === activeStoreId) || stores[0] : null;
+  const currentStoreColor = currentStore ? storeColor(currentStore.id) : '#62685f';
+
   return (
     <header className="app-header" data-testid="app-header">
-      <div className="header-brand">
-        <div className="brand-icon-glyph">
-          <img src="/favicon.svg" alt="" aria-hidden="true" />
-        </div>
-        <h1 className="brand-title">invenTory</h1>
-        <span className="brand-version">v{appVersion}</span>
-      </div>
-
-      <div className="header-controls">
-        {/* Global cross-store product search (Task G) */}
-        <button
-          className="header-global-search-btn"
-          onClick={() => setIsGlobalSearchOpen(true)}
-          data-testid="global-search-btn"
-          aria-label="Global product search across all stores"
-          title="Global product search across all stores"
+      {/* Search — reference .search (opens global modal) */}
+      <button
+        className="search"
+        onClick={() => setIsGlobalSearchOpen(true)}
+        data-testid="global-search-btn"
+        aria-label="Global product search across all stores"
+        title="Search all stores — name, SKU, barcode…"
+        type="button"
+        style={{ cursor: 'pointer', textAlign: 'left' }}
+      >
+        <Search size={14} aria-hidden="true" />
+        <span
+          style={{
+            fontFamily: 'var(--it-font-mono)',
+            fontSize: '12.5px',
+            color: 'var(--it-text-disabled)',
+          }}
         >
-          <Search size={15} aria-hidden="true" />
-          <span>Search All Stores</span>
-        </button>
+          Search all stores — name, SKU, barcode…
+        </span>
+      </button>
 
-        {/* User menu: groups theme toggle + sign out (Task J) */}
-        <div className="header-user-menu">
-          <button
-            className="header-user-trigger"
-            onClick={() => setUserMenuOpen(!userMenuOpen)}
-            data-testid="header-user-trigger"
-            aria-label="User settings"
-          >
-            <UserRound size={15} aria-hidden="true" />
-          </button>
-          {userMenuOpen && (
-            <div className="header-user-dropdown" data-testid="header-user-dropdown">
-              <button
-                onClick={() => {
-                  setUserMenuOpen(false);
-                  toggleTheme();
-                }}
-                data-testid="header-theme-toggle"
-              >
-                {isDark ? <Sun size={14} /> : <Moon size={14} />}
-                <span>{isDark ? 'Light mode' : 'Dark mode'}</span>
-              </button>
-              <div className="divider" />
-              <button
-                onClick={() => {
-                  setUserMenuOpen(false);
-                  onLogout?.();
-                }}
-                data-testid="header-logout-btn"
-              >
-                <LogOut size={14} />
-                <span>Sign Out</span>
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Offline / Online Status Badge */}
-        <div data-testid="status-indicator">
-          <Badge
-            status={isOnline ? 'ONLINE' : 'OFFLINE'}
-            label={isOnline ? 'Online' : 'Offline Mode'}
-          />
-        </div>
-
-        {/* Restore Progress Bar — non-blocking, shown in header while restore runs in the background */}
+      <div className="header-controls" style={{ marginLeft: 'auto' }}>
+        {/* Restore / updater progress — keep existing but styled as chips */}
         {restoreProgress && !restoreProgress.totalComplete && restoreProgress.phase !== 'idle' && (
           <div
             className="import-progress-container"
@@ -237,13 +194,13 @@ export const Header: React.FC<HeaderProps> = ({
                   className="import-progress-fill"
                   style={{
                     width: `${Math.min(100, restoreProgress.progressPercent)}%`,
-                    background: 'var(--it-warning, #f59e0b)',
+                    background: 'var(--amber)',
                   }}
                 />
               ) : (
                 <div
                   className="import-progress-fill import-progress-fill--indeterminate"
-                  style={{ background: 'var(--it-warning, #f59e0b)' }}
+                  style={{ background: 'var(--amber)' }}
                 />
               )}
             </div>
@@ -259,7 +216,6 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
-        {/* Restore complete flash */}
         {restoreProgress && restoreProgress.totalComplete && (
           <div
             className="import-progress-container"
@@ -268,12 +224,7 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <span
               className="import-progress-label"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 4,
-                color: 'var(--it-success, #10b981)',
-              }}
+              style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--green)' }}
             >
               <Database size={11} />
               Restore complete!
@@ -281,7 +232,6 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         )}
 
-        {/* Update Download Progress Bar — visible when downloading/installing update */}
         {(isDownloading || progress.stage === 'installing') && (
           <div
             className="import-progress-container"
@@ -306,24 +256,35 @@ export const Header: React.FC<HeaderProps> = ({
             <span className="import-progress-label">
               {progress.stage === 'installing' ? (
                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Loader2 size={12} className="animate-spin" />
-                  Installing...
+                  <Loader2 size={12} className="animate-spin" /> Installing...
                 </span>
               ) : progress.total ? (
                 `${progress.percent}%`
               ) : (
                 <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <Download size={12} />
-                  Downloading...
+                  <Download size={12} /> Downloading...
                 </span>
               )}
             </span>
           </div>
         )}
 
-        {/* Pending Sync Count Badge — clickable to trigger manual sync */}
+        {/* Online chip — reference .status-chip */}
+        <div className="status-chip" data-testid="status-indicator">
+          <span
+            className="dot"
+            style={{ background: isOnline ? 'var(--green)' : 'var(--amber)' }}
+            aria-hidden="true"
+          />
+          {isOnline ? 'Online' : 'Offline'}
+        </div>
+
+        {/* Sync chip — reference .status-chip */}
         <div
-          className="pending-sync-badge"
+          className="status-chip"
+          data-testid="pending-sync-badge"
+          onClick={triggerManualSync}
+          style={{ cursor: 'pointer' }}
           title={
             isSyncing
               ? 'Sync in progress...'
@@ -331,83 +292,123 @@ export const Header: React.FC<HeaderProps> = ({
                 ? `Pending changes to sync: ${pendingSyncCount}. Click to sync now.`
                 : 'All events synced. Click to force a sync.'
           }
-          data-testid="pending-sync-badge"
-          onClick={triggerManualSync}
-          style={{ cursor: 'pointer' }}
         >
-          {isSyncing ? (
-            <Badge status="PENDING" label={syncStatus || 'SYNCHING...'} />
-          ) : syncStatus ? (
-            <Badge status={syncStatus === 'SYNCHED' ? 'ACTIVE' : 'INACTIVE'} label={syncStatus} />
-          ) : pendingSyncCount > 0 ? (
-            <Badge status="PENDING" label={`Pending Sync: ${pendingSyncCount}`} />
-          ) : (
-            <Badge status="ACTIVE" label="SYNCHED" />
-          )}
-          <span style={{ display: 'none' }} data-testid="pending-sync-count">
-            {pendingSyncCount}
-          </span>
+          <span
+            className="dot"
+            style={{ background: pendingSyncCount > 0 ? 'var(--amber)' : 'var(--green)' }}
+            aria-hidden="true"
+          />
+          {isSyncing
+            ? syncStatus || 'Syncing…'
+            : syncStatus
+              ? syncStatus
+              : pendingSyncCount > 0
+                ? `Pending: ${pendingSyncCount}`
+                : 'Synced'}
         </div>
+        <span style={{ display: 'none' }} data-testid="pending-sync-count">
+          {pendingSyncCount}
+        </span>
 
-        {/* Last sync timestamp */}
+        {/* Sync time chip — dashed */}
         <div
-          className="last-sync-badge"
+          className="status-chip sync-time"
           data-testid="last-sync-timestamp"
           title={lastSyncAt ? `Last synced: ${lastSyncAt}` : 'Not yet synced'}
         >
-          {lastSyncAt ? (
-            <span className="last-sync-label">
-              Synced: {new Date(lastSyncAt).toLocaleTimeString()}
-            </span>
-          ) : (
-            <span className="last-sync-label last-sync-none">Not synced</span>
+          {lastSyncAt ? new Date(lastSyncAt).toLocaleTimeString() : 'Not synced'}
+        </div>
+
+        {/* User menu — hidden dropdown (reference .header-user-dropdown) */}
+        <div className="header-user-menu" ref={userMenuRef}>
+          <button
+            className={`header-user-trigger ${userMenuOpen ? 'open' : ''}`}
+            onClick={() => setUserMenuOpen(!userMenuOpen)}
+            data-testid="header-user-trigger"
+            aria-label="User settings"
+            aria-expanded={userMenuOpen}
+            aria-haspopup="menu"
+            type="button"
+          >
+            <UserRound size={15} aria-hidden="true" />
+          </button>
+          {userMenuOpen && (
+            <div className="header-user-dropdown" data-testid="header-user-dropdown" role="menu">
+              {/* Theme toggler — redesigned as switch row (reference .switch) */}
+              <button
+                className="header-dropdown-item header-theme-row"
+                onClick={() => toggleTheme()}
+                data-testid="header-theme-toggle"
+                type="button"
+                role="menuitem"
+                aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              >
+                <span className="header-dropdown-icon">
+                  {isDark ? <Sun size={14} /> : <Moon size={14} />}
+                </span>
+                <span className="header-dropdown-label">{isDark ? 'Light mode' : 'Dark mode'}</span>
+                <span
+                  className="header-theme-switch"
+                  aria-hidden="true"
+                  data-active={isDark ? 'true' : 'false'}
+                >
+                  <span className="header-theme-thumb" />
+                </span>
+              </button>
+              <div className="header-dropdown-divider" />
+              <button
+                className="header-dropdown-item header-logout-row"
+                onClick={() => {
+                  setUserMenuOpen(false);
+                  onLogout?.();
+                }}
+                data-testid="header-logout-btn"
+                type="button"
+                role="menuitem"
+              >
+                <span className="header-dropdown-icon">
+                  <LogOut size={14} />
+                </span>
+                <span className="header-dropdown-label">Sign Out</span>
+              </button>
+            </div>
           )}
         </div>
 
-        {/* Active Store Selector — redesigned: name only + color badge (Task H) */}
-        {stores.length > 0 &&
-          ((): React.ReactElement => {
-            const currentStore = stores.find((s) => s.id === activeStoreId) || stores[0];
-            const currentStoreColor = storeColor(currentStore?.id ?? '');
-            return (
-              <div className="store-switcher-wrapper" data-testid="store-switcher-wrapper">
-                <div className="store-switcher-pill" title={`Active Store: ${currentStore?.name}`}>
-                  <div className="store-switcher-icon-wrap">
-                    <StoreIcon size={14} className="store-switcher-icon" />
-                  </div>
-                  <div className="store-switcher-info">
-                    <span className="store-switcher-name">
-                      <span
-                        className="store-switcher-badge"
-                        style={{ backgroundColor: currentStoreColor }}
-                      />
-                      {currentStore?.name}
-                    </span>
-                  </div>
-                  <span className="store-switcher-dot" aria-hidden="true" />
-                  <ChevronDown size={14} className="store-switcher-chevron" />
-                </div>
-                <select
-                  className="store-switcher-native-select"
-                  value={activeStoreId || ''}
-                  onChange={(e: React.ChangeEvent<HTMLSelectElement>): void =>
-                    onSelectStore(e.target.value)
-                  }
-                  data-testid="store-selector"
-                  aria-label="Active Store Location"
-                >
-                  {stores.map((store: Store) => (
-                    <option key={store.id} value={store.id} data-store-color={storeColor(store.id)}>
-                      {store.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            );
-          })()}
+        {/* Store tag — reference .store-tag (ink + amber code) */}
+        {currentStore && (
+          <div className="store-switcher-wrapper" data-testid="store-switcher-wrapper">
+            <button
+              className="store-tag"
+              type="button"
+              aria-label={`Active Store: ${currentStore.name}`}
+              title={`Active Store: ${currentStore.name}`}
+            >
+              <span className="code" style={{ background: currentStoreColor, color: '#fff' }}>
+                {currentStore.code}
+              </span>
+              <span className="name">{currentStore.name}</span>
+              <ChevronDown size={13} style={{ opacity: 0.6 }} />
+            </button>
+            <select
+              className="store-switcher-native-select"
+              value={activeStoreId || ''}
+              onChange={(e: React.ChangeEvent<HTMLSelectElement>): void =>
+                onSelectStore(e.target.value)
+              }
+              data-testid="store-selector"
+              aria-label="Active Store Location"
+            >
+              {stores.map((store: Store) => (
+                <option key={store.id} value={store.id} data-store-color={storeColor(store.id)}>
+                  {store.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
-      {/* Read-only all-stores lookup; never changes the active store (Task G) */}
       <GlobalSearchModal
         isOpen={isGlobalSearchOpen}
         onClose={() => setIsGlobalSearchOpen(false)}

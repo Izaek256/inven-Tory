@@ -36,10 +36,10 @@ const CSS = `
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: var(--it-sp-12) var(--it-sp-6);
-  background-color: var(--it-card);
-  border: 1px dashed var(--it-border);
-  border-radius: var(--it-r-lg);
+  padding: 54px 20px;
+  background-color: var(--it-bg);
+  border: 1px dashed var(--it-border-strong);
+  border-radius: var(--it-r-sm);
   gap: var(--it-sp-3);
   max-width: 520px;
   margin: 0 auto;

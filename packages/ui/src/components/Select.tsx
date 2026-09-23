@@ -62,11 +62,18 @@ export function Select({
 const CSS = `
 .it-select {
   appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2362685f' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right var(--it-sp-3) center;
-  padding-right: calc(var(--it-sp-3) + 16px + var(--it-sp-2));
+  background-position: right 11px center;
+  padding: 9px 32px 9px 11px;
   cursor: pointer;
+  border-radius: var(--it-r-sm);
+  font-size: 13.5px;
+}
+.it-select:focus-visible {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-tint);
+  outline: none;
 }
 [data-theme='dark'] .it-select {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b95a8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");

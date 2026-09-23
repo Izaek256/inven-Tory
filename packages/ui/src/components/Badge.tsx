@@ -75,46 +75,47 @@ export function Badge({ status, label, className = '' }: BadgeProps): React.Reac
   );
 }
 
-/* ─── Styles — signature left-bar treatment ──────────────────────────────── */
+/* ─── Styles — reference .tag: left 2px bar, mono, 11px, sharp ───────── */
 const CSS = `
 .it-badge {
   display: inline-flex;
   align-items: center;
-  font-size: var(--it-text-xs);
-  font-weight: var(--it-weight-semibold);
-  letter-spacing: var(--it-tracking-label);
-  text-transform: uppercase;
-  padding: 2px var(--it-sp-2) 2px var(--it-sp-2);
+  gap: 5px;
+  font-family: var(--it-font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 3px 8px 3px 7px;
   border-radius: var(--it-r-sm);
-  /* Signature: left border bar, tinted background */
   border-left: var(--it-status-bar) solid;
   white-space: nowrap;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .it-badge--green {
-  background-color: var(--it-green-surface);
-  color: var(--it-green-text);
-  border-left-color: var(--it-green);
+  background-color: var(--green-tint);
+  color: var(--green);
+  border-left-color: var(--green);
 }
 .it-badge--red {
-  background-color: var(--it-red-surface);
-  color: var(--it-red-text);
-  border-left-color: var(--it-red);
+  background-color: var(--red-tint);
+  color: var(--red);
+  border-left-color: var(--red);
 }
 .it-badge--amber {
-  background-color: var(--it-amber-surface);
-  color: var(--it-amber-text);
-  border-left-color: var(--it-amber);
+  background-color: var(--amber-tint);
+  color: var(--amber-ink);
+  border-left-color: var(--amber);
 }
 .it-badge--accent {
-  background-color: var(--it-accent-surface);
-  color: var(--it-accent-text);
-  border-left-color: var(--it-accent);
+  background-color: var(--teal-tint);
+  color: var(--teal);
+  border-left-color: var(--teal);
 }
 .it-badge--gray {
-  background-color: var(--it-gray-surface);
-  color: var(--it-gray-text);
-  border-left-color: var(--it-gray);
+  background-color: var(--it-bg);
+  color: var(--it-text-secondary);
+  border-left-color: var(--it-border-strong);
 }
 `;
 

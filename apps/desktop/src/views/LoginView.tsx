@@ -75,121 +75,239 @@ export const LoginView: React.FC<LoginViewProps> = ({
       style={{
         minHeight: '100vh',
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        flexDirection: 'column',
         backgroundColor: 'var(--it-bg)',
-        padding: '24px',
       }}
       data-testid="login-view"
     >
+      {/* Topbar — reference .login-topbar */}
       <div
         style={{
-          width: '100%',
-          maxWidth: '400px',
-          backgroundColor: 'var(--it-card)',
-          border: '1px solid var(--it-border)',
-          borderRadius: 'var(--it-r-lg)',
-          padding: '40px 32px',
-          boxShadow: 'var(--it-shadow-md)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '0 18px',
+          height: '56px',
+          background: 'var(--paper-raised)',
+          borderBottom: '1px solid var(--it-border)',
+          flex: '0 0 auto',
         }}
       >
-        {/* Brand */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div
+            style={{
+              width: '26px',
+              height: '26px',
+              background: 'var(--amber)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
+              <path
+                d="M4 7L12 3L20 7M4 7V17L12 21M4 7L12 11M20 7V17L12 21M20 7L12 11M12 11V21"
+                stroke="#201200"
+                strokeWidth="1.8"
+                strokeLinejoin="miter"
+                strokeLinecap="square"
+              />
+            </svg>
+          </div>
+          <strong style={{ fontSize: '14.5px', color: 'var(--it-text-primary)' }}>
+            inven-Tory
+          </strong>
+          <span
+            style={{
+              fontFamily: 'var(--it-font-mono)',
+              fontSize: '10px',
+              fontWeight: 600,
+              background: 'var(--it-card)',
+              border: '1px solid var(--it-border)',
+              padding: '2px 6px',
+            }}
+          >
+            v1.2.0
+          </span>
+        </div>
+        <div style={{ flex: 1 }} />
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: '12px',
-            marginBottom: '32px',
+            gap: '8px',
+            background: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            padding: '7px 11px',
+            color: 'var(--it-text-disabled)',
+            fontFamily: 'var(--it-font-mono)',
+            fontSize: '12.5px',
           }}
         >
-          <img
-            src="/favicon.svg"
-            alt="invenTory"
+          <span style={{ display: 'inline-flex' }}>
+            <svg viewBox="0 0 24 24" fill="none" width="14" height="14">
+              <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.8" />
+              <path
+                d="M20 20L16.5 16.5"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </svg>
+          </span>
+          Search all stores
+        </div>
+        <span
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+            fontFamily: 'var(--it-font-mono)',
+            fontSize: '11px',
+            padding: '5px 9px',
+            border: '1px solid var(--it-border)',
+            color: 'var(--it-text-secondary)',
+            background: 'var(--it-card)',
+          }}
+        >
+          <span
             style={{
-              width: '40px',
-              height: '40px',
-              objectFit: 'contain',
-              borderRadius: 'var(--it-r-md)',
+              width: '6px',
+              height: '6px',
+              background: 'var(--green)',
+              display: 'inline-block',
             }}
           />
-          <div>
-            <h1
-              style={{
-                fontSize: '18px',
-                fontWeight: 700,
-                color: 'var(--it-text-primary)',
-                lineHeight: 1.2,
-              }}
-            >
-              invenTory
-            </h1>
-            <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>Desktop Client</p>
-          </div>
-        </div>
+          Online
+        </span>
+      </div>
 
-        <h2
+      <div
+        style={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '24px',
+        }}
+      >
+        <div
           style={{
-            fontSize: '20px',
-            fontWeight: 600,
-            color: 'var(--it-text-primary)',
-            marginBottom: '24px',
+            width: '380px',
+            backgroundColor: 'var(--it-card)',
+            border: '1px solid var(--it-border)',
+            padding: '30px 32px',
           }}
         >
-          Sign In
-        </h2>
-
-        {/* Error banner */}
-        {error && (
+          {/* Brand */}
           <div
-            className="it-toast it-toast--error"
-            style={{ marginBottom: '20px' }}
-            data-testid="login-error"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              marginBottom: '20px',
+            }}
           >
-            <AlertCircle size={16} aria-hidden="true" />
-            <span>{error}</span>
+            <div
+              style={{
+                width: '30px',
+                height: '30px',
+                background: 'var(--amber)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <svg viewBox="0 0 24 24" fill="none" width="17" height="17">
+                <path
+                  d="M4 7L12 3L20 7M4 7V17L12 21M4 7L12 11M20 7V17L12 21M20 7L12 11M12 11V21"
+                  stroke="#201200"
+                  strokeWidth="1.8"
+                  strokeLinejoin="miter"
+                  strokeLinecap="square"
+                />
+              </svg>
+            </div>
+            <div>
+              <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
+                inven-Tory
+              </div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontFamily: 'var(--it-font-mono)',
+                  color: 'var(--it-text-disabled)',
+                }}
+              >
+                Desktop client
+              </div>
+            </div>
           </div>
-        )}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} noValidate data-testid="login-form">
-          <div style={{ marginBottom: '16px' }}>
-            <TextInput
-              id="login-username"
-              label="Username"
-              required
-              autoComplete="username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              disabled={loading}
-              data-testid="login-username-input"
-            />
-          </div>
-
-          <div style={{ marginBottom: '24px' }}>
-            <TextInput
-              id="login-password"
-              label="Password"
-              type="password"
-              required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-              data-testid="login-password-input"
-            />
-          </div>
-
-          <Button
-            type="submit"
-            variant="primary"
-            loading={loading}
-            style={{ width: '100%' }}
-            data-testid="login-submit-btn"
+          <h2
+            style={{
+              fontSize: '19px',
+              fontWeight: 600,
+              color: 'var(--it-text-primary)',
+              marginBottom: '18px',
+            }}
           >
-            <LogIn size={18} />
-            <span>Sign In</span>
-          </Button>
-        </form>
+            Sign in
+          </h2>
+
+          {/* Error banner */}
+          {error && (
+            <div
+              className="it-toast it-toast--error"
+              style={{ marginBottom: '20px' }}
+              data-testid="login-error"
+            >
+              <AlertCircle size={16} aria-hidden="true" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} noValidate data-testid="login-form">
+            <div style={{ marginBottom: '16px' }}>
+              <TextInput
+                id="login-username"
+                label="Username"
+                required
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                disabled={loading}
+                data-testid="login-username-input"
+              />
+            </div>
+
+            <div style={{ marginBottom: '24px' }}>
+              <TextInput
+                id="login-password"
+                label="Password"
+                type="password"
+                required
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                disabled={loading}
+                data-testid="login-password-input"
+              />
+            </div>
+
+            <Button
+              type="submit"
+              variant="primary"
+              loading={loading}
+              style={{ width: '100%', justifyContent: 'center' }}
+              data-testid="login-submit-btn"
+            >
+              <LogIn size={14} />
+              <span>Sign in</span>
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   );
