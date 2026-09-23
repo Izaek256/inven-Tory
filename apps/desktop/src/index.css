@@ -22,6 +22,10 @@ body {
   flex-direction: column;
 }
 
+button {
+  font-family: inherit;
+}
+
 html {
   scroll-padding-top: env(safe-area-inset-top, 0px);
 }
@@ -59,15 +63,18 @@ html {
 .app-header {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 14px;
   padding: 0 22px;
   height: 64px;
   min-height: 64px;
+  max-height: 64px;
   background: var(--paper-raised);
   border-bottom: 1px solid var(--line);
   box-shadow: none;
   z-index: 10;
+  overflow: visible;
 }
 
 /* Support .topbar alias */
@@ -129,11 +136,23 @@ html {
   white-space: nowrap;
 }
 
+.header-balance {
+  flex: 1 1 0;
+  min-width: 8px;
+}
+
 .header-controls {
+  flex: 1 1 0;
+  min-width: max-content;
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-left: auto;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 10px;
+  margin-left: 0;
+}
+.header-controls > * {
+  flex-shrink: 0;
 }
 
 /* ── Topbar search — reference .search ───────────────────────────────── */
@@ -145,13 +164,27 @@ html {
   border: 1px solid var(--it-border);
   border-radius: var(--it-r-sm);
   padding: 7px 11px;
-  width: 280px;
+  flex: 0 1 300px;
+  width: 300px;
+  max-width: 300px;
+  min-width: 140px;
   color: var(--it-text-disabled);
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  flex-shrink: 1;
 }
 .search svg {
   width: 14px;
   height: 14px;
   flex: 0 0 14px;
+}
+.search > span {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .search input {
   border: none;
@@ -181,6 +214,7 @@ html {
     flex-basis 0.18s ease;
   overflow-y: auto;
   overflow-x: hidden;
+  font-family: var(--it-font-ui);
 }
 
 .app-sidebar--collapsed {
@@ -218,15 +252,16 @@ html {
   width: 30px;
   height: 30px;
   border-radius: var(--it-r-sm);
-  background: var(--amber);
+  background: transparent;
   display: flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 30px;
 }
-.rail-brand-mark svg {
-  width: 17px;
-  height: 17px;
+.rail-brand-mark img {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
 }
 .rail-brand-text {
   line-height: 1.15;
@@ -312,6 +347,7 @@ html {
   padding: 11px 14px 11px 16px;
   border-radius: var(--it-r-sm);
   color: #b7bec8;
+  font-family: var(--it-font-ui);
   font-size: 13.5px;
   font-weight: 500;
   cursor: pointer;
@@ -640,6 +676,7 @@ html {
   color: var(--it-text-secondary);
   white-space: nowrap;
   background: var(--it-card);
+  flex-shrink: 0;
 }
 .status-chip .dot {
   width: 6px;
@@ -661,6 +698,8 @@ html {
   border-radius: var(--it-r-sm);
   cursor: pointer;
   border: none;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .store-tag .code {
   background: var(--amber);
@@ -674,6 +713,25 @@ html {
 .store-tag .name {
   font-size: 12.5px;
   font-weight: 500;
+}
+.store-tag:hover {
+  filter: brightness(1.08);
+}
+.store-tag.open {
+  outline: 1px solid var(--teal);
+  box-shadow: 0 0 0 3px var(--teal-tint);
+}
+.store-tag:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+.store-tag-chevron {
+  opacity: 0.6;
+  transition: transform 0.15s var(--it-ease);
+}
+.store-tag.open .store-tag-chevron {
+  transform: rotate(180deg);
+  opacity: 1;
 }
 
 /* ── Forms — reference .field ──────────────────────────────────────────── */
@@ -722,6 +780,70 @@ html {
 }
 .field textarea {
   resize: vertical;
+}
+
+/* ── Import dropzone / template table — reference .dropzone / .import-table ─ */
+.dropzone {
+  border: 1.5px dashed var(--line-strong);
+  padding: 9px 12px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  background: var(--paper);
+}
+.dropzone svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  color: var(--text-faint);
+}
+.dropzone span {
+  flex: 1;
+}
+.import-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.import-table thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.01em;
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+.import-table tbody td {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: 13px;
+  vertical-align: middle;
+}
+.import-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.import-table tbody tr:hover {
+  background: var(--paper);
+}
+.cell-primary {
+  font-weight: 600;
+}
+.req-yes {
+  color: var(--green);
+  font-weight: 600;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.req-no {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+}
+.t-muted {
+  color: var(--text-muted);
 }
 
 /* ── Entry tables — reference .entry-table ─────────────────────────────── */
@@ -790,6 +912,7 @@ html {
   border: 1px solid var(--it-border);
   border-radius: var(--it-r-sm);
   background-color: var(--it-card);
+  flex-shrink: 0;
 }
 .import-progress-bar {
   width: 110px;
@@ -996,6 +1119,66 @@ html {
   border-radius: var(--it-r-sm);
 }
 
+/* ── Genesis — same shell/card language as login ────────────────────────── */
+.genesis-screen {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--it-bg);
+}
+.genesis-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.genesis-card {
+  width: min(440px, 100%);
+  background: var(--it-card);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-sm);
+  padding: 30px 32px;
+  box-shadow: none;
+}
+.genesis-step-dot {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 700;
+}
+.genesis-path {
+  width: 100%;
+  padding: 20px;
+  border: 1px solid var(--it-border-strong);
+  border-radius: var(--it-r-sm);
+  background: var(--it-card);
+  color: var(--it-text-primary);
+  font-size: 14px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
+}
+.genesis-path:hover:not(:disabled) {
+  border-color: var(--amber);
+  background: var(--amber-tint);
+}
+.genesis-path:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+}
+.genesis-path:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* ── Compact overrides preserved (tests expect these but we keep sharp) ─── */
 .it-btn--md {
   min-height: 34px;
@@ -1061,6 +1244,7 @@ html {
   position: relative;
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
 }
 .store-switcher-pill {
   display: flex;
@@ -1111,10 +1295,100 @@ html {
 }
 .store-switcher-native-select {
   position: absolute;
-  inset: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
   opacity: 0;
+  pointer-events: none;
+}
+
+/* Custom store dropdown — matches .header-user-dropdown aesthetics */
+.store-dropdown {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 240px;
+  max-width: min(320px, calc(100vw - 32px));
+  background: var(--it-card);
+  border: 1px solid var(--it-border);
+  border-radius: var(--it-r-sm);
+  box-shadow: var(--it-shadow-lg);
+  z-index: 30;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: header-dropdown-in 0.16s var(--it-ease);
+}
+.store-dropdown-caption {
+  font-family: var(--it-font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--it-text-disabled);
+  padding: 6px 10px 4px;
+}
+.store-dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--it-r-sm);
   cursor: pointer;
-  z-index: 2;
+  font-family: var(--it-font-ui);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--it-text-primary);
+  text-align: left;
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease;
+}
+.store-dropdown-item:hover {
+  background: var(--it-bg);
+  border-color: var(--it-border);
+}
+.store-dropdown-item:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 1px;
+}
+.store-dropdown-item.active {
+  background: var(--teal-tint);
+  border-color: var(--teal);
+}
+.store-dropdown-item .swatch {
+  width: 10px;
+  height: 10px;
+  flex-shrink: 0;
+}
+.store-dropdown-item .code {
+  font-family: var(--it-font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 3px 6px;
+  color: #fff;
+  flex-shrink: 0;
+}
+.store-dropdown-item .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.store-dropdown-item .check {
+  color: var(--teal);
+  flex-shrink: 0;
 }
 
 /* ── Blurry overlay — keep but sharp ───────────────────────────────────── */
@@ -1155,6 +1429,7 @@ html {
   align-items: center;
   gap: 4px;
   position: relative;
+  flex-shrink: 0;
 }
 .header-user-trigger {
   display: flex;
@@ -1511,31 +1786,60 @@ html {
   color: var(--it-text-secondary);
 }
 
-/* Overall light theme tuning — increase contrast for header + sheets */
+/* Overall light theme tuning — increase contrast for header + sheets — fix remaining dark components on toggle */
+[data-theme='light'] body,
+[data-theme='light'] html {
+  background: var(--paper);
+  color: var(--text);
+}
+[data-theme='light'] .app-container {
+  background: var(--paper);
+}
 [data-theme='light'] .app-header {
+  background: var(--paper-raised);
+  border-bottom-color: var(--line);
+}
+[data-theme='light'] .topbar {
   background: var(--paper-raised);
   border-bottom-color: var(--line);
 }
 [data-theme='light'] .search {
   background: #fff;
   border-color: var(--line);
+  color: var(--text-faint);
 }
 [data-theme='light'] .search:hover {
   border-color: var(--line-strong);
 }
+[data-theme='light'] .search input {
+  color: var(--text);
+}
+[data-theme='light'] .search input::placeholder {
+  color: var(--text-faint);
+}
 [data-theme='light'] .status-chip {
   background: #fff;
   border-color: var(--line);
+  color: var(--text-muted);
 }
 [data-theme='light'] .status-chip.sync-time {
   background: var(--paper);
+  color: var(--text-faint);
 }
 [data-theme='light'] .store-tag {
   background: var(--ink);
 }
+[data-theme='light'] .app-content,
+[data-theme='light'] .content {
+  background: var(--paper);
+  color: var(--text);
+}
 [data-theme='light'] .sheet {
   background: #fff;
   border-color: var(--line);
+}
+[data-theme='light'] .sheet-head p {
+  color: var(--text-muted);
 }
 [data-theme='light'] .avatar {
   background: var(--teal-tint);
@@ -1543,6 +1847,61 @@ html {
 }
 [data-theme='light'] .info-bar {
   background: #fff;
+  border-color: var(--line);
+}
+[data-theme='light'] .kpi {
+  background: #fff;
+  border-color: var(--line);
+}
+[data-theme='light'] .kpi.accent {
+  background: var(--amber-tint);
+  border-color: var(--amber);
+}
+[data-theme='light'] .it-card {
+  background: var(--surface);
+  border-color: var(--line);
+}
+[data-theme='light'] .it-modal__content,
+[data-theme='light'] .it-modal {
+  background: var(--surface);
+}
+[data-theme='light'] .dropzone {
+  background: var(--paper);
+  border-color: var(--line-strong);
+  color: var(--text-muted);
+}
+[data-theme='light'] .import-table thead th {
+  color: var(--text-muted);
+  border-bottom-color: var(--line);
+}
+[data-theme='light'] table tbody td {
+  border-bottom-color: var(--line);
+}
+[data-theme='light'] table tbody tr:hover {
+  background: var(--paper);
+}
+[data-theme='light'] .field input,
+[data-theme='light'] .field select,
+[data-theme='light'] .field textarea {
+  background: #fff;
+  border-color: var(--line-strong);
+  color: var(--text);
+}
+[data-theme='light'] .empty-state {
+  background: var(--paper);
+  border-color: var(--line-strong);
+}
+[data-theme='light'] .header-user-dropdown,
+[data-theme='light'] .store-dropdown {
+  background: #fff;
+  border-color: var(--line);
+}
+[data-theme='light'] .header-user-trigger {
+  background: #fff;
+  border-color: var(--line);
+}
+[data-theme='light'] .store-dropdown-item:hover {
+  background: var(--paper);
   border-color: var(--line);
 }
 

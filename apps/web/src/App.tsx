@@ -3,27 +3,20 @@
  *
  * Layout:
  *   - Top bar: brand + global search (placeholder per page) + online dot + bell + user block
- *   - Sidebar: 7 items with accent left-edge active state, collapsible to icon rail
+ *   - Sidebar: 4 items with accent left-edge active state, collapsible to icon rail
  *   - Bottom nav below 768px replaces sidebar
  *   - Main content: single dynamic dashboard (store tabs handle single vs multi) + products etc.
  */
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { History, Search, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import {
-  LayoutDashboard,
-  Package,
-  Warehouse,
-  Settings,
-  ArrowLeftRight,
-  History,
-  Bell,
-  Search,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  LogOut,
-  type LucideIcon,
-} from 'lucide-react';
+  DashboardIcon,
+  MovementsIcon,
+  ProductsIcon,
+  StoresIcon,
+  type NavIcon,
+} from './components/NavIcons';
 import { ThemeToggle } from '@invenTory/ui';
 import { clearToken, getToken } from './services/apiClient';
 import { LoginView } from './views/LoginView';
@@ -36,30 +29,29 @@ import { listStores } from './services/dashboardService';
 import './index.css';
 import './styles/dashboard-phase4.css';
 import './styles/dashboard-mockup.css';
+import './styles/artifact-theme.css';
 
-type NavView =
-  'dashboard' | 'stock-movements' | 'products' | 'stores' | 'settings' | 'recent-activity';
+type NavView = 'dashboard' | 'stock-movements' | 'products' | 'stores' | 'recent-activity';
 
 interface NavItem {
   id: NavView;
   label: string;
-  icon: LucideIcon;
+  icon: NavIcon;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'stock-movements', label: 'Stock Movements', icon: ArrowLeftRight },
-  { id: 'products', label: 'Products', icon: Package },
-  { id: 'stores', label: 'Stores', icon: Warehouse },
-  { id: 'settings', label: 'Settings', icon: Settings },
+  { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
+  { id: 'stock-movements', label: 'Stock Movements', icon: MovementsIcon },
+  { id: 'products', label: 'Products', icon: ProductsIcon },
+  { id: 'stores', label: 'Stores', icon: StoresIcon },
 ];
 
 // Legacy alias for tests that still use recent-activity id
 const NAV_LEGACY: NavItem[] = [{ id: 'recent-activity', label: 'Recent Activity', icon: History }];
 
 const BOTTOM_NAV_BREAKPOINT = 768;
-const SIDEBAR_WIDTH = 220;
-const SIDEBAR_COLLAPSED_WIDTH = 64;
+const SIDEBAR_WIDTH = 236;
+const SIDEBAR_COLLAPSED_WIDTH = 68;
 
 function TopBar({
   placeholder,
@@ -88,12 +80,12 @@ function TopBar({
 
   return (
     <header className="app-header app-header--mockup" data-testid="web-header">
-      <div className="header-brand">
-        <div className="brand-icon-glyph">
+      {/* Brand — mobile only (desktop shows it in the rail); no version chip. */}
+      <div className="topbar-brand" aria-hidden="true">
+        <div className="topbar-brand__mark">
           <img src="/favicon.svg" alt="" aria-hidden="true" />
         </div>
-        <h1 className="brand-title">invenTory</h1>
-        <span className="brand-version">v1.1.6</span>
+        <strong>invenTory</strong>
       </div>
 
       <form
@@ -105,7 +97,7 @@ function TopBar({
         role="search"
         aria-label="Global search"
       >
-        <Search size={16} className="header-search-icon" aria-hidden="true" />
+        <Search size={14} className="header-search-icon" aria-hidden="true" />
         <input
           className="header-search-input"
           placeholder={placeholder}
@@ -117,15 +109,9 @@ function TopBar({
           data-testid="topbar-search"
           aria-label="Global search"
         />
-        <button
-          type="submit"
-          className="header-search-kbd"
-          aria-label="Search"
-          style={{ border: 'none', background: 'var(--it-surface)', cursor: 'pointer' }}
-        >
-          ↵
-        </button>
       </form>
+
+      <div className="topbar-spacer" />
 
       <div className="header-controls">
         <span className="header-online" data-testid="online-indicator">
@@ -135,11 +121,6 @@ function TopBar({
           {isOnline ? 'Online' : 'Offline'}
         </span>
 
-        <button className="header-icon-btn" aria-label="Notifications" data-testid="notif-btn">
-          <Bell size={18} aria-hidden="true" />
-          <span className="header-notif-dot" />
-        </button>
-
         <div className="header-user" data-testid="user-block">
           <div className="header-avatar" aria-hidden="true">
             {initials}
@@ -148,7 +129,6 @@ function TopBar({
             <span className="header-user__name">{displayName}</span>
             <span className="header-user__role">{roleLabel}</span>
           </div>
-          <ChevronDown size={14} className="header-user__chev" aria-hidden="true" />
         </div>
 
         <ThemeToggle />
@@ -159,9 +139,8 @@ function TopBar({
           data-testid="logout-btn"
           title="Sign out"
           aria-label="Sign out"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
         >
-          <LogOut size={14} aria-hidden="true" />
+          <LogOut size={13} aria-hidden="true" />
           Sign out
         </button>
       </div>
@@ -291,106 +270,111 @@ function App(): React.ReactElement {
         return (
           <StoreView storeIds={storeIds} loading={storeListLoading} onRefresh={handleRefresh} />
         );
-      case 'settings':
-        return (
-          <div
-            data-testid="settings-placeholder"
-            style={{ padding: 24, color: 'var(--it-text-secondary)' }}
-          >
-            Settings — coming soon
-          </div>
-        );
       case 'dashboard':
       default:
         return <AnalyticsDashboardView me={me} storeMeta={storeMeta} topSearch={topSearch} />;
     }
   };
 
-  // Bottom nav items for mobile — reflects reduced nav (no Inventory/Reports)
+  // Bottom nav items for mobile
   const bottomItems: NavItem[] = [
-    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { id: 'stock-movements', label: 'Movements', icon: ArrowLeftRight },
-    { id: 'products', label: 'Products', icon: Package },
-    { id: 'stores', label: 'Stores', icon: Warehouse },
-    { id: 'settings', label: 'More', icon: Settings },
+    { id: 'dashboard', label: 'Dashboard', icon: DashboardIcon },
+    { id: 'stock-movements', label: 'Movements', icon: MovementsIcon },
+    { id: 'products', label: 'Products', icon: ProductsIcon },
+    { id: 'stores', label: 'Stores', icon: StoresIcon },
   ];
 
   return (
-    <div className="app-container" data-testid="web-app-container">
-      <TopBar
-        placeholder={placeholder}
-        isOnline={isOnline}
-        me={me}
-        onLogout={() => {
-          clearToken();
-          setMe(null);
-          setIsAuthenticated(false);
-        }}
-        onSearchChange={setTopSearch}
-        onSearchSubmit={handleHeaderSearch}
-      />
-
-      <div className="app-body">
-        {/* Sidebar — hidden on narrow, replaced by bottom nav */}
-        {!isNarrow && (
-          <aside
-            className={`app-sidebar app-sidebar--mockup ${collapsed ? 'app-sidebar--collapsed' : ''}`}
-            data-testid="web-sidebar"
-            style={{ width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
-          >
-            <div className="app-sidebar__nav">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  className={`nav-item nav-item--mockup ${effectiveView === item.id ? 'active' : ''}`}
-                  data-testid={`nav-${item.id}`}
-                  onClick={() => handleSelectView(item.id)}
-                  title={collapsed ? item.label : undefined}
-                  aria-label={item.label}
-                  onMouseEnter={() => collapsed && setHoveredItem(item.id)}
-                  onMouseLeave={() => setHoveredItem(null)}
-                  onFocus={() => collapsed && setHoveredItem(item.id)}
-                  onBlur={() => setHoveredItem(null)}
-                >
-                  <item.icon size={18} aria-hidden="true" />
-                  {!collapsed && <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>}
-                  {collapsed && hoveredItem === item.id && (
-                    <span className="nav-tooltip">{item.label}</span>
-                  )}
-                </button>
-              ))}
-              {/* hidden legacy for test compat — Recent Activity */}
-              {NAV_LEGACY.map((item) => (
-                <button
-                  key={item.id}
-                  className={`nav-item ${effectiveView === 'stock-movements' ? 'active' : ''}`}
-                  data-testid={`nav-${item.id}`}
-                  onClick={() => handleSelectView(item.id)}
-                  style={{ display: 'none' }}
-                  aria-hidden="true"
-                >
-                  <item.icon size={18} aria-hidden="true" />
-                  <span>{item.label}</span>
-                </button>
-              ))}
+    <div className="app-container app-container--artifact" data-testid="web-app-container">
+      {/* Rail — full-height dark ink sidebar (artifact .rail), hidden on narrow */}
+      {!isNarrow && (
+        <aside
+          className={`app-sidebar app-sidebar--mockup ${collapsed ? 'app-sidebar--collapsed' : ''}`}
+          data-testid="web-sidebar"
+          style={{ width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
+        >
+          <div className="rail-brand">
+            <div className="rail-brand__mark">
+              <img src="/favicon.svg" alt="" aria-hidden="true" />
             </div>
+            <div className="rail-brand__text">
+              <strong>invenTory</strong>
+            </div>
+          </div>
+          <div className="app-sidebar__nav">
+            <div className="nav-caption">Overview</div>
+            {NAV_ITEMS.map((item) => (
+              <button
+                key={item.id}
+                className={`nav-item nav-item--mockup ${effectiveView === item.id ? 'active' : ''}`}
+                data-testid={`nav-${item.id}`}
+                onClick={() => handleSelectView(item.id)}
+                title={collapsed ? item.label : undefined}
+                aria-label={item.label}
+                onMouseEnter={() => collapsed && setHoveredItem(item.id)}
+                onMouseLeave={() => setHoveredItem(null)}
+                onFocus={() => collapsed && setHoveredItem(item.id)}
+                onBlur={() => setHoveredItem(null)}
+              >
+                <span className="nav-bar" aria-hidden="true" />
+                <item.icon size={16} aria-hidden="true" />
+                {!collapsed && <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>}
+                {collapsed && hoveredItem === item.id && (
+                  <span className="nav-tooltip">{item.label}</span>
+                )}
+              </button>
+            ))}
+            {/* hidden legacy for test compat — Recent Activity */}
+            {NAV_LEGACY.map((item) => (
+              <button
+                key={item.id}
+                className={`nav-item ${effectiveView === 'stock-movements' ? 'active' : ''}`}
+                data-testid={`nav-${item.id}`}
+                onClick={() => handleSelectView(item.id)}
+                style={{ display: 'none' }}
+                aria-hidden="true"
+              >
+                <item.icon size={18} aria-hidden="true" />
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </div>
 
-            <button
-              className="sidebar-collapse-btn"
-              onClick={() => setCollapsed((c) => !c)}
-              data-testid="sidebar-collapse"
-              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            >
-              {collapsed ? (
-                <ChevronRight size={16} />
-              ) : (
-                <>
-                  <ChevronLeft size={16} /> Collapse
-                </>
-              )}
-            </button>
-          </aside>
-        )}
+          <div className="rail-foot" data-testid="rail-sync-status">
+            <span className="dot" aria-hidden="true" />
+            <span>{isOnline ? 'SYNCED · ONLINE' : 'OFFLINE'}</span>
+          </div>
+          <button
+            className="sidebar-collapse-btn"
+            onClick={() => setCollapsed((c) => !c)}
+            data-testid="sidebar-collapse"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? (
+              <ChevronRight size={14} />
+            ) : (
+              <>
+                <ChevronLeft size={14} /> <span className="rail-collapse-label">Collapse</span>
+              </>
+            )}
+          </button>
+        </aside>
+      )}
+
+      {/* Right column — topbar over content only (artifact .col) */}
+      <div className="app-main-col">
+        <TopBar
+          placeholder={placeholder}
+          isOnline={isOnline}
+          me={me}
+          onLogout={() => {
+            clearToken();
+            setMe(null);
+            setIsAuthenticated(false);
+          }}
+          onSearchChange={setTopSearch}
+          onSearchSubmit={handleHeaderSearch}
+        />
 
         {/* Main Content */}
         <main className="app-content app-content--mockup" data-testid="web-main-content">
@@ -426,24 +410,11 @@ function App(): React.ReactElement {
           {bottomItems.map((item) => (
             <button
               key={item.id}
-              className={`nav-item ${effectiveView === item.id ? 'active' : ''}`}
+              className={`web-bottom-nav__item ${effectiveView === item.id ? 'active' : ''}`}
               data-testid={`nav-${item.id}`}
               onClick={() => handleSelectView(item.id)}
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                gap: '2px',
-                padding: '4px 8px',
-                borderRadius: 'var(--it-r-md)',
-                border: '1px solid transparent',
-                background: 'transparent',
-                color:
-                  effectiveView === item.id ? 'var(--it-green-text)' : 'var(--it-text-secondary)',
-                cursor: 'pointer',
-                fontSize: '10px',
-                minWidth: '56px',
-              }}
+              aria-label={item.label}
+              aria-current={effectiveView === item.id ? 'page' : undefined}
             >
               <item.icon size={20} aria-hidden="true" />
               <span>{item.label}</span>

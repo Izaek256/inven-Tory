@@ -98,21 +98,19 @@ export const LoginView: React.FC<LoginViewProps> = ({
             style={{
               width: '26px',
               height: '26px',
-              background: 'var(--amber)',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
             }}
           >
-            <svg viewBox="0 0 24 24" fill="none" width="15" height="15">
-              <path
-                d="M4 7L12 3L20 7M4 7V17L12 21M4 7L12 11M20 7V17L12 21M20 7L12 11M12 11V21"
-                stroke="#201200"
-                strokeWidth="1.8"
-                strokeLinejoin="miter"
-                strokeLinecap="square"
-              />
-            </svg>
+            <img
+              src="/favicon.svg"
+              alt=""
+              aria-hidden="true"
+              width={26}
+              height={26}
+              style={{ objectFit: 'contain' }}
+            />
           </div>
           <strong style={{ fontSize: '14.5px', color: 'var(--it-text-primary)' }}>
             inven-Tory
@@ -212,21 +210,19 @@ export const LoginView: React.FC<LoginViewProps> = ({
               style={{
                 width: '30px',
                 height: '30px',
-                background: 'var(--amber)',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <svg viewBox="0 0 24 24" fill="none" width="17" height="17">
-                <path
-                  d="M4 7L12 3L20 7M4 7V17L12 21M4 7L12 11M20 7V17L12 21M20 7L12 11M12 11V21"
-                  stroke="#201200"
-                  strokeWidth="1.8"
-                  strokeLinejoin="miter"
-                  strokeLinecap="square"
-                />
-              </svg>
+              <img
+                src="/favicon.svg"
+                alt=""
+                aria-hidden="true"
+                width={30}
+                height={30}
+                style={{ objectFit: 'contain' }}
+              />
             </div>
             <div>
               <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--it-text-primary)' }}>

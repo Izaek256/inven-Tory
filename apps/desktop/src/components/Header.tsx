@@ -13,6 +13,7 @@ import {
   Download,
   Loader2,
   Database,
+  Check,
 } from 'lucide-react';
 import type { AuthSession } from '../types/auth';
 import { storeColor } from '../utils/storeColors';
@@ -51,8 +52,10 @@ export const Header: React.FC<HeaderProps> = ({
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncStatus, setSyncStatus] = useState<string>('');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [storeMenuOpen, setStoreMenuOpen] = useState(false);
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const storeMenuRef = useRef<HTMLDivElement>(null);
   void useTheme;
 
   const { progress, isDownloading } = useUpdater();
@@ -77,6 +80,25 @@ export const Header: React.FC<HeaderProps> = ({
       document.removeEventListener('keydown', onKey);
     };
   }, [userMenuOpen]);
+
+  // Close store dropdown on outside click / Esc
+  useEffect(() => {
+    if (!storeMenuOpen) return;
+    const onDocClick = (e: MouseEvent): void => {
+      if (storeMenuRef.current && !storeMenuRef.current.contains(e.target as Node)) {
+        setStoreMenuOpen(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setStoreMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDocClick);
+    document.addEventListener('keydown', onKey);
+    return (): void => {
+      document.removeEventListener('mousedown', onDocClick);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [storeMenuOpen]);
 
   const triggerManualSync = async (): Promise<void> => {
     try {
@@ -157,6 +179,9 @@ export const Header: React.FC<HeaderProps> = ({
 
   return (
     <header className="app-header" data-testid="app-header">
+      {/* Left balance — keeps search optically centered without overlapping controls */}
+      <div className="header-balance" aria-hidden="true" />
+
       {/* Search — reference .search (opens global modal) */}
       <button
         className="search"
@@ -179,7 +204,7 @@ export const Header: React.FC<HeaderProps> = ({
         </span>
       </button>
 
-      <div className="header-controls" style={{ marginLeft: 'auto' }}>
+      <div className="header-controls">
         {/* Restore / updater progress — keep existing but styled as chips */}
         {restoreProgress && !restoreProgress.totalComplete && restoreProgress.phase !== 'idle' && (
           <div
@@ -323,7 +348,10 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="header-user-menu" ref={userMenuRef}>
           <button
             className={`header-user-trigger ${userMenuOpen ? 'open' : ''}`}
-            onClick={() => setUserMenuOpen(!userMenuOpen)}
+            onClick={() => {
+              setUserMenuOpen(!userMenuOpen);
+              setStoreMenuOpen(false);
+            }}
             data-testid="header-user-trigger"
             aria-label="User settings"
             aria-expanded={userMenuOpen}
@@ -375,21 +403,34 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
 
-        {/* Store tag — reference .store-tag (ink + amber code) */}
+        {/* Store tag — reference .store-tag (ink + amber code) + custom dropdown */}
         {currentStore && (
-          <div className="store-switcher-wrapper" data-testid="store-switcher-wrapper">
+          <div
+            className="store-switcher-wrapper"
+            ref={storeMenuRef}
+            data-testid="store-switcher-wrapper"
+          >
             <button
-              className="store-tag"
+              className={`store-tag ${storeMenuOpen ? 'open' : ''}`}
               type="button"
               aria-label={`Active Store: ${currentStore.name}`}
               title={`Active Store: ${currentStore.name}`}
+              aria-expanded={storeMenuOpen}
+              aria-haspopup="listbox"
+              onClick={() => {
+                setStoreMenuOpen((v) => !v);
+                setUserMenuOpen(false);
+              }}
+              data-testid="store-tag-trigger"
             >
               <span className="code" style={{ background: currentStoreColor, color: '#fff' }}>
                 {currentStore.code}
               </span>
               <span className="name">{currentStore.name}</span>
-              <ChevronDown size={13} style={{ opacity: 0.6 }} />
+              <ChevronDown size={13} className="store-tag-chevron" aria-hidden="true" />
             </button>
+
+            {/* Visually hidden native select — keeps value for tests / a11y */}
             <select
               className="store-switcher-native-select"
               value={activeStoreId || ''}
@@ -398,6 +439,8 @@ export const Header: React.FC<HeaderProps> = ({
               }
               data-testid="store-selector"
               aria-label="Active Store Location"
+              tabIndex={-1}
+              aria-hidden="true"
             >
               {stores.map((store: Store) => (
                 <option key={store.id} value={store.id} data-store-color={storeColor(store.id)}>
@@ -405,6 +448,42 @@ export const Header: React.FC<HeaderProps> = ({
                 </option>
               ))}
             </select>
+
+            {storeMenuOpen && (
+              <div
+                className="store-dropdown"
+                role="listbox"
+                aria-label="Switch store"
+                data-testid="store-dropdown"
+              >
+                <div className="store-dropdown-caption">Switch store</div>
+                {stores.map((store: Store) => {
+                  const isActive = store.id === (activeStoreId || currentStore.id);
+                  const color = storeColor(store.id);
+                  return (
+                    <button
+                      key={store.id}
+                      type="button"
+                      role="option"
+                      aria-selected={isActive}
+                      className={`store-dropdown-item ${isActive ? 'active' : ''}`}
+                      data-testid={`store-option-${store.id}`}
+                      onClick={() => {
+                        onSelectStore(store.id);
+                        setStoreMenuOpen(false);
+                      }}
+                    >
+                      <span className="swatch" style={{ background: color }} aria-hidden="true" />
+                      <span className="code" style={{ background: color }}>
+                        {store.code}
+                      </span>
+                      <span className="name">{store.name}</span>
+                      {isActive && <Check size={14} className="check" aria-hidden="true" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>

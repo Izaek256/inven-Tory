@@ -49,7 +49,6 @@ import type {
 } from '../types/dashboard';
 import { DashboardTile } from '../components/DashboardTile';
 import { RecentActivityList } from '../components/RecentActivityList';
-import { Sparkline } from '../components/Sparkline';
 import { StockTrendChart } from '../components/StockTrendChart';
 import { CategoryDonutChart } from '../components/CategoryDonutChart';
 
@@ -329,8 +328,8 @@ export function AnalyticsDashboardView({
         </div>
       )}
 
-      {/* KPI Tiles — exactly 5 per spec */}
-      <div className="web-dashboard-tiles dash-tiles items-stretch" data-testid="analytics-tiles">
+      {/* KPI Tiles — exactly 5 per spec (artifact: label → value → delta) */}
+      <div className="web-dashboard-tiles dash-tiles" data-testid="analytics-tiles">
         <DashboardTile
           title="Total Products"
           numericValue={m.total_products}
@@ -367,23 +366,12 @@ export function AnalyticsDashboardView({
           delta={
             getDelta('Total Stock Units')
               ? {
-                  label: `${(getDelta('Total Stock Units')!.delta_absolute ?? 0) >= 0 ? '+' : ''}${getDelta('Total Stock Units')!.delta_absolute} units vs prior period`,
+                  label: `${(getDelta('Total Stock Units')!.delta_absolute ?? 0) >= 0 ? '+' : ''}${getDelta('Total Stock Units')!.delta_absolute} vs prior period`,
                   positive: (getDelta('Total Stock Units')!.delta_absolute ?? 0) >= 0,
                 }
               : undefined
           }
-          footer={
-            stockTrend.length >= 2 ? (
-              <Sparkline
-                data={stockTrend.map((p) => p.total_stock_units)}
-                stroke="var(--it-blue)"
-                height={28}
-                testId="stock-units-sparkline"
-              />
-            ) : (
-              <span>Trend appears as data accumulates</span>
-            )
-          }
+          footer={<span>{`Updated ${dateRange.label.toLowerCase()}`}</span>}
           testId="tile-total-stock-units"
         />
 
@@ -441,6 +429,7 @@ export function AnalyticsDashboardView({
           accent="var(--it-orange)"
           animDelay={120}
           loading={loading}
+          variant="accent"
           delta={
             unitsSoldDelta
               ? {
@@ -450,21 +439,11 @@ export function AnalyticsDashboardView({
               : undefined
           }
           footer={
-            <div className="dash-tile__bars" style={{ color: 'var(--it-orange)' }}>
-              {(opsSummaryQuery.data?.by_type?.slice(0, 7) ?? [3, 5, 8, 12, 15, 20, 27]).map(
-                (v: unknown, i: number) => {
-                  const h = typeof v === 'number' ? v : ((v as { units?: number })?.units ?? 10);
-                  const max = 30;
-                  return (
-                    <span
-                      key={i}
-                      className="dash-tile__bar"
-                      style={{ height: `${Math.max(4, (h / max) * 22)}px` }}
-                    />
-                  );
-                },
-              )}
-            </div>
+            <span>
+              {opsSummaryQuery.data
+                ? `${opsSummaryQuery.data.total_transactions} transactions`
+                : `Updated ${dateRange.label.toLowerCase()}`}
+            </span>
           }
           testId="tile-units-sold"
         />
@@ -494,10 +473,15 @@ export function AnalyticsDashboardView({
       >
         <div className="dash-panel web-dashboard-chart-panel" data-testid="stock-trend-chart">
           <div className="dash-panel__header">
-            <h3 className="dash-panel__title">
-              <TrendingUp size={16} aria-hidden="true" />
-              Stock Trend
-            </h3>
+            <div>
+              <h3 className="dash-panel__title">
+                <TrendingUp size={16} aria-hidden="true" />
+                Stock Trend
+              </h3>
+              <p className="dash-panel__subtitle">
+                Total stock units on hand{activeStore ? `, ${activeStore.name}` : ''}
+              </p>
+            </div>
             <span className="dash-date-select" style={{ height: 28, fontSize: 11 }}>
               <select
                 value={dateRange.days}
@@ -525,7 +509,7 @@ export function AnalyticsDashboardView({
           ) : stockTrendQuery.loading ? (
             <Spinner size="sm" />
           ) : (
-            <StockTrendChart data={stockTrend} testId="stock-trend-chart-canvas" />
+            <StockTrendChart data={stockTrend} height={210} testId="stock-trend-chart-canvas" />
           )}
         </div>
 
@@ -533,10 +517,13 @@ export function AnalyticsDashboardView({
           className="dash-panel web-dashboard-chart-panel"
           data-testid="category-distribution-chart"
         >
-          <h3 className="dash-panel__title">
-            <Layers size={16} aria-hidden="true" />
-            Product Categories
-          </h3>
+          <div>
+            <h3 className="dash-panel__title">
+              <Layers size={16} aria-hidden="true" />
+              Product Categories
+            </h3>
+            <p className="dash-panel__subtitle">Distribution across the catalogue</p>
+          </div>
           {categoryDistQuery.error ? (
             <EmptyState
               variant="error"
@@ -559,7 +546,12 @@ export function AnalyticsDashboardView({
       <div className="dash-tables web-dashboard-tables-row" data-testid="dashboard-tables">
         <div className="dash-panel web-dashboard-table-panel" data-testid="most-sold-table">
           <div className="web-dashboard-table-header">
-            <h3 className="web-dashboard-table-title">Most Sold Products{scopeSuffix}</h3>
+            <div>
+              <h3 className="web-dashboard-table-title">Most Sold Products{scopeSuffix}</h3>
+              <p className="dash-panel__subtitle">
+                Ranked by units sold, {dateRange.label.toLowerCase()}
+              </p>
+            </div>
           </div>
           {mostSoldQuery.error ? (
             <EmptyState
@@ -617,22 +609,25 @@ export function AnalyticsDashboardView({
 
         <div className="dash-panel web-dashboard-table-panel" data-testid="low-stock-table">
           <div className="web-dashboard-table-header">
-            <h3 className="web-dashboard-table-title">Low-Stock Alerts{scopeSuffix}</h3>
+            <div>
+              <h3 className="web-dashboard-table-title">Low-Stock Alerts{scopeSuffix}</h3>
+              <p className="dash-panel__subtitle">Below reorder threshold</p>
+            </div>
           </div>
           {lowStockLoading ? (
             <div className="dash-empty" data-testid="low-stock-loading">
               <div
                 style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 12,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 0,
                   background: 'var(--it-surface)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <Package size={22} color="var(--it-text-disabled)" />
+                <Package size={18} color="var(--it-text-disabled)" />
               </div>
               <div style={{ fontWeight: 700, color: 'var(--it-text-primary)' }}>Loading...</div>
               <div style={{ fontSize: 12 }}>Fetching low stock data...</div>
@@ -660,16 +655,16 @@ export function AnalyticsDashboardView({
             <div className="dash-empty" data-testid="low-stock-empty">
               <div
                 style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 12,
+                  width: 38,
+                  height: 38,
+                  borderRadius: 0,
                   background: 'var(--it-surface)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
               >
-                <Package size={22} color="var(--it-text-disabled)" />
+                <Package size={18} color="var(--it-text-disabled)" />
               </div>
               <div style={{ fontWeight: 700, color: 'var(--it-text-primary)' }}>No low stock</div>
               <div style={{ fontSize: 12 }}>All products are above their thresholds.</div>
@@ -681,10 +676,13 @@ export function AnalyticsDashboardView({
       {/* Recent Activity — full width */}
       <div className="dash-panel web-dashboard-preview" data-testid="recent-activity-preview">
         <div className="web-dashboard-preview-header">
-          <h3 className="web-dashboard-preview-title">
-            <Activity size={16} aria-hidden="true" />
-            Recent Activity{scopeSuffix}
-          </h3>
+          <div>
+            <h3 className="web-dashboard-preview-title">
+              <Activity size={16} aria-hidden="true" />
+              Recent Activity{scopeSuffix}
+            </h3>
+            <p className="dash-panel__subtitle">Latest stock movements across all stores</p>
+          </div>
         </div>
         {recentActivityQuery.error ? (
           <EmptyState

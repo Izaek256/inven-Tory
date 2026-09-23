@@ -75,15 +75,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     >
       <div className="rail-brand" data-testid="rail-brand">
         <div className="rail-brand-mark" aria-hidden="true">
-          <svg viewBox="0 0 24 24" fill="none" width="17" height="17">
-            <path
-              d="M4 7L12 3L20 7M4 7V17L12 21M4 7L12 11M20 7V17L12 21M20 7L12 11M12 11V21"
-              stroke="#201200"
-              strokeWidth="1.8"
-              strokeLinejoin="miter"
-              strokeLinecap="square"
-            />
-          </svg>
+          <img src="/favicon.svg" alt="" width={17} height={17} style={{ objectFit: 'contain' }} />
         </div>
         <div className="rail-brand-text">
           <strong>inven-Tory</strong>

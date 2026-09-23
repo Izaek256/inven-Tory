@@ -54,8 +54,8 @@ export interface DashboardTileProps {
   loading?: boolean;
   /** Entrance-animation stagger delay in ms (Task E). */
   animDelay?: number;
-  /** Tile variant for two-tier hierarchy: 'primary' (larger) or 'secondary' (compact). */
-  variant?: 'primary' | 'secondary';
+  /** Tile variant: 'primary' (larger) / 'secondary' (compact) / 'accent' (amber artifact KPI). */
+  variant?: 'primary' | 'secondary' | 'accent';
 }
 
 function CountUpValue({ value }: { value: number }): React.ReactElement {
@@ -108,9 +108,15 @@ export function DashboardTile({
   animDelay,
   variant = 'secondary',
 }: DashboardTileProps): React.ReactElement {
+  const variantClass =
+    variant === 'primary'
+      ? 'web-dashboard-tile--primary'
+      : variant === 'accent'
+        ? 'web-dashboard-tile--accent dash-tile--accent'
+        : 'web-dashboard-tile--secondary';
   return (
     <div
-      className={`web-dashboard-tile dash-tile web-anim-card flex flex-col h-full ${variant === 'primary' ? 'web-dashboard-tile--primary' : 'web-dashboard-tile--secondary'}`}
+      className={`web-dashboard-tile dash-tile web-anim-card flex flex-col h-full ${variantClass}`}
       data-testid={testId}
       style={animDelay ? { animationDelay: `${animDelay}ms` } : undefined}
     >
@@ -145,10 +151,7 @@ export function DashboardTile({
       )}
       {details && <div className="web-dashboard-tile__details">{details}</div>}
       {footer && (
-        <div className="web-dashboard-tile__footer dash-tile__footer mt-auto pt-3">
-          <hr className="border-gray-100 mb-2" />
-          <span className="text-xs text-gray-400">{footer}</span>
-        </div>
+        <div className="web-dashboard-tile__footer dash-tile__footer mt-auto pt-3">{footer}</div>
       )}
     </div>
   );

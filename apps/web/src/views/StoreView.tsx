@@ -67,7 +67,12 @@ function StorePanel({ storeId, onBack }: StorePanelProps): React.ReactElement {
       render: (r) => (
         <span className="web-cell-product">
           <span className="web-cell-product__name">{r.product_name}</span>
-          <span className="web-cell-code">{r.product_sku}</span>
+          <span
+            className="web-cell-mono"
+            style={{ fontSize: 11, color: 'var(--it-text-disabled)' }}
+          >
+            {r.product_sku}
+          </span>
         </span>
       ),
     },

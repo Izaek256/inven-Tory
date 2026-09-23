@@ -27,7 +27,7 @@ import { Badge, Button, EmptyState, Modal } from '@invenTory/ui';
 import { DataTable, type ColumnDef } from '@invenTory/ui';
 import { useTheme } from '@invenTory/ui';
 import type { AuthSession } from '../types/auth';
-import { Store, CreateStoreInput, UpdateStoreInput } from '../types/store';
+import { Store } from '../types/store';
 import {
   getStores,
   createStore,
@@ -179,7 +179,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
     try {
       await toggleStoreActive(store.id, !store.is_active);
       await fetchStores();
-    } catch {}
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to toggle store:', err);
+    }
   };
 
   const handleRegisterDevice = (storeId: string): void => {
@@ -195,7 +198,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
       await registerDevice(deviceStoreId, deviceName);
       setDeviceModalOpen(false);
       setDeviceName('');
-    } catch {
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to register device:', err);
     } finally {
       setDeviceModalSubmitting(false);
     }
@@ -236,7 +241,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
             serverWipeError = err instanceof Error ? err.message : String(err);
           }
         }
-      } catch {}
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to wipe server data:', err);
+      }
       if (serverWipeError) {
         setDeleteError(
           `Local data wiped, but server wipe failed: ${serverWipeError}. Server data was NOT deleted and would reappear after the next sync.`,
@@ -261,6 +269,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
       await createLocalBackup();
       await fetchBackups();
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.error('Failed to create backup:', err);
     } finally {
       setCreatingBackup(false);
@@ -274,6 +283,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
       alert(result);
       window.location.reload();
     } catch (err) {
+      // eslint-disable-next-line no-console
       console.error('Failed to restore backup:', err);
       alert(`Restore failed: ${String(err)}`);
     } finally {
@@ -830,7 +840,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
       <Modal
         isOpen={deviceModalOpen}
         onClose={() => setDeviceModalOpen(false)}
-        title="Register Device"
+        title="Register Device (FR-STORE-003 Stub)"
       >
         <div
           style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
