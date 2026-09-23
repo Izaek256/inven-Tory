@@ -83,11 +83,8 @@ jobs:
           fi
 
       # ── Windows ──────────────────────────────────────────────────────────────────────
-      # Upload both the installer (.exe) and the updater bundle (.exe.zip + .exe.zip.sig).
-      # Tauri's NSIS updater downloads the .zip, not the bare .exe, so both must be
-      # present as release assets.  draft: false ensures the release is immediately
-      # visible at /releases/latest; a draft release returns 404 from that endpoint
-      # which causes "Could not fetch a valid release JSON" in the in-app updater.
+      # Upload the installer (.exe) and its updater signature (.exe.sig), plus .zip if generated.
+      # draft: false ensures the release is immediately visible at /releases/latest.
       - name: Upload Windows release assets
         if: matrix.target == 'windows-x86_64'
         uses: softprops/action-gh-release@v2
@@ -96,11 +93,12 @@ jobs:
           draft: false
           files: |
             apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe.zip
-            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe.zip.sig
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe.sig
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.zip
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.zip.sig
 
       # ── Linux ─────────────────────────────────────────────────────────────────────────
-      # Upload AppImage and the updater tarball (.AppImage.tar.gz + .tar.gz.sig).
+      # Upload AppImage and its signature (.AppImage + .AppImage.sig), plus tarball if generated.
       - name: Upload Linux release assets
         if: matrix.target == 'linux-x86_64'
         uses: softprops/action-gh-release@v2
@@ -109,8 +107,9 @@ jobs:
           draft: false
           files: |
             apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz
-            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage.tar.gz.sig
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.AppImage.sig
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.tar.gz
+            apps/desktop/src-tauri/target/release/bundle/appimage/*.tar.gz.sig
 
       - name: Upload Windows workflow artifacts
         if: matrix.target == 'windows-x86_64'
@@ -118,9 +117,7 @@ jobs:
         with:
           name: windows-installer
           path: |
-            apps/desktop/src-tauri/target/release/bundle/nsis/invenTory_*_x64-setup.exe
-            apps/desktop/src-tauri/target/release/bundle/nsis/invenTory_*_x64-setup.exe.zip
-            apps/desktop/src-tauri/target/release/bundle/nsis/invenTory_*_x64-setup.exe.zip.sig
+            apps/desktop/src-tauri/target/release/bundle/nsis/invenTory_*_x64-setup.exe*
           retention-days: 7
 
       - name: Upload Linux workflow artifacts
@@ -129,9 +126,7 @@ jobs:
         with:
           name: linux-appimage
           path: |
-            apps/desktop/src-tauri/target/release/bundle/appimage/invenTory_*_amd64.AppImage
-            apps/desktop/src-tauri/target/release/bundle/appimage/invenTory_*_amd64.AppImage.tar.gz
-            apps/desktop/src-tauri/target/release/bundle/appimage/invenTory_*_amd64.AppImage.tar.gz.sig
+            apps/desktop/src-tauri/target/release/bundle/appimage/invenTory_*_amd64.AppImage*
           retention-days: 7
 
   create-manifest:
@@ -150,23 +145,21 @@ jobs:
           # Extract version from tag (strip leading 'v')
           VERSION=${GITHUB_REF#refs/tags/v}
 
-          # Locate the downloaded artifacts (download-artifact v4 places each
-          # artifact in a subdirectory named after the artifact when no `path`
-          # is given, and does NOT merge them into one folder).
-          #
-          # Tauri NSIS updater artifact: invenTory_<VERSION>_x64-setup.exe.zip (+.zip.sig)
-          # Tauri Linux updater artifact: invenTory_<VERSION>_amd64.AppImage.tar.gz (+.tar.gz.sig)
-          WIN_ZIP_FILE=$(find windows-installer -name 'invenTory_*_x64-setup.exe.zip' ! -name '*.sig' -print -quit)
-          WIN_SIG_FILE=$(find windows-installer -name 'invenTory_*_x64-setup.exe.zip.sig' -print -quit)
-          LINUX_TAR_FILE=$(find linux-appimage -name 'invenTory_*_amd64.AppImage.tar.gz' ! -name '*.sig' -print -quit)
-          LINUX_SIG_FILE=$(find linux-appimage -name 'invenTory_*_amd64.AppImage.tar.gz.sig' -print -quit)
+          # Locate the downloaded artifacts.
+          # In Tauri v2 with createUpdaterArtifacts: true:
+          # Windows: invenTory_<VERSION>_x64-setup.exe + invenTory_<VERSION>_x64-setup.exe.sig
+          # Linux: invenTory_<VERSION>_amd64.AppImage + invenTory_<VERSION>_amd64.AppImage.sig
+          WIN_INSTALLER_FILE=$(find windows-installer \( -name 'invenTory_*_x64-setup.exe' -o -name '*.exe.zip' \) ! -name '*.sig' -print -quit)
+          WIN_SIG_FILE=$(find windows-installer \( -name 'invenTory_*_x64-setup.exe.sig' -o -name '*.exe.zip.sig' \) -print -quit)
+          LINUX_INSTALLER_FILE=$(find linux-appimage \( -name 'invenTory_*_amd64.AppImage' -o -name '*.tar.gz' \) ! -name '*.sig' -print -quit)
+          LINUX_SIG_FILE=$(find linux-appimage \( -name 'invenTory_*_amd64.AppImage.sig' -o -name '*.tar.gz.sig' \) -print -quit)
 
           # Fail loudly if any required updater file is missing
-          for VAR_NAME in WIN_ZIP_FILE WIN_SIG_FILE LINUX_TAR_FILE LINUX_SIG_FILE; do
+          for VAR_NAME in WIN_INSTALLER_FILE WIN_SIG_FILE LINUX_INSTALLER_FILE LINUX_SIG_FILE; do
             FILE="${!VAR_NAME}"
             if [ -z "$FILE" ] || [ ! -f "$FILE" ]; then
               echo "::error::Required updater artifact not found: ${VAR_NAME} (${FILE})"
-              echo "Ensure the build job uploads .exe.zip / .exe.zip.sig and .AppImage.tar.gz / .tar.gz.sig files."
+              echo "Ensure the build job uploads installer/bundle and corresponding .sig files."
               exit 1
             fi
           done
@@ -174,13 +167,10 @@ jobs:
           WIN_SIG=$(cat "$WIN_SIG_FILE")
           LINUX_SIG=$(cat "$LINUX_SIG_FILE")
 
-          WIN_ZIP_BASENAME=$(basename "$WIN_ZIP_FILE")
-          LINUX_TAR_BASENAME=$(basename "$LINUX_TAR_FILE")
+          WIN_BASENAME=$(basename "$WIN_INSTALLER_FILE")
+          LINUX_BASENAME=$(basename "$LINUX_INSTALLER_FILE")
 
           # Build windows manifest.
-          # The `url` MUST point at the updater bundle (.zip / .tar.gz), not the raw
-          # installer — Tauri verifies the download against the signature, so the URL
-          # and sig must reference the same file.
           cat > latest-windows-x86_64.json << EOF
           {
             "version": "${VERSION}",
@@ -189,11 +179,11 @@ jobs:
             "platforms": {
               "windows-x86_64": {
                 "signature": "${WIN_SIG}",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${WIN_ZIP_BASENAME}"
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${WIN_BASENAME}"
               },
               "linux-x86_64": {
                 "signature": "${LINUX_SIG}",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${LINUX_TAR_BASENAME}"
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${LINUX_BASENAME}"
               }
             }
           }
@@ -208,11 +198,11 @@ jobs:
             "platforms": {
               "windows-x86_64": {
                 "signature": "${WIN_SIG}",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${WIN_ZIP_BASENAME}"
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${WIN_BASENAME}"
               },
               "linux-x86_64": {
                 "signature": "${LINUX_SIG}",
-                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${LINUX_TAR_BASENAME}"
+                "url": "https://github.com/Izaek256/inven-Tory/releases/download/v${VERSION}/${LINUX_BASENAME}"
               }
             }
           }
@@ -223,8 +213,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
-          # draft: false — must match the release job; appending to a draft keeps the
-          # manifest unreachable via /releases/latest.
           draft: false
           files: latest-*.json
           append_body: true
