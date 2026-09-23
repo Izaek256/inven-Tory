@@ -154,27 +154,28 @@ export function DataTable<T>({
 const CSS = `
 .it-table-wrap {
   border: 1px solid var(--it-border);
-  border-radius: var(--it-r-lg);
+  border-radius: var(--it-r-md);
   overflow: hidden;
-  box-shadow: var(--it-shadow-xs);
+  box-shadow: none;
+  background: var(--it-card);
 }
 .it-table-scroll { overflow-x: auto; width: 100%; }
 .it-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: var(--it-text-base);
+  font-size: 13px;
   text-align: left;
 }
 
 .it-th {
-  background-color: var(--it-surface);
+  background-color: var(--it-card);
   color: var(--it-text-secondary);
-  font-size: var(--it-text-xs);
-  font-weight: var(--it-weight-semibold);
-  letter-spacing: var(--it-tracking-label);
-  text-transform: uppercase;
-  padding: var(--it-sp-3) var(--it-sp-5);
-  border-bottom: 1px solid var(--it-border);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  text-transform: none;
+  padding: 0 12px 10px;
+  border-bottom: 2px solid var(--ink);
   white-space: nowrap;
 }
 .it-th--numeric { text-align: right; }
@@ -185,23 +186,25 @@ const CSS = `
 .it-th--sortable:hover { color: var(--it-text-primary); }
 .it-th__inner { display: inline-flex; align-items: center; gap: var(--it-sp-1); }
 .it-th__sort-icons { display: inline-flex; flex-direction: column; }
-.it-sort--active { color: var(--it-green); }
+.it-sort--active { color: var(--amber); }
 
-.it-tr:hover { background-color: var(--it-surface); }
+.it-tr:hover { background-color: var(--it-bg); }
 .it-tr:last-child .it-td { border-bottom: none; }
 
 .it-td {
-  padding: var(--it-sp-3) var(--it-sp-5);
+  padding: 12px;
   border-bottom: 1px solid var(--it-border);
   color: var(--it-text-primary);
   vertical-align: middle;
+  font-size: 13px;
 }
 .it-td--numeric {
   font-family: var(--it-font-mono);
-  font-size: var(--it-text-base);
-  font-weight: var(--it-weight-medium);
+  font-size: 13px;
+  font-weight: 500;
   text-align: right;
   color: var(--it-text-primary);
+  font-variant-numeric: tabular-nums;
 }
 .it-td--align-center { text-align: center; }
 .it-td--align-right { text-align: right; }

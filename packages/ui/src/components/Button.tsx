@@ -69,11 +69,12 @@ const CSS = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--it-sp-2);
+  gap: 7px;
   font-family: var(--it-font-ui);
-  font-weight: var(--it-weight-semibold);
+  font-size: 13px;
+  font-weight: 600;
   border: 1px solid transparent;
-  border-radius: var(--it-r-md);
+  border-radius: var(--it-r-sm);
   cursor: pointer;
   transition:
     background-color var(--it-dur-fast) var(--it-ease),
@@ -85,79 +86,86 @@ const CSS = `
   text-decoration: none;
   line-height: 1;
 }
+.it-btn svg { width: 14px; height: 14px; }
 
-/* Sizes */
-.it-btn--sm { font-size: var(--it-text-sm); padding: var(--it-sp-1) var(--it-sp-3); min-height: 28px; }
-.it-btn--md { font-size: var(--it-text-base); padding: var(--it-sp-2) var(--it-sp-4); min-height: 36px; }
-.it-btn--lg { font-size: var(--it-text-md); padding: var(--it-sp-3) var(--it-sp-6); min-height: 44px; }
+/* Sizes — match reference .btn (9px 15px md, 6px 10px sm) */
+.it-btn--sm { font-size: 12px; padding: 6px 10px; min-height: 28px; }
+.it-btn--md { font-size: 13px; padding: 9px 15px; min-height: 34px; }
+.it-btn--lg { font-size: 13px; padding: 9px 18px; min-height: 38px; }
 
 /* Icon-only — square */
-.it-btn--icon-only.it-btn--sm { padding: var(--it-sp-1); width: 28px; }
-.it-btn--icon-only.it-btn--md { padding: var(--it-sp-2); width: 36px; }
-.it-btn--icon-only.it-btn--lg { padding: var(--it-sp-3); width: 44px; }
+.it-btn--icon-only.it-btn--sm { padding: 6px; width: 30px; height: 30px; }
+.it-btn--icon-only.it-btn--md { padding: 7px; width: 34px; height: 34px; }
+.it-btn--icon-only.it-btn--lg { padding: 8px; width: 38px; height: 38px; }
 
-/* Primary — green */
+/* Primary — amber (reference .btn-primary) */
 .it-btn--primary {
-  background-color: var(--it-green);
-  color: #ffffff;
-  border-color: transparent;
+  background-color: var(--amber);
+  color: #241300;
+  border-color: var(--amber);
 }
 .it-btn--primary:hover:not(:disabled) {
-  background-color: var(--it-green-hover);
+  background-color: #c97c1f;
+  border-color: #c97c1f;
 }
 .it-btn--primary:active:not(:disabled) {
-  background-color: var(--it-green-active);
+  background-color: #b56e1c;
 }
 .it-btn--primary:focus-visible {
-  outline: none;
-  box-shadow: var(--it-focus-ring-green);
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
-/* Destructive — red */
+/* Destructive — reference .btn-danger: surface with red */
 .it-btn--destructive {
-  background-color: var(--it-red);
-  color: #ffffff;
-  border-color: transparent;
+  background-color: var(--it-card);
+  color: var(--red);
+  border-color: #e3b6ac;
 }
 .it-btn--destructive:hover:not(:disabled) {
-  background-color: var(--it-red-hover);
+  background-color: var(--red-tint);
+  color: var(--red);
 }
 .it-btn--destructive:active:not(:disabled) {
-  background-color: var(--it-red-active);
+  background-color: var(--red-tint);
 }
 .it-btn--destructive:focus-visible {
-  outline: none;
-  box-shadow: var(--it-focus-ring-red);
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
-/* Secondary — gray */
+/* Secondary — reference .btn-outline: surface + line-strong */
 .it-btn--secondary {
-  background-color: var(--it-gray-surface);
-  color: var(--it-gray-text);
-  border-color: var(--it-gray-border);
+  background-color: var(--it-card);
+  color: var(--it-text-primary);
+  border-color: var(--it-border-strong);
 }
 .it-btn--secondary:hover:not(:disabled) {
-  background-color: var(--it-gray-border);
-  color: var(--it-gray-hover);
+  border-color: var(--text-faint);
+  background-color: var(--it-card);
 }
 .it-btn--secondary:focus-visible {
-  outline: none;
-  box-shadow: var(--it-focus-ring);
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
-/* Ghost */
+/* Ghost — reference .btn-ghost */
 .it-btn--ghost {
   background-color: transparent;
   color: var(--it-text-secondary);
   border-color: transparent;
 }
 .it-btn--ghost:hover:not(:disabled) {
-  background-color: var(--it-gray-surface);
+  background-color: var(--it-bg);
   color: var(--it-text-primary);
 }
 .it-btn--ghost:focus-visible {
-  outline: none;
-  box-shadow: var(--it-focus-ring);
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+  box-shadow: none;
 }
 
 /* Disabled */

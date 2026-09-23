@@ -23,7 +23,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,6 +178,7 @@ async def list_stores(
 )
 async def create_store(
     request: CreateStoreRequest,
+    response: Response,
     db: AsyncSession = Depends(get_db),  # noqa: B008
     _user: User = Depends(require_permission(Permission.STORE_ADMIN)),  # noqa: B008
 ) -> StoreListItem:
@@ -187,17 +188,17 @@ async def create_store(
     Accepts an optional client-provided ID (e.g., "STORE-{CODE}") for
     deterministic ID alignment with the desktop app.
 
+    Placeholder healing: sync ingestion auto-provisions "Auto Store (...)"
+    placeholder rows for transaction store_ids the server does not know yet
+    (e.g., a desktop store created offline whose registration POST lands
+    after its first transactions). If a placeholder already owns the
+    requested ID, it is adopted in place — same primary key, so every
+    balance/transaction/device row attached by the early syncs stays valid —
+    instead of failing with a 409 on the derived code.
+
     When a new store is created, it automatically gets all existing products
     with zero initial stock balances.
     """
-    # Check for duplicate code
-    existing = await db.execute(select(Store).where(Store.code == request.code))
-    if existing.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Store with code '{request.code}' already exists",
-        )
-
     import uuid
 
     # Use client-provided ID if it follows the deterministic pattern
@@ -206,6 +207,50 @@ async def create_store(
     expected_id = f"STORE-{request.code}"
     if not store_id or not store_id.startswith("STORE-") or store_id != expected_id:
         store_id = str(uuid.uuid4())
+
+    # Heal a same-ID auto-provisioned placeholder left by sync ingestion.
+    existing_by_id = await db.get(Store, store_id)
+    if existing_by_id is not None and existing_by_id.name.startswith("Auto Store ("):
+        if request.code != existing_by_id.code:
+            code_clash = await db.execute(
+                select(Store.id).where(
+                    Store.code == request.code,
+                    Store.id != store_id,
+                )
+            )
+            if code_clash.scalar_one_or_none() is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Store with code '{request.code}' already exists",
+                )
+        existing_by_id.code = request.code
+        existing_by_id.name = request.name
+        existing_by_id.address = request.address
+        existing_by_id.is_active = True
+        await db.commit()
+        await db.refresh(existing_by_id)
+        logger.info(
+            "Healed auto-provisioned placeholder store %s into '%s' (%s)",
+            store_id,
+            request.name,
+            request.code,
+        )
+        response.status_code = status.HTTP_200_OK
+        return StoreListItem(
+            id=existing_by_id.id,
+            code=existing_by_id.code,
+            name=existing_by_id.name,
+            address=existing_by_id.address,
+            is_active=bool(existing_by_id.is_active),
+        )
+
+    # Check for duplicate code
+    existing = await db.execute(select(Store).where(Store.code == request.code))
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Store with code '{request.code}' already exists",
+        )
 
     store = Store(
         id=store_id,

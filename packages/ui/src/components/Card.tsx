@@ -74,27 +74,26 @@ const CSS = `
 .it-card {
   background-color: var(--it-card);
   border: 1px solid var(--it-border);
-  border-radius: var(--it-r-lg);
-  box-shadow: var(--it-shadow-xs);
-  padding: var(--it-sp-5);
+  border-radius: var(--it-r-md);
+  box-shadow: none;
+  padding: 20px;
 }
 .it-card--no-pad { padding: 0; overflow: hidden; }
 
 /* StatCard */
 .it-stat-card { display: flex; flex-direction: column; gap: var(--it-sp-2); }
 .it-stat-card__label {
-  font-size: var(--it-text-xs);
-  font-weight: var(--it-weight-semibold);
-  letter-spacing: var(--it-tracking-label);
-  text-transform: uppercase;
+  font-size: 11.5px;
+  font-weight: 400;
   color: var(--it-text-secondary);
 }
 .it-stat-card__value {
   font-family: var(--it-font-mono);
-  font-size: var(--it-text-xl);
-  font-weight: var(--it-weight-bold);
+  font-size: 24px;
+  font-weight: 600;
   color: var(--it-text-primary);
   line-height: 1.1;
+  letter-spacing: -0.01em;
 }
 .it-stat-card__value--green  { color: var(--it-green-text); }
 .it-stat-card__value--red    { color: var(--it-red-text); }

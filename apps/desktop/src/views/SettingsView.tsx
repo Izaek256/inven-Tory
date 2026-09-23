@@ -1,17 +1,16 @@
 /**
- * SettingsView.
+ * SettingsView — redesigned to match inven-Tory___Redesign.html v1.2.0 artifact (01:40:00).
  *
- * Displays device configuration, theme, current user identity, store management,
- * app update checker, delete all data, and backup/restore functionality.
- * The logout button calls tauriAuthService.logout() which clears
- * the secure token cache and returns to the login screen.
+ * Layout follows artifact exactly:
+ *   - grid-2 equal : user card (avatar + sign out) + Interface theme switch
+ *   - sheet: Store management table
+ *   - info-bar: App updates
+ * Additional sheets (backup/restore, danger zone, system info) kept but styled as artifact sheets.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Settings,
   LogOut,
-  User,
   Plus,
   Edit2,
   Power,
@@ -24,10 +23,11 @@ import {
   CheckCircle,
   XCircle,
 } from 'lucide-react';
-import { Card, ThemeToggle, Badge, Button, EmptyState, Modal } from '@invenTory/ui';
+import { Badge, Button, EmptyState, Modal } from '@invenTory/ui';
 import { DataTable, type ColumnDef } from '@invenTory/ui';
+import { useTheme } from '@invenTory/ui';
 import type { AuthSession } from '../types/auth';
-import { Store, CreateStoreInput, UpdateStoreInput } from '../types/store';
+import { Store } from '../types/store';
 import {
   getStores,
   createStore,
@@ -51,13 +51,19 @@ interface SettingsViewProps {
   onLogout?: () => void;
 }
 
+function initials(name?: string | null, username?: string | null): string {
+  const src = (name || username || '??').trim();
+  const parts = src.split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase().slice(0, 2);
+  return src.slice(0, 2).toUpperCase();
+}
+
 export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogout }) => {
   const [loggingOut, setLoggingOut] = useState(false);
   const [stores, setStores] = useState<Store[]>([]);
   const [storesLoading, setStoresLoading] = useState(true);
   const [storesError, setStoresError] = useState<string | null>(null);
 
-  // Store modal state
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [storeModalMode, setStoreModalMode] = useState<'create' | 'edit'>('create');
   const [editingStore, setEditingStore] = useState<Store | null>(null);
@@ -65,30 +71,27 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
   const [storeModalError, setStoreModalError] = useState<string | null>(null);
   const [storeModalSubmitting, setStoreModalSubmitting] = useState(false);
 
-  // Device modal state
   const [deviceModalOpen, setDeviceModalOpen] = useState(false);
   const [deviceStoreId, setDeviceStoreId] = useState<string | null>(null);
   const [deviceName, setDeviceName] = useState('');
   const [deviceModalSubmitting, setDeviceModalSubmitting] = useState(false);
 
-  // Updater state from context
   const { updateInfo, progress, isDownloading, checkForUpdates, startUpdate } = useUpdater();
   const [checkingUpdate, setCheckingUpdate] = useState(false);
-
-  // App version
   const [appVersion] = useState<string>(import.meta.env.VITE_APP_VERSION || '');
 
-  // Delete all data state
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
   const [deleteConfirmStoreName, setDeleteConfirmStoreName] = useState('');
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Backup/restore state
   const [backups, setBackups] = useState<BackupInfo[]>([]);
   const [backupsLoading, setBackupsLoading] = useState(true);
   const [creatingBackup, setCreatingBackup] = useState(false);
   const [restoringBackup, setRestoringBackup] = useState<string | null>(null);
+
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === 'dark';
 
   const fetchStores = useCallback(async () => {
     setStoresLoading(true);
@@ -130,8 +133,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
     }
   };
 
-  // ── Store handlers ───────────────────────────────────────────────────
-
   const handleAddStore = (): void => {
     setStoreModalMode('create');
     setEditingStore(null);
@@ -151,22 +152,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
   const handleStoreModalSubmit = async (): Promise<void> => {
     setStoreModalError(null);
     setStoreModalSubmitting(true);
-
     try {
       if (storeModalMode === 'create') {
-        const input: CreateStoreInput = {
+        await createStore({
           code: storeForm.code,
           name: storeForm.name,
           address: storeForm.address,
-        };
-        await createStore(input);
+        });
       } else if (storeModalMode === 'edit' && editingStore) {
-        const input: UpdateStoreInput = {
+        await updateStore({
           id: editingStore.id,
           name: storeForm.name,
           address: storeForm.address,
-        };
-        await updateStore(input);
+        });
       }
       setStoreModalOpen(false);
       await fetchStores();
@@ -181,8 +179,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
     try {
       await toggleStoreActive(store.id, !store.is_active);
       await fetchStores();
-    } catch {
-      // non-fatal
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to toggle store:', err);
     }
   };
 
@@ -194,20 +193,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
 
   const handleDeviceModalSubmit = async (): Promise<void> => {
     if (!deviceStoreId) return;
-
     setDeviceModalSubmitting(true);
     try {
       await registerDevice(deviceStoreId, deviceName);
       setDeviceModalOpen(false);
       setDeviceName('');
-    } catch {
-      // non-fatal
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('Failed to register device:', err);
     } finally {
       setDeviceModalSubmitting(false);
     }
   };
-
-  // ── App update handlers ──────────────────────────────────────────────
 
   const handleCheckUpdate = async (): Promise<void> => {
     setCheckingUpdate(true);
@@ -222,25 +219,17 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
     await startUpdate();
   };
 
-  // ── Delete all data handlers ─────────────────────────────────────────
-
   const handleDeleteAllData = async (): Promise<void> => {
     if (!currentUser) return;
     setDeleteError(null);
     setDeleteLoading(true);
-
     try {
-      // First wipe local data
       const localResult = await deleteAllData(deleteConfirmStoreName);
       if (!localResult.success) {
         setDeleteError(localResult.message);
         setDeleteLoading(false);
         return;
       }
-
-      // Then wipe server data too when a session token exists. A failed
-      // server wipe must block the reload: otherwise the next background sync
-      // would pull the surviving server data straight back into the pages.
       let serverWipeError: string | null = null;
       try {
         const { getAccessToken } = await import('../services/tauriAuthService');
@@ -252,27 +241,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
             serverWipeError = err instanceof Error ? err.message : String(err);
           }
         }
-      } catch {
-        // getAccessToken itself failed — offline; local wipe still stands.
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('Failed to wipe server data:', err);
       }
-
       if (serverWipeError) {
         setDeleteError(
-          `Local data wiped, but server wipe failed: ${serverWipeError}. ` +
-            `Server data was NOT deleted and would reappear after the next sync. ` +
-            `Fix the issue and retry before reloading.`,
+          `Local data wiped, but server wipe failed: ${serverWipeError}. Server data was NOT deleted and would reappear after the next sync.`,
         );
         setDeleteLoading(false);
         return;
       }
-
       setDeleteModalOpen(false);
       setDeleteConfirmStoreName('');
-      // Clear business-data caches that survive a reload (localStorage).
-      // Auth session + device ID live in the Tauri secure store (auth.dat)
-      // and sessionStorage — NEVER touched here so login still works.
       clearLocalBusinessCaches();
-      // Reload the page to reset all state
       window.location.reload();
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : String(err));
@@ -280,8 +262,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
       setDeleteLoading(false);
     }
   };
-
-  // ── Backup/restore handlers ──────────────────────────────────────────
 
   const handleCreateBackup = async (): Promise<void> => {
     setCreatingBackup(true);
@@ -311,8 +291,6 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
     }
   };
 
-  // ── Store columns ────────────────────────────────────────────────────
-
   const storeColumns: ColumnDef<Store>[] = [
     {
       key: 'code',
@@ -322,16 +300,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
         <span style={{ fontFamily: 'var(--it-font-mono)', fontSize: '13px' }}>{s.code}</span>
       ),
     },
-    {
-      key: 'name',
-      header: 'Name',
-      accessor: (s: Store) => s.name,
-    },
-    {
-      key: 'address',
-      header: 'Address',
-      accessor: (s: Store) => s.address,
-    },
+    { key: 'name', header: 'Name', accessor: (s: Store) => s.name },
+    { key: 'address', header: 'Address', accessor: (s: Store) => s.address },
     {
       key: 'status',
       header: 'Status',
@@ -347,31 +317,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
       key: 'actions',
       header: '',
       render: (s: Store) => (
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <Button
-            variant="ghost"
-            size="sm"
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            className="icon-btn"
+            title="Edit"
             onClick={() => handleEditStore(s)}
             data-testid={`edit-store-btn-${s.id}`}
+            type="button"
           >
             <Edit2 size={14} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
+          </button>
+          <button
+            className="icon-btn"
+            title={s.is_active ? 'Deactivate' : 'Activate'}
             onClick={() => handleToggleStore(s)}
             data-testid={`toggle-store-btn-${s.id}`}
+            type="button"
           >
             <Power size={14} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
+          </button>
+          <button
+            className="icon-btn"
+            title="Register device"
             onClick={() => handleRegisterDevice(s.id)}
             data-testid={`register-device-btn-${s.id}`}
+            type="button"
           >
             <Smartphone size={14} />
-          </Button>
+          </button>
         </div>
       ),
       accessor: (s: Store) => s.id,
@@ -383,534 +356,386 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
   return (
     <div className="settings-view" data-testid="settings-view">
       <div className="view-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <Settings size={24} color="var(--it-green)" />
-          <div>
-            <h2 className="view-title">System Settings</h2>
-            <p className="view-subtitle">Device configuration, sync rules, and store parameters</p>
+        <div>
+          <h2 className="view-title">System settings</h2>
+          <p className="view-subtitle">Device configuration, sync rules, and store parameters</p>
+        </div>
+      </div>
+
+      {/* ── Top row — artifact grid-2 equal: user card + theme toggle ── */}
+      <div className="grid-2 equal">
+        <div
+          className="sheet"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div className="user-card">
+            <div className="avatar">{initials(currentUser?.full_name, currentUser?.username)}</div>
+            <div>
+              <div className="uname">{currentUser?.full_name ?? currentUser?.username ?? '—'}</div>
+              <div className="uhandle">@{currentUser?.username ?? 'unknown'}</div>
+              <span className="tag teal">{currentUser?.role ?? '—'}</span>
+            </div>
+          </div>
+          {onLogout && (
+            <button
+              className="btn btn-danger btn-sm"
+              onClick={handleLogout}
+              data-testid="logout-btn"
+              type="button"
+              disabled={loggingOut}
+            >
+              <LogOut size={14} />
+              Sign out
+            </button>
+          )}
+        </div>
+        <div className="sheet" style={{ display: 'flex', alignItems: 'center' }}>
+          <div className="toggle-row" style={{ width: '100%' }}>
+            <div className="toggle-copy">
+              <strong>Interface theme</strong>
+              <span>Light or dark presentation</span>
+            </div>
+            <label className="switch" data-testid="theme-switch-label">
+              <input
+                type="checkbox"
+                checked={isDark}
+                onChange={toggleTheme}
+                data-testid="theme-switch"
+                aria-label="Toggle theme"
+              />
+              <span className="track" />
+            </label>
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {/* Current User */}
-        {currentUser && (
-          <Card>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-              <div
-                style={{
-                  width: '40px',
-                  height: '40px',
-                  backgroundColor: 'var(--it-green-surface)',
-                  border: '1px solid var(--it-green-border)',
-                  borderRadius: '50%',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                }}
-              >
-                <User size={20} color="var(--it-green-text)" />
-              </div>
-              <div style={{ flex: 1 }}>
-                <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
-                  {currentUser.full_name ?? currentUser.username}
-                </h3>
-                <p
-                  style={{
-                    fontSize: '13px',
-                    color: 'var(--it-text-secondary)',
-                    marginTop: '2px',
-                    fontFamily: 'var(--it-font-mono)',
-                  }}
-                >
-                  @{currentUser.username}
-                </p>
-                <div style={{ marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                  <Badge status="SENT" label={currentUser.role} />
-                  {currentUser.assigned_store_id && (
-                    <Badge status="ACTIVE" label={`Store: ${currentUser.assigned_store_id}`} />
-                  )}
-                  {currentUser.token_expired_offline && (
-                    <Badge status="INACTIVE" label="Session expired (offline)" />
-                  )}
-                </div>
-              </div>
-              {onLogout && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleLogout}
-                  loading={loggingOut}
-                  data-testid="logout-btn"
-                >
-                  <LogOut size={14} />
-                  <span>Sign Out</span>
-                </Button>
-              )}
-            </div>
-          </Card>
-        )}
-
-        {/* Store Management */}
-        <Card>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              marginBottom: '16px',
-            }}
+      {/* ── Store management — artifact sheet ── */}
+      <div className="sheet" style={{ marginTop: 16 }}>
+        <div className="sheet-head">
+          <div>
+            <h2>Store management</h2>
+            <p>Add, edit, and manage store locations</p>
+          </div>
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={handleAddStore}
+            data-testid="add-store-btn"
+            type="button"
           >
-            <div>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
-                Store Management
-              </h3>
-              <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                Add, edit, and manage store locations
-              </p>
-            </div>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleAddStore}
-              data-testid="add-store-btn"
-            >
-              <Plus size={14} />
-              <span>Add Store</span>
-            </Button>
-          </div>
-
-          {storesLoading ? (
-            <EmptyState
-              variant="loading"
-              heading="Loading stores..."
-              body="Fetching store data from local database"
-            />
-          ) : storesError ? (
-            <EmptyState
-              variant="error"
-              heading="Failed to load stores"
-              body={storesError}
-              action={
-                <Button variant="primary" onClick={fetchStores}>
-                  Retry
-                </Button>
-              }
-            />
-          ) : stores.length === 0 ? (
-            <EmptyState heading="No stores configured" body="Add your first store to get started" />
-          ) : (
-            <DataTable
-              columns={storeColumns}
-              rows={stores}
-              rowKey={(s) => s.id}
-              data-testid="stores-table"
-            />
-          )}
-        </Card>
-
-        {/* Theme */}
-        <Card>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <div>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
-                Interface Theme
-              </h3>
-              <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                Toggle between light and dark presentation modes.
-              </p>
-            </div>
-            <ThemeToggle />
-          </div>
-        </Card>
-
-        {/* App Update Checker */}
-        <Card>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-            <div
-              style={{
-                width: '40px',
-                height: '40px',
-                backgroundColor: 'var(--it-green-surface)',
-                border: '1px solid var(--it-green-border)',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <RefreshCw size={20} color="var(--it-green-text)" />
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
-                App Updates
-              </h3>
-              <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                Check for, download, and install application updates independently of the server.
-              </p>
-
-              {updateInfo?.error && (
-                <div
-                  style={{
-                    marginTop: '12px',
-                    padding: '12px',
-                    borderRadius: 'var(--it-r-sm)',
-                    backgroundColor: 'var(--it-red-surface)',
-                    border: '1px solid var(--it-red-border)',
-                    color: 'var(--it-red-text)',
-                    fontSize: '13px',
-                  }}
-                >
-                  <XCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
-                  Update check failed: {updateInfo.error}
-                </div>
-              )}
-
-              {!updateInfo?.error && !updateInfo?.available && checkingUpdate === false && (
-                <div
-                  style={{
-                    marginTop: '12px',
-                    padding: '12px',
-                    borderRadius: 'var(--it-r-sm)',
-                    backgroundColor: 'var(--it-green-surface)',
-                    border: '1px solid var(--it-green-border)',
-                    color: 'var(--it-green-text)',
-                    fontSize: '13px',
-                  }}
-                >
-                  <CheckCircle size={14} style={{ marginRight: '6px', verticalAlign: 'middle' }} />
-                  Your app is up to date.
-                </div>
-              )}
-
-              {updateInfo?.available && !isDownloading && (
-                <div
-                  style={{
-                    marginTop: '12px',
-                    padding: '12px',
-                    borderRadius: 'var(--it-r-sm)',
-                    backgroundColor: 'var(--it-yellow-surface)',
-                    border: '1px solid var(--it-yellow-border)',
-                    color: 'var(--it-yellow-text)',
-                    fontSize: '13px',
-                  }}
-                >
-                  <AlertTriangle
-                    size={14}
-                    style={{ marginRight: '6px', verticalAlign: 'middle' }}
-                  />
-                  Update available!
-                  {updateInfo.version && (
-                    <div style={{ marginTop: '4px', fontWeight: 600 }}>
-                      Version {updateInfo.version} is available.
-                    </div>
-                  )}
-                  {updateInfo.body && (
-                    <div style={{ marginTop: '4px', opacity: 0.9 }}>{updateInfo.body}</div>
-                  )}
-                </div>
-              )}
-
-              <div style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleCheckUpdate}
-                  loading={checkingUpdate}
-                  disabled={isDownloading}
-                >
-                  <RefreshCw size={14} />
-                  <span>Check for Updates</span>
-                </Button>
-                {updateInfo?.available && (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    onClick={handleDownloadUpdate}
-                    loading={isDownloading}
-                    disabled={checkingUpdate}
-                  >
-                    <Download size={14} />
-                    <span>Download & Install</span>
-                  </Button>
-                )}
-              </div>
-
-              {/* Update Progress Bar */}
-              {(isDownloading || progress.stage === 'installing') && (
-                <div style={{ marginTop: '12px' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      marginBottom: '4px',
-                      fontSize: '12px',
-                      color: 'var(--it-text-secondary)',
-                    }}
-                  >
-                    <span>
-                      {progress.stage === 'installing' ? 'Installing...' : 'Downloading...'}
-                    </span>
-                    <span>{progress.total ? `${progress.percent}%` : ''}</span>
-                  </div>
-                  <div
-                    style={{
-                      width: '100%',
-                      height: '6px',
-                      backgroundColor: 'var(--it-border)',
-                      borderRadius: '3px',
-                      overflow: 'hidden',
-                    }}
-                  >
-                    <div
-                      style={{
-                        width: progress.total ? `${progress.percent}%` : '100%',
-                        height: '100%',
-                        backgroundColor:
-                          progress.stage === 'installing' ? 'var(--it-green)' : 'var(--it-primary)',
-                        borderRadius: '3px',
-                        transition: 'width 0.3s ease',
-                        ...(progress.stage !== 'installing' && !progress.total
-                          ? {
-                              animation: 'indeterminate 1.5s infinite linear',
-                              width: '30%',
-                            }
-                          : {}),
-                      }}
-                    />
-                  </div>
-                  {progress.stage === 'installing' && (
-                    <p
-                      style={{
-                        marginTop: '8px',
-                        fontSize: '12px',
-                        color: 'var(--it-text-secondary)',
-                      }}
-                    >
-                      Update installed. The app will restart momentarily...
-                    </p>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        </Card>
-
-        {/* Automatic Daily Backup */}
-        <Card>
-          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-            <div
-              style={{
-                width: '40px',
-                height: '40px',
-                backgroundColor: 'var(--it-green-surface)',
-                border: '1px solid var(--it-green-border)',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                flexShrink: 0,
-              }}
-            >
-              <Upload size={20} color="var(--it-green-text)" />
-            </div>
-            <div style={{ flex: 1 }}>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
-                Local Backup & Restore
-              </h3>
-              <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                A backup is created automatically once per day at midnight while the app is running.
-                You can also create one at any time with the button below. Restore from a backup if
-                data is lost or corrupted.
-              </p>
-
-              <div style={{ marginTop: '12px' }}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleCreateBackup}
-                  loading={creatingBackup}
-                  disabled={restoringBackup !== null}
-                >
-                  <Download size={14} />
-                  <span>Create Backup Now</span>
-                </Button>
-              </div>
-
-              {backupsLoading ? (
-                <div
-                  style={{
-                    marginTop: '12px',
-                    fontSize: '13px',
-                    color: 'var(--it-text-secondary)',
-                  }}
-                >
-                  Loading backups...
-                </div>
-              ) : backups.length === 0 ? (
-                <div
-                  style={{
-                    marginTop: '12px',
-                    fontSize: '13px',
-                    color: 'var(--it-text-secondary)',
-                  }}
-                >
-                  No backups found. Click "Create Backup Now" to create your first backup.
-                </div>
-              ) : (
-                <div style={{ marginTop: '12px' }}>
-                  <h4
-                    style={{
-                      fontSize: '13px',
-                      fontWeight: 600,
-                      color: 'var(--it-text-primary)',
-                      marginBottom: '8px',
-                    }}
-                  >
-                    Recent Backups ({backups.length})
-                  </h4>
-                  <div
-                    style={{
-                      border: '1px solid var(--it-border)',
-                      borderRadius: 'var(--it-r-sm)',
-                      maxHeight: '200px',
-                      overflowY: 'auto',
-                    }}
-                  >
-                    {backups.map((backup) => (
-                      <div
-                        key={backup.filename}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'space-between',
-                          padding: '8px 12px',
-                          borderBottom: '1px solid var(--it-border)',
-                          fontSize: '13px',
-                        }}
-                      >
-                        <div>
-                          <div
-                            style={{
-                              fontFamily: 'var(--it-font-mono)',
-                              color: 'var(--it-text-primary)',
-                            }}
-                          >
-                            {backup.filename}
-                          </div>
-                          <div style={{ color: 'var(--it-text-secondary)', fontSize: '12px' }}>
-                            {new Date(backup.created_at).toLocaleString()} ·{' '}
-                            {(backup.size / 1024).toFixed(1)} KB
-                          </div>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleRestoreBackup(backup.filename)}
-                          loading={restoringBackup === backup.filename}
-                          disabled={restoringBackup !== null && restoringBackup !== backup.filename}
-                        >
-                          <Upload size={14} />
-                          <span>Restore</span>
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-        </Card>
-
-        {/* Delete All Data — GLOBAL_ADMIN only */}
-        {isAdmin && (
-          <div style={{ border: '1px solid var(--it-red-border)', borderRadius: 'var(--it-r-md)' }}>
-            <Card>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '16px' }}>
-                <div
-                  style={{
-                    width: '40px',
-                    height: '40px',
-                    backgroundColor: 'var(--it-red-surface)',
-                    border: '1px solid var(--it-red-border)',
-                    borderRadius: '50%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0,
-                  }}
-                >
-                  <Trash2 size={20} color="var(--it-red-text)" />
-                </div>
-                <div style={{ flex: 1 }}>
-                  <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-red-text)' }}>
-                    Danger Zone — Delete All Data
-                  </h3>
-                  <p
-                    style={{
-                      fontSize: '13px',
-                      color: 'var(--it-text-secondary)',
-                      marginTop: '4px',
-                    }}
-                  >
-                    Permanently wipe all products, stock records, transactions, day books, and
-                    device registrations. This also wipes the same data on the server. User accounts
-                    and authentication are preserved. This action is irreversible.
-                  </p>
-                  <div style={{ marginTop: '12px' }}>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => {
-                        setDeleteModalOpen(true);
-                        setDeleteConfirmStoreName('');
-                        setDeleteError(null);
-                      }}
-                    >
-                      <Trash2 size={14} />
-                      <span>Delete All Data</span>
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </Card>
-          </div>
+            <Plus size={14} /> Add store
+          </button>
+        </div>
+        {storesLoading ? (
+          <EmptyState
+            variant="loading"
+            heading="Loading stores..."
+            body="Fetching store data from local database"
+          />
+        ) : storesError ? (
+          <EmptyState
+            variant="error"
+            heading="Failed to load stores"
+            body={storesError}
+            action={
+              <Button variant="primary" onClick={fetchStores}>
+                Retry
+              </Button>
+            }
+          />
+        ) : stores.length === 0 ? (
+          <EmptyState heading="No stores configured" body="Add your first store to get started" />
+        ) : (
+          <DataTable
+            columns={storeColumns}
+            rows={stores}
+            rowKey={(s) => s.id}
+            data-testid="stores-table"
+          />
         )}
-
-        {/* System info */}
-        <Card>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <Settings size={24} color="var(--it-text-secondary)" />
-            <div>
-              <h3 style={{ fontSize: '16px', fontWeight: 600, color: 'var(--it-text-primary)' }}>
-                System Information
-              </h3>
-              <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', marginTop: '4px' }}>
-                invenTory v{appVersion} — Desktop app. Works offline; your data stays on this
-                device.
-              </p>
-            </div>
-          </div>
-        </Card>
       </div>
 
-      {/* Store Modal */}
+      {/* ── App updates — artifact info-bar ── */}
+      <div className="info-bar" style={{ marginTop: 16 }}>
+        <RefreshCw size={18} />
+        <div className="ib-copy">
+          <strong>App updates</strong>
+          <span>Check for and install updates independently of the server</span>
+        </div>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={handleCheckUpdate}
+            type="button"
+            disabled={checkingUpdate || isDownloading}
+          >
+            {checkingUpdate ? 'Checking…' : 'Check for updates'}
+          </button>
+          {updateInfo?.available && (
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={handleDownloadUpdate}
+              type="button"
+              disabled={isDownloading}
+            >
+              <Download size={14} /> Download & Install
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Update status lines (kept but inside sheet for artifact flatness) */}
+      {(updateInfo?.error ||
+        updateInfo?.available ||
+        isDownloading ||
+        progress.stage === 'installing' ||
+        !updateInfo?.available) && (
+        <div className="sheet" style={{ marginTop: 12, padding: 12 }}>
+          {updateInfo?.error && (
+            <div
+              style={{
+                padding: 10,
+                background: 'var(--red-tint)',
+                border: '1px solid var(--it-red-border)',
+                color: 'var(--red)',
+                fontSize: 13,
+                display: 'flex',
+                gap: 6,
+                alignItems: 'center',
+              }}
+            >
+              <XCircle size={14} /> Update check failed: {updateInfo.error}
+            </div>
+          )}
+          {!updateInfo?.error && updateInfo?.available && !isDownloading && (
+            <div
+              style={{
+                padding: 10,
+                background: 'var(--amber-tint)',
+                border: '1px solid var(--amber)',
+                color: 'var(--amber-ink)',
+                fontSize: 13,
+              }}
+            >
+              <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <AlertTriangle size={14} /> Update available!
+                {updateInfo.version ? ` Version ${updateInfo.version} is available.` : ''}
+              </span>
+              {updateInfo.body && (
+                <div style={{ marginTop: 4, opacity: 0.9 }}>{updateInfo.body}</div>
+              )}
+            </div>
+          )}
+          {!updateInfo?.error &&
+            !updateInfo?.available &&
+            !checkingUpdate &&
+            !isDownloading &&
+            progress.stage !== 'installing' && (
+              <div
+                style={{
+                  padding: 10,
+                  background: 'var(--green-tint)',
+                  border: '1px solid var(--green)',
+                  color: 'var(--green)',
+                  fontSize: 13,
+                  display: 'flex',
+                  gap: 6,
+                  alignItems: 'center',
+                }}
+              >
+                <CheckCircle size={14} /> Your app is up to date.
+              </div>
+            )}
+          {(isDownloading || progress.stage === 'installing') && (
+            <div style={{ marginTop: 10 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  marginBottom: 4,
+                  fontSize: 12,
+                  color: 'var(--it-text-secondary)',
+                }}
+              >
+                <span>{progress.stage === 'installing' ? 'Installing…' : 'Downloading…'}</span>
+                <span>{progress.total ? `${progress.percent}%` : ''}</span>
+              </div>
+              <div
+                style={{
+                  width: '100%',
+                  height: 6,
+                  background: 'var(--it-border)',
+                  overflow: 'hidden',
+                }}
+              >
+                <div
+                  style={{
+                    width: progress.total ? `${progress.percent}%` : '100%',
+                    height: '100%',
+                    background: progress.stage === 'installing' ? 'var(--green)' : 'var(--amber)',
+                    transition: 'width 0.3s',
+                  }}
+                />
+              </div>
+              {progress.stage === 'installing' && (
+                <p style={{ marginTop: 8, fontSize: 12, color: 'var(--it-text-secondary)' }}>
+                  Update installed. The app will restart momentarily…
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Backup & Restore — kept as sheet to stay consistent */}
+      <div className="sheet" style={{ marginTop: 16 }}>
+        <div className="sheet-head">
+          <div>
+            <h2>Local backup &amp; restore</h2>
+            <p>
+              A backup is created automatically once per day at midnight. Create one manually below.
+            </p>
+          </div>
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={handleCreateBackup}
+            disabled={creatingBackup || restoringBackup !== null}
+            type="button"
+          >
+            <Download size={14} /> {creatingBackup ? 'Creating…' : 'Create Backup Now'}
+          </button>
+        </div>
+        {backupsLoading ? (
+          <div style={{ fontSize: 13, color: 'var(--it-text-secondary)' }}>Loading backups…</div>
+        ) : backups.length === 0 ? (
+          <div
+            style={{
+              fontSize: 13,
+              color: 'var(--it-text-secondary)',
+              border: '1px dashed var(--line-strong)',
+              padding: 16,
+              textAlign: 'center',
+            }}
+          >
+            No backups found.
+          </div>
+        ) : (
+          <div style={{ border: '1px solid var(--it-border)', maxHeight: 200, overflowY: 'auto' }}>
+            {backups.map((b) => (
+              <div
+                key={b.filename}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '8px 12px',
+                  borderBottom: '1px solid var(--it-border)',
+                  fontSize: 13,
+                }}
+              >
+                <div>
+                  <div style={{ fontFamily: 'var(--it-font-mono)' }}>{b.filename}</div>
+                  <div style={{ color: 'var(--it-text-secondary)', fontSize: 12 }}>
+                    {new Date(b.created_at).toLocaleString()} · {(b.size / 1024).toFixed(1)} KB
+                  </div>
+                </div>
+                <button
+                  className="btn btn-outline btn-sm"
+                  onClick={() => handleRestoreBackup(b.filename)}
+                  disabled={restoringBackup !== null}
+                  type="button"
+                >
+                  <Upload size={14} /> Restore
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {isAdmin && (
+        <div className="sheet" style={{ marginTop: 16, borderColor: 'var(--red)', borderWidth: 1 }}>
+          <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+            <div
+              style={{
+                width: 40,
+                height: 40,
+                background: 'var(--red-tint)',
+                border: '1px solid var(--red)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <Trash2 size={18} color="var(--red)" />
+            </div>
+            <div style={{ flex: 1 }}>
+              <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--red)', margin: 0 }}>
+                Danger Zone — Delete All Data
+              </h3>
+              <p style={{ fontSize: 13, color: 'var(--it-text-secondary)', margin: '4px 0 0' }}>
+                Permanently wipe products, stock records, transactions, day books, and device
+                registrations. User accounts are preserved.
+              </p>
+              <button
+                className="btn btn-danger btn-sm"
+                style={{ marginTop: 10 }}
+                onClick={() => {
+                  setDeleteModalOpen(true);
+                  setDeleteConfirmStoreName('');
+                  setDeleteError(null);
+                }}
+                type="button"
+              >
+                <Trash2 size={14} /> Delete All Data
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div
+        className="sheet"
+        style={{ marginTop: 16, display: 'flex', gap: 14, alignItems: 'center' }}
+      >
+        <div
+          style={{
+            width: 36,
+            height: 36,
+            background: 'var(--it-bg)',
+            border: '1px solid var(--it-border)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <RefreshCw size={16} color="var(--it-text-secondary)" />
+        </div>
+        <div>
+          <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>System Information</h3>
+          <p style={{ fontSize: 13, color: 'var(--it-text-secondary)', margin: '2px 0 0' }}>
+            invenTory v{appVersion} — Desktop app. Works offline; your data stays on this device.
+          </p>
+        </div>
+      </div>
+
       <Modal
         isOpen={storeModalOpen}
         onClose={() => setStoreModalOpen(false)}
         title={storeModalMode === 'create' ? 'Create New Store' : 'Edit Store Location'}
       >
         <div
-          style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
           data-testid="store-modal"
         >
           {storeModalError && (
-            <div
-              style={{ color: 'var(--it-red-text)', fontSize: '13px' }}
-              data-testid="store-modal-error"
-            >
+            <div style={{ color: 'var(--red)', fontSize: 13 }} data-testid="store-modal-error">
               {storeModalError}
             </div>
           )}
@@ -918,9 +743,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
             <label
               style={{
                 display: 'block',
-                fontSize: '13px',
+                fontSize: 13,
                 fontWeight: 500,
-                marginBottom: '4px',
+                marginBottom: 4,
                 color: 'var(--it-text-primary)',
               }}
             >
@@ -936,11 +761,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
                 width: '100%',
                 padding: '8px 12px',
                 border: '1px solid var(--it-border)',
-                borderRadius: 'var(--it-r-sm)',
-                fontSize: '14px',
+                fontSize: 14,
+                background: 'var(--it-card)',
                 color: 'var(--it-text-primary)',
-                backgroundColor: 'var(--it-card)',
-                ...(storeModalMode === 'edit' ? { opacity: 0.6 } : {}),
               }}
             />
           </div>
@@ -948,9 +771,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
             <label
               style={{
                 display: 'block',
-                fontSize: '13px',
+                fontSize: 13,
                 fontWeight: 500,
-                marginBottom: '4px',
+                marginBottom: 4,
                 color: 'var(--it-text-primary)',
               }}
             >
@@ -965,10 +788,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
                 width: '100%',
                 padding: '8px 12px',
                 border: '1px solid var(--it-border)',
-                borderRadius: 'var(--it-r-sm)',
-                fontSize: '14px',
+                fontSize: 14,
+                background: 'var(--it-card)',
                 color: 'var(--it-text-primary)',
-                backgroundColor: 'var(--it-card)',
               }}
             />
           </div>
@@ -976,9 +798,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
             <label
               style={{
                 display: 'block',
-                fontSize: '13px',
+                fontSize: 13,
                 fontWeight: 500,
-                marginBottom: '4px',
+                marginBottom: 4,
                 color: 'var(--it-text-primary)',
               }}
             >
@@ -993,16 +815,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
                 width: '100%',
                 padding: '8px 12px',
                 border: '1px solid var(--it-border)',
-                borderRadius: 'var(--it-r-sm)',
-                fontSize: '14px',
+                fontSize: 14,
+                background: 'var(--it-card)',
                 color: 'var(--it-text-primary)',
-                backgroundColor: 'var(--it-card)',
               }}
             />
           </div>
-          <div
-            style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}
-          >
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
             <Button variant="ghost" onClick={() => setStoreModalOpen(false)}>
               Cancel
             </Button>
@@ -1018,26 +837,25 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
         </div>
       </Modal>
 
-      {/* Device Registration Modal */}
       <Modal
         isOpen={deviceModalOpen}
         onClose={() => setDeviceModalOpen(false)}
         title="Register Device (FR-STORE-003 Stub)"
       >
         <div
-          style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}
+          style={{ display: 'flex', flexDirection: 'column', gap: 16 }}
           data-testid="device-modal"
         >
-          <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)' }}>
+          <p style={{ fontSize: 13, color: 'var(--it-text-secondary)' }}>
             Register a new device for this store location.
           </p>
           <div>
             <label
               style={{
                 display: 'block',
-                fontSize: '13px',
+                fontSize: 13,
                 fontWeight: 500,
-                marginBottom: '4px',
+                marginBottom: 4,
                 color: 'var(--it-text-primary)',
               }}
             >
@@ -1052,16 +870,13 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
                 width: '100%',
                 padding: '8px 12px',
                 border: '1px solid var(--it-border)',
-                borderRadius: 'var(--it-r-sm)',
-                fontSize: '14px',
+                fontSize: 14,
+                background: 'var(--it-card)',
                 color: 'var(--it-text-primary)',
-                backgroundColor: 'var(--it-card)',
               }}
             />
           </div>
-          <div
-            style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}
-          >
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
             <Button variant="ghost" onClick={() => setDeviceModalOpen(false)}>
               Cancel
             </Button>
@@ -1077,82 +892,46 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
         </div>
       </Modal>
 
-      {/* Delete All Data Confirmation Modal */}
       <Modal
         isOpen={deleteModalOpen}
         onClose={() => setDeleteModalOpen(false)}
         title="Delete All Data — Irreversible"
       >
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <div
-            style={{
-              padding: '16px',
-              borderRadius: 'var(--it-r-sm)',
-              backgroundColor: 'var(--it-red-surface)',
-              border: '1px solid var(--it-red-border)',
-            }}
+            style={{ padding: 16, background: 'var(--red-tint)', border: '1px solid var(--red)' }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-              <AlertTriangle size={16} color="var(--it-red-text)" />
-              <span style={{ fontWeight: 600, color: 'var(--it-red-text)', fontSize: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              <AlertTriangle size={16} color="var(--red)" />
+              <span style={{ fontWeight: 600, color: 'var(--red)', fontSize: 14 }}>
                 Warning: This action is irreversible
               </span>
             </div>
-            <p style={{ fontSize: '13px', color: 'var(--it-text-secondary)', margin: 0 }}>
-              This will permanently delete:
-            </p>
-            <ul
-              style={{
-                fontSize: '13px',
-                color: 'var(--it-text-secondary)',
-                margin: '8px 0 0 0',
-                paddingLeft: '20px',
-              }}
-            >
-              <li>All products and categories</li>
-              <li>All stock balances and inventory records</li>
-              <li>All day books and transactions</li>
-              <li>All transfers and device registrations</li>
-            </ul>
-            <p
-              style={{
-                fontSize: '13px',
-                color: 'var(--it-text-secondary)',
-                margin: '8px 0 0 0',
-              }}
-            >
-              User accounts and stores will be preserved for authentication.
+            <p style={{ fontSize: 13, color: 'var(--it-text-secondary)', margin: 0 }}>
+              This will permanently delete products, stock, transactions, day books, and device
+              registrations. User accounts and stores are preserved.
             </p>
           </div>
-
-          <p style={{ fontSize: '13px', color: 'var(--it-text-primary)' }}>
+          <p style={{ fontSize: 13, color: 'var(--it-text-primary)' }}>
             Type your store name to confirm deletion:
           </p>
-
-          {deleteError && (
-            <div style={{ color: 'var(--it-red-text)', fontSize: '13px' }}>{deleteError}</div>
-          )}
-
+          {deleteError && <div style={{ color: 'var(--red)', fontSize: 13 }}>{deleteError}</div>}
           <input
             type="text"
             value={deleteConfirmStoreName}
             onChange={(e) => setDeleteConfirmStoreName(e.target.value)}
-            placeholder="Enter store name..."
+            placeholder="Enter store name…"
             data-testid="delete-confirm-input"
             style={{
               width: '100%',
               padding: '8px 12px',
               border: '1px solid var(--it-border)',
-              borderRadius: 'var(--it-r-sm)',
-              fontSize: '14px',
+              fontSize: 14,
+              background: 'var(--it-card)',
               color: 'var(--it-text-primary)',
-              backgroundColor: 'var(--it-card)',
             }}
           />
-
-          <div
-            style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '8px' }}
-          >
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
             <Button variant="ghost" onClick={() => setDeleteModalOpen(false)}>
               Cancel
             </Button>
@@ -1163,8 +942,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
               disabled={!deleteConfirmStoreName.trim()}
               data-testid="delete-confirm-btn"
             >
-              <Trash2 size={14} />
-              <span>Delete Everything</span>
+              <Trash2 size={14} /> Delete Everything
             </Button>
           </div>
         </div>

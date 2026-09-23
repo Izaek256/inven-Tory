@@ -41,6 +41,15 @@ export function InventoryPanel({
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
   const [historyRows, setHistoryRows] = useState<MovementHistoryRow[]>([]);
+  const [isNarrow, setIsNarrow] = useState(
+    typeof window !== 'undefined' ? window.innerWidth < 640 : false,
+  );
+
+  useEffect(() => {
+    const onResize = (): void => setIsNarrow(window.innerWidth < 640);
+    window.addEventListener('resize', onResize);
+    return (): void => window.removeEventListener('resize', onResize);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -196,8 +205,14 @@ export function InventoryPanel({
   return (
     <div className="web-inventory-panel" data-testid="inventory-panel">
       <div className="web-panel-header">
-        <Button variant="ghost" size="sm" onClick={onBack} data-testid="back-btn">
-          <ArrowLeft size={16} aria-hidden="true" />
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={onBack}
+          data-testid="back-btn"
+          className="inventory-back"
+        >
+          <ArrowLeft size={14} aria-hidden="true" />
           Back to catalogue
         </Button>
         <div className="web-panel-title-row">
@@ -253,18 +268,56 @@ export function InventoryPanel({
             />
           )}
           {!loading && !error && (
-            <DataTable
-              columns={inventoryCols}
-              rows={storeRows}
-              rowKey={(r) => `${r.store_id}-${r.stock_bucket}`}
-              data-testid="inventory-table"
-              emptySlot={
-                <EmptyState
-                  heading="No stock recorded"
-                  body="This product has no stock balance on any store."
+            <>
+              {isNarrow ? (
+                <div className="inv-store-list" data-testid="inventory-table">
+                  {storeRows.map((r) => (
+                    <div
+                      key={`${r.store_id}-${r.stock_bucket}`}
+                      className="inv-store-row"
+                      data-testid={`inventory-row-${r.store_id}`}
+                    >
+                      <div className="inv-store-row__main">
+                        <Store size={14} aria-hidden="true" className="inv-store-row__icon" />
+                        <span className="inv-store-row__name">{r.store_name}</span>
+                        <span className="pill-qty">{r.store_code}</span>
+                        <span className="inv-store-row__qty">{r.quantity.toLocaleString()}</span>
+                      </div>
+                      <div className="inv-store-row__sub">
+                        <span className="web-cell-mono">{r.stock_bucket}</span>
+                        <span aria-hidden="true">·</span>
+                        <span
+                          className="web-cell-time"
+                          title={new Date(r.updated_at).toLocaleString()}
+                        >
+                          <Clock size={12} aria-hidden="true" />
+                          {formatRelativeTime(r.updated_at)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                  {storeRows.length === 0 && (
+                    <EmptyState
+                      heading="No stock recorded"
+                      body="This product has no stock balance on any store."
+                    />
+                  )}
+                </div>
+              ) : (
+                <DataTable
+                  columns={inventoryCols}
+                  rows={storeRows}
+                  rowKey={(r) => `${r.store_id}-${r.stock_bucket}`}
+                  data-testid="inventory-table"
+                  emptySlot={
+                    <EmptyState
+                      heading="No stock recorded"
+                      body="This product has no stock balance on any store."
+                    />
+                  }
                 />
-              }
-            />
+              )}
+            </>
           )}
         </>
       )}
@@ -289,18 +342,60 @@ export function InventoryPanel({
             />
           )}
           {!historyLoading && !historyError && (
-            <DataTable
-              columns={historyCols}
-              rows={historyRows}
-              rowKey={(r) => r.transaction_id}
-              data-testid="history-table"
-              emptySlot={
-                <EmptyState
-                  heading="No movement history"
-                  body="No transactions have been recorded for this product."
+            <>
+              {isNarrow ? (
+                <div className="inv-hist-list" data-testid="history-table">
+                  {historyRows.map((r) => (
+                    <div key={r.transaction_id} className="inv-hist-row">
+                      <span
+                        className="inv-hist-row__qty"
+                        style={{
+                          color: r.quantity_delta > 0 ? 'var(--green)' : 'var(--red)',
+                        }}
+                      >
+                        {r.quantity_delta > 0 ? `+${r.quantity_delta}` : r.quantity_delta}
+                      </span>
+                      <div className="inv-hist-row__main">
+                        <div className="inv-hist-row__top">
+                          <Badge status={movementTypeBadge(r.movement_type)} />
+                          <span className="inv-hist-row__store">{r.store_name}</span>
+                        </div>
+                        <div className="inv-hist-row__sub">
+                          <span className="web-cell-time" title={r.occurred_at}>
+                            {new Date(r.occurred_at).toLocaleString()}
+                          </span>
+                          {r.reference_number && (
+                            <>
+                              <span aria-hidden="true">·</span>
+                              <span className="web-cell-mono">{r.reference_number}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                  {historyRows.length === 0 && (
+                    <EmptyState
+                      heading="No movement history"
+                      body="No transactions have been recorded for this product."
+                    />
+                  )}
+                </div>
+              ) : (
+                <DataTable
+                  columns={historyCols}
+                  rows={historyRows}
+                  rowKey={(r) => r.transaction_id}
+                  data-testid="history-table"
+                  emptySlot={
+                    <EmptyState
+                      heading="No movement history"
+                      body="No transactions have been recorded for this product."
+                    />
+                  }
                 />
-              }
-            />
+              )}
+            </>
           )}
         </>
       )}

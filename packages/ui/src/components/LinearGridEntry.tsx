@@ -348,11 +348,9 @@ export function LinearGridEntry({
             <thead>
               <tr
                 style={{
-                  borderBottom: '2px solid var(--it-border)',
+                  borderBottom: '2px solid var(--ink)',
                   fontSize: '11px',
                   fontWeight: 600,
-                  textTransform: 'uppercase',
-                  letterSpacing: 'var(--it-tracking-label)',
                   color: 'var(--it-text-secondary)',
                 }}
               >
@@ -377,11 +375,11 @@ export function LinearGridEntry({
                     style={{
                       borderBottom: '1px solid var(--it-border)',
                       backgroundColor: isEditing
-                        ? 'rgba(59, 130, 246, 0.05)'
+                        ? 'var(--amber-tint)'
                         : row.committed
                           ? 'transparent'
                           : rowIndex === activeRowIndex
-                            ? 'rgba(59, 130, 246, 0.04)'
+                            ? 'var(--amber-tint)'
                             : 'transparent',
                       opacity: row.committed && !isEditing ? 0.72 : 1,
                     }}
