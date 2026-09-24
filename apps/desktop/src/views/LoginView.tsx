@@ -36,8 +36,18 @@ export const LoginView: React.FC<LoginViewProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Keyboard flow: Enter in Username advances to Password; Enter in
+  // Password submits the form (native form submission). Tab moves between
+  // fields in DOM order; the username field is focused on mount.
+  const handleUsernameKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    document.getElementById('login-password')?.focus();
+  };
+
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
+    if (loading) return;
     setError(null);
 
     if (!username.trim()) {
@@ -125,7 +135,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
               padding: '2px 6px',
             }}
           >
-            v1.2.1
+            v1.3.0
           </span>
         </div>
         <div style={{ flex: 1 }} />
@@ -270,9 +280,11 @@ export const LoginView: React.FC<LoginViewProps> = ({
                 id="login-username"
                 label="Username"
                 required
+                autoFocus
                 autoComplete="username"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                onKeyDown={handleUsernameKeyDown}
                 disabled={loading}
                 data-testid="login-username-input"
               />

@@ -2,6 +2,24 @@
 
 All notable changes to invenTory are documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.0] — 2026-09-24
+
+### Added — Desktop Performance & UX
+
+- **Analytics aggregated in SQLite (`get_dashboard_analytics`)** — new Tauri command computes KPIs, stock trend, category distribution, most-sold products, low-stock alerts, and recent activity inside Rust/SQLite with bounded date-range queries. `DashboardView` no longer ships the full product + ledger catalogues over IPC to aggregate in JS; it fetches one payload via the new `tauriDashboardService` (`emptyAnalytics()` fallback outside the desktop runtime).
+- **Products category filter** — server-side filtering: `get_products_paginated` / `get_products_count` accept an optional `category`; new `get_product_categories` command feeds the filter dropdown; mutations refresh the category list so newly created categories are immediately selectable. Pagination resets when search or category changes.
+- **Dashboard date-range picker** — KPIs, charts, and activity can be scoped to a custom range (defaults to the last 7 days).
+- **ProductModal keyboard submit** — Enter from any text field submits explicitly; native Enter behavior preserved inside `<select>`, `<textarea>`, and on checkboxes/radios/buttons. Footer buttons are `type="button"` so they can no longer implicitly submit the form.
+
+### Changed — Accessibility & Keyboard Flows
+
+- **Modal focus management** — focus lands on the first control in the body on open, Tab/Shift+Tab cycle within the dialog, Escape closes, and focus is restored to the trigger element on close.
+- **Login keyboard flow** — Enter in Username advances to Password, Enter in Password submits (native form submission), username autofocus on mount, and a re-entrancy guard blocks double submits while loading.
+
+### Fixed
+
+- README install glob for `.rpm` assets matches the real artifact names (`invenTory-*.rpm` alongside `invenTory_*.rpm`).
+
 ## [1.2.1] — 2026-09-24
 
 ### Fixed — Release Pipeline & Linux Updater

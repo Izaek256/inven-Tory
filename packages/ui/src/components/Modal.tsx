@@ -12,6 +12,9 @@ export interface ModalProps {
   footer?: React.ReactNode;
 }
 
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export function Modal({
   isOpen,
   onClose,
@@ -24,16 +27,54 @@ export function Modal({
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
 
-  // Trap focus + close on Escape
+  // Focus management + keyboard trap: focus the first control inside the
+  // body on open, cycle Tab/Shift+Tab within the dialog, close on Escape,
+  // and restore focus to the trigger element on close.
   useEffect(() => {
     if (!isOpen) return;
+    const dialog = dialogRef.current;
+    const previouslyFocused =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    const getFocusables = (): HTMLElement[] =>
+      dialog ? Array.from(dialog.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)) : [];
+
     const handleKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') onCloseRef.current();
+      if (e.key === 'Escape') {
+        onCloseRef.current();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const focusables = getFocusables();
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      const active = document.activeElement;
+      const inside = active instanceof Node && dialog !== null && dialog.contains(active);
+      if (e.shiftKey) {
+        if (!inside || active === first || active === dialog) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else if (!inside || active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
-    // Focus the dialog
-    dialogRef.current?.focus();
-    return (): void => document.removeEventListener('keydown', handleKeyDown);
+
+    // Land keyboard users on the first control in the body (skips the
+    // header close button); fall back to the dialog itself.
+    const body = dialog?.querySelector('.it-modal__body') ?? null;
+    const initial = body?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR) ?? dialog ?? null;
+    initial?.focus();
+
+    return (): void => {
+      document.removeEventListener('keydown', handleKeyDown);
+      if (previouslyFocused && document.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      }
+    };
   }, [isOpen]);
 
   if (!isOpen) return null;
