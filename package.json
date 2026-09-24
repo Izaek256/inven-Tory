@@ -1,8 +1,8 @@
 {
   "name": "inven-tory",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
-  "description": "invenTory v1.2.0 — Offline-First, Multi-Store Inventory Management System",
+  "description": "invenTory v1.2.1 — Offline-First, Multi-Store Inventory Management System",
   "workspaces": [
     "apps/desktop",
     "apps/web",

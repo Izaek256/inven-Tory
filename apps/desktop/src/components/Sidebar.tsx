@@ -80,7 +80,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="rail-brand-text">
           <strong>inven-Tory</strong>
         </div>
-        <span className="rail-brand-version">v1.2.0</span>
+        <span className="rail-brand-version">v1.2.1</span>
       </div>
 
       <div className="nav-group">
