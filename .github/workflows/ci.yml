@@ -15,6 +15,20 @@ on:
         type: boolean
 
 jobs:
+  version-check:
+    name: Verify version consistency (manifests + tag)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Check version consistency
+        run: node scripts/check_versions.js
+
   lint-python:
     name: Lint Python (ruff + black)
     runs-on: ubuntu-latest
@@ -135,7 +149,7 @@ jobs:
         if: matrix.target == 'linux-x86_64'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libwebkit2gtk-4.1-0 xvfb
+          sudo apt-get install -y build-essential curl wget file patchelf xvfb libgtk-3-dev libwebkit2gtk-4.1-dev libwebkit2gtk-4.1-0 librsvg2-dev libssl-dev libxdo-dev libayatana-appindicator3-dev libfuse2
 
       - name: Install frontend dependencies
         run: |
@@ -156,6 +170,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL }}
+          # Linux only (ignored on Windows): tell linuxdeploy not to strip the
+          # AppImage payload — strip can corrupt the ELF and produce an
+          # AppImage that fails to launch.
+          NO_STRIP: "true"
         run: |
           cd apps/desktop
 
@@ -255,6 +273,78 @@ jobs:
           cat "$LOG_DIR/app-stdout.log" || true
           echo "=== stderr ==="
           cat "$LOG_DIR/app-stderr.log" || true
+
+      # ── Strict AppImage verification: Linux ─────────────────────────
+      # The smoke test above is intentionally lenient (|| true) so console
+      # capture never masks a step failure.  This step is the opposite: it
+      # FAILS the build unless a real AppImage exists, is executable, and
+      # actually starts under Xvfb — the exact defects that keep shipping
+      # (AppImages without +x after download, FUSE failures, broken ELF).
+      - name: Verify AppImage executable + launch (Linux)
+        if: matrix.target == 'linux-x86_64'
+        env:
+          INVEN_TORY_DEBUG_STARTUP: "1"
+        run: |
+          set -euo pipefail
+          cd apps/desktop/src-tauri/target/release
+
+          APP=$(ls bundle/appimage/*.AppImage 2>/dev/null | head -1 || true)
+          if [ -z "$APP" ]; then
+            echo "::error::No AppImage produced under bundle/appimage/"
+            ls -la bundle/ || true
+            exit 1
+          fi
+
+          echo "--- Verifying $APP ---"
+          ls -la "$APP"
+          chmod +x "$APP"
+          test -x "$APP" || { echo "::error::AppImage is not executable"; exit 1; }
+
+          LOG_DIR="$GITHUB_WORKSPACE/smoke-logs"
+          mkdir -p "$LOG_DIR"
+
+          launch() {
+            # $1 = extra args (e.g. --appimage-extract-and-run)
+            timeout 15 xvfb-run -a \
+              --server-args="-screen 0 1024x768x24" \
+              env \
+                INVEN_TORY_DEBUG_STARTUP=1 \
+                WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+              "./$APP" "$@" \
+              > "$LOG_DIR/appimage-strict-stdout.log" 2> "$LOG_DIR/appimage-strict-stderr.log"
+          }
+
+          set +e
+          launch
+          rc=$?
+          set -e
+          # 124 = still running when the budget expired (app started).
+          # 143 = SIGTERM received at the budget edge.
+          if [ "$rc" -eq 124 ] || [ "$rc" -eq 143 ]; then
+            echo "AppImage ran for the full 15s budget (exit $rc) — OK"
+            exit 0
+          fi
+
+          # Missing FUSE / libfuse on the runner: retry extracted.
+          if grep -qiE 'libfuse|fuse' "$LOG_DIR/appimage-strict-stderr.log" 2>/dev/null; then
+            echo "FUSE problem detected, retrying with --appimage-extract-and-run"
+            set +e
+            launch --appimage-extract-and-run
+            rc=$?
+            set -e
+            if [ "$rc" -eq 124 ] || [ "$rc" -eq 143 ]; then
+              echo "AppImage ran via --appimage-extract-and-run (exit $rc) — OK"
+              exit 0
+            fi
+          fi
+
+          echo "::error::AppImage failed to launch (exit $rc)"
+          echo "=== stdout ==="
+          cat "$LOG_DIR/appimage-strict-stdout.log" || true
+          echo "=== stderr ==="
+          cat "$LOG_DIR/appimage-strict-stderr.log" || true
+          exit 1
 
       # ── Smoke test: Windows ─────────────────────────────────────────
       # Runs the built exe directly (no installer needed).  If an NSIS

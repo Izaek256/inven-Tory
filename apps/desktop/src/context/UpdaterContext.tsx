@@ -94,22 +94,37 @@ export const UpdaterProvider: React.FC<UpdaterProviderProps> = ({ children }) =>
 
   const checkForUpdates = useCallback(async (): Promise<void> => {
     setProgress((prev) => ({ ...prev, stage: 'checking' }));
+    setUpdateInfo(null); // clear stale result on each new check
     try {
       const info = await checkAppUpdate();
       if (info.available) {
         setUpdateInfo(info);
       } else if (info.error) {
-        // Preserve error info so the UI can display it
-        setUpdateInfo({ available: false, error: info.error });
+        // Normalise the raw tauri_plugin_updater error string into something
+        // the user can act on.  The most common failure is a 404 when no
+        // GitHub release has been published yet (draft releases return 404
+        // from /releases/latest, which is the endpoint we poll).
+        const raw = info.error;
+        let friendly = raw;
+        if (/404|not found|no release/i.test(raw)) {
+          friendly = 'No published release found. The release may still be a draft on GitHub.';
+        } else if (/network|connection|timeout|dns/i.test(raw)) {
+          friendly = 'Network error — check your internet connection and try again.';
+        } else if (/invalid.*json|parse|deserializ/i.test(raw)) {
+          friendly = 'Update manifest is malformed. The release JSON could not be parsed.';
+        }
+        // eslint-disable-next-line no-console
+        console.warn('[UpdaterContext] Update check error:', raw);
+        setUpdateInfo({ available: false, error: friendly });
       } else {
         setUpdateInfo(null);
       }
     } catch (err) {
       // eslint-disable-next-line no-console
-      console.error('[UpdaterContext] Check failed:', err);
-      setProgress((prev) => ({ ...prev, stage: 'error' }));
+      console.error('[UpdaterContext] Unexpected check failure:', err);
+      setUpdateInfo({ available: false, error: 'Unexpected error while checking for updates.' });
     } finally {
-      setProgress((prev) => (prev.stage === 'checking' ? { ...prev, stage: 'idle' } : prev));
+      setProgress((prev) => ({ ...prev, stage: 'idle' }));
     }
   }, []);
 

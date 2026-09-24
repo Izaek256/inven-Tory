@@ -2,6 +2,22 @@
 
 All notable changes to invenTory are documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.2.1] — 2026-09-24
+
+### Fixed — Release Pipeline & Linux Updater
+
+- **Linux releases ship `.deb` and `.rpm` again** — the v1.2.0 pipeline only uploaded `bundle/appimage/` globs, so deb/rpm stopped being published (v1.1.7 had shipped manifests with no installers at all).
+- **Strict AppImage CI gate** — new `Verify AppImage executable + launch (Linux)` step fails the build if the AppImage is missing, not executable after `chmod +x`, or cannot start under Xvfb (previously masked by `|| true`).
+- **Complete Linux build dependencies** (`build-essential`, `libssl-dev`, `libxdo-dev`, `libayatana-appindicator3-dev`, `libfuse2`, …) plus `NO_STRIP=true` so linuxdeploy cannot corrupt the AppImage ELF during bundling.
+- **Version/tag consistency gate** — new `scripts/check_versions.js` runs in CI and blocks releases when `tauri.conf.json` / `Cargo.toml` / `apps/desktop/package.json` disagree or the git tag ≠ `v<version>`.
+- **Release fail-fast checks** — AppImage + `.AppImage.sig` + `.deb` + `.rpm` must exist before upload; updater manifests are now generated with `jq` and validated instead of shell heredocs.
+- Removed obsolete `plugins.updater.dialog` config (ignored by `tauri-plugin-updater` v2).
+- **Docs** — README documents Linux install (`chmod +x`, `libfuse2`/`libfuse2t64`, `--appimage-extract-and-run`) and auto-update limitations (AppImage-only updates; executable bit; published releases only).
+
+### Verified
+
+- The configured updater `pubkey` matches every shipped signature (v1.1.5 → v1.2.0, keyid `c584a74f0064d800`); full Ed25519 verification of the published v1.2.0 AppImage against the configured pubkey succeeds. No key rotation required.
+
 ## [1.2.0] — 2026-09-23
 
 ### Changed — Visual-Only Redesign (No Logic Changes)
