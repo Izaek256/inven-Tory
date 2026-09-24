@@ -1,6 +1,6 @@
 # <img src="https://res.cloudinary.com/dun3og1nu/image/upload/v1788902797/app-icon_fleogl.svg" alt="invenTory Logo" height="40" valign="middle"> invenTory
 
-> Offline-First, Multi-Store Inventory Management System — v1.2.0
+> Offline-First, Multi-Store Inventory Management System — v1.2.1
 
 [![CI](https://github.com/Izaek256/inven-Tory/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/Izaek256/inven-Tory/actions/workflows/ci.yml)
 [![Logo](https://img.shields.io/badge/logo-teal%20barcode-%23085041?logoWidth=12&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0iIzA4NTA0MSIvPjxwYXRoIGQ9Ik0xMjggMTI4aDMydjI1NmgtMzJ6bTY0IDBoMTZ2MjU2aC0xNnptNDQgMGgzMnYyNTZoLTMyem02NCAwaDE2djI1NmgtMTZ6bTQ0IDBoMzJ2MjU2aC0zMnoiIGZpbGw9IiNmZmYiLz48L3N2Zz4=)](https://res.cloudinary.com/dun3og1nu/image/upload/v1788902797/app-icon_fleogl.svg)
@@ -615,6 +615,37 @@ npm run build       # TS build → dist/
 npm run tauri build # Rust release build + installer artifacts
 # Output in: apps/desktop/src-tauri/target/release/bundle/
 ```
+
+**Linux install (.AppImage / .deb / .rpm):**
+
+Download an asset from the [Releases page](https://github.com/Izaek256/inven-Tory/releases).
+
+```bash
+# AppImage (recommended — this is what the in-app updater manages)
+chmod +x invenTory_*_amd64.AppImage
+./invenTory_*_amd64.AppImage
+
+# If the AppImage exits immediately with a FUSE error:
+#   Ubuntu 24.04+/Debian 13+:  sudo apt install libfuse2t64
+#   Ubuntu 22.04/LMDE:         sudo apt install libfuse2
+# Or run without FUSE entirely:
+./invenTory_*_amd64.AppImage --appimage-extract-and-run
+
+# .deb (Debian/Ubuntu) / .rpm (Fedora/RHEL) if you prefer a system install
+sudo apt install ./invenTory_*.deb
+sudo rpm -i invenTory_*.rpm
+```
+
+**Linux auto-update limitations:**
+
+- Only the **AppImage** install is updated in place by the in-app updater.
+  `.deb`/`.rpm` installs and extracted AppImages (`--appimage-extract-and-run`)
+  are **not** updated automatically — install the next release manually.
+- A downloaded AppImage must be executable (`chmod +x`). Browsers, `scp`, and
+  archives can strip the `+x` bit; a non-executable AppImage fails to launch
+  with `Permission denied`.
+- Updates are only offered from **published** (non-draft, non-prerelease)
+  GitHub releases.
 
 **Vite-only UI dev (no Tauri window — for rapid UI iteration):**
 ```bash

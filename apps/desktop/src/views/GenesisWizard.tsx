@@ -371,7 +371,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
               padding: '2px 6px',
             }}
           >
-            v1.2.0
+            v1.2.1
           </span>
         </div>
         <div style={{ flex: 1 }} />

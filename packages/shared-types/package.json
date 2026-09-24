@@ -1,6 +1,6 @@
 {
   "name": "@invenTory/shared-types",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "private": true,
   "description": "invenTory — shared TypeScript type definitions used across desktop, web and mobile",
   "main": "src/index.ts",
