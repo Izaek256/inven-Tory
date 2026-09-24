@@ -142,6 +142,25 @@ export const ProductModal: React.FC<ProductModalProps> = ({
     }
   };
 
+  // The footer buttons live outside the <form> element (rendered by Modal),
+  // so the browser has no submit control inside the form for implicit
+  // submission. Submit on Enter from any text field explicitly; let Enter
+  // keep its native behavior inside <select> (choose an option) and on
+  // checkboxes.
+  const handleFormKeyDown = (e: React.KeyboardEvent<HTMLFormElement>): void => {
+    if (e.key !== 'Enter' || submitting) return;
+    const target = e.target;
+    if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
+    if (target instanceof HTMLInputElement) {
+      const type = target.type;
+      if (type === 'checkbox' || type === 'radio' || type === 'button' || type === 'submit') {
+        return;
+      }
+    }
+    e.preventDefault();
+    void handleSubmit(e);
+  };
+
   return (
     <Modal
       isOpen={isOpen}
@@ -151,6 +170,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
       footer={
         <>
           <Button
+            type="button"
             variant="secondary"
             onClick={onClose}
             disabled={submitting}
@@ -159,6 +179,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
             Discard
           </Button>
           <Button
+            type="button"
             variant="primary"
             onClick={handleSubmit}
             loading={submitting}
@@ -169,7 +190,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({
         </>
       }
     >
-      <form onSubmit={handleSubmit} data-testid="product-modal">
+      <form onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} data-testid="product-modal">
         {error && (
           <div
             className="it-toast it-toast--error"

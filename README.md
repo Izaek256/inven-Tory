@@ -1,6 +1,6 @@
 # <img src="https://res.cloudinary.com/dun3og1nu/image/upload/v1788902797/app-icon_fleogl.svg" alt="invenTory Logo" height="40" valign="middle"> invenTory
 
-> Offline-First, Multi-Store Inventory Management System — v1.2.1
+> Offline-First, Multi-Store Inventory Management System — v1.3.0
 
 [![CI](https://github.com/Izaek256/inven-Tory/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/Izaek256/inven-Tory/actions/workflows/ci.yml)
 [![Logo](https://img.shields.io/badge/logo-teal%20barcode-%23085041?logoWidth=12&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0iIzA4NTA0MSIvPjxwYXRoIGQ9Ik0xMjggMTI4aDMydjI1NmgtMzJ6bTY0IDBoMTZ2MjU2aC0xNnptNDQgMGgzMnYyNTZoLTMyem02NCAwaDE2djI1NmgtMTZ6bTQ0IDBoMzJ2MjU2aC0zMnoiIGZpbGw9IiNmZmYiLz48L3N2Zz4=)](https://res.cloudinary.com/dun3og1nu/image/upload/v1788902797/app-icon_fleogl.svg)
@@ -633,7 +633,7 @@ chmod +x invenTory_*_amd64.AppImage
 
 # .deb (Debian/Ubuntu) / .rpm (Fedora/RHEL) if you prefer a system install
 sudo apt install ./invenTory_*.deb
-sudo rpm -i invenTory_*.rpm
+sudo rpm -i invenTory-*.rpm invenTory_*.rpm
 ```
 
 **Linux auto-update limitations:**

@@ -2,8 +2,44 @@ use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Utc};
+
+/// Process-wide shared SQLite connection used by hot read commands.
+///
+/// Before this change every Tauri command opened its own `Connection`, which
+/// paid per-call open/close + PRAGMA setup on the read hot paths (product
+/// search, listings, balances, dashboard aggregation). Reusing one connection
+/// removes that overhead and lets SQLite keep its page cache warm between
+/// commands.
+///
+/// Only read-heavy / short commands use the shared connection. Bulk import
+/// paths (`apply_sync_pull`, `apply_restore_*`) and backup/restore still open
+/// their own connections on purpose, so a long write never holds the shared
+/// lock while the UI is running searches (WAL lets those writers coexist).
+static DB_CONN: OnceLock<Result<Mutex<Connection>, String>> = OnceLock::new();
+
+fn get_conn() -> Result<MutexGuard<'static, Connection>, String> {
+    let init = DB_CONN.get_or_init(|| {
+        let db_path = get_db_path();
+        Connection::open(&db_path)
+            .map(|conn| {
+                let _ = conn.pragma_update(None, "journal_mode", "WAL");
+                let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+                let _ = conn.pragma_update(None, "busy_timeout", 5000);
+                let _ = conn.pragma_update(None, "foreign_keys", true);
+                // Negative cache_size is KiB; -32768 => 32 MiB shared page cache.
+                let _ = conn.pragma_update(None, "cache_size", -32768);
+                Mutex::new(conn)
+            })
+            .map_err(|e| format!("Failed to open local database at {:?}: {}", db_path, e))
+    });
+    match init {
+        Ok(conn) => Ok(conn.lock().unwrap_or_else(|poisoned| poisoned.into_inner())),
+        Err(e) => Err(e.clone()),
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Store {
@@ -776,7 +812,43 @@ fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
             key VARCHAR(255) PRIMARY KEY,
             value TEXT,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );",
+        );
+
+        -- Daily materialized stock snapshot (B8). Maintained by triggers on
+        -- stock_balances so each write pays a single-row upsert in the same
+        -- transaction, avoiding per-command full stock recomputation on the
+        -- dashboard / analytics hot path. snapshot_date uses UTC date('now')
+        -- to stay consistent with the RFC3339 UTC timestamps on
+        -- inventory_transactions.occurred_at.
+        CREATE TABLE IF NOT EXISTS daily_stock_snapshot (
+            store_id VARCHAR(36) NOT NULL REFERENCES stores(id),
+            product_id VARCHAR(36) NOT NULL REFERENCES products(id),
+            stock_bucket VARCHAR(50) NOT NULL DEFAULT 'AVAILABLE',
+            snapshot_date TEXT NOT NULL,
+            quantity INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (store_id, product_id, stock_bucket, snapshot_date)
+        );
+
+        CREATE TRIGGER IF NOT EXISTS trg_daily_stock_snapshot_ins
+        AFTER INSERT ON stock_balances
+        BEGIN
+            INSERT INTO daily_stock_snapshot (store_id, product_id, stock_bucket, snapshot_date, quantity, updated_at)
+            VALUES (NEW.store_id, NEW.product_id, NEW.stock_bucket, date('now'), NEW.quantity, NEW.updated_at)
+            ON CONFLICT(store_id, product_id, stock_bucket, snapshot_date)
+            DO UPDATE SET quantity = excluded.quantity, updated_at = excluded.updated_at;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS trg_daily_stock_snapshot_upd
+        AFTER UPDATE OF quantity ON stock_balances
+        BEGIN
+            INSERT INTO daily_stock_snapshot (store_id, product_id, stock_bucket, snapshot_date, quantity, updated_at)
+            VALUES (NEW.store_id, NEW.product_id, NEW.stock_bucket, date('now'), NEW.quantity, NEW.updated_at)
+            ON CONFLICT(store_id, product_id, stock_bucket, snapshot_date)
+            DO UPDATE SET quantity = excluded.quantity, updated_at = excluded.updated_at;
+        END;
+
+        CREATE INDEX IF NOT EXISTS idx_inv_tx_bucket_date ON inventory_transactions(stock_bucket, occurred_at);",
     ).map_err(|e| format!("Failed to create schema tables: {}", e))?;
 
     // Migrate existing databases: add missing columns if they don't exist
@@ -806,6 +878,18 @@ fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
         // The column won't be used by any queries
     }
     Ok(())
+}
+
+/// Populate today's daily_stock_snapshot rows from the authoritative
+/// stock_balances projection (B8). Runs once at startup so analytics always
+/// have a same-day anchor even on databases created before the snapshot table
+/// existed.
+pub(crate) fn backfill_daily_stock_snapshot(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "INSERT OR IGNORE INTO daily_stock_snapshot (store_id, product_id, stock_bucket, snapshot_date, quantity, updated_at)
+         SELECT store_id, product_id, stock_bucket, date('now'), quantity, updated_at FROM stock_balances;",
+    )
+    .map_err(|e| format!("Failed to backfill daily_stock_snapshot: {}", e))
 }
 
 fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
@@ -1318,6 +1402,9 @@ pub fn cancel_restore() -> Result<(), String> {
     // Delete all stock balances
     let _ = tx.execute("DELETE FROM stock_balances", []);
 
+    // The snapshot trigger only fires on INSERT/UPDATE, wipe it explicitly.
+    let _ = tx.execute("DELETE FROM daily_stock_snapshot", []);
+
     // Delete all inventory transactions
     let _ = tx.execute("DELETE FROM inventory_transactions", []);
 
@@ -1602,9 +1689,7 @@ pub fn apply_restore_background(
 
     #[tauri::command]
     pub fn get_stores() -> Result<Vec<Store>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
+        let conn = get_conn()?;
 
         let _ = ensure_schema_tables(&conn);
 
@@ -1834,9 +1919,7 @@ pub fn apply_restore_background(
     /// simply reads as 0 and is created on demand by the first stock operation.
     #[tauri::command]
     pub fn get_products_by_store(store_id: String) -> Result<Vec<Product>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let mut stmt = conn
             .prepare(
@@ -1887,15 +1970,17 @@ pub fn apply_restore_background(
 
     #[tauri::command]
     pub fn get_products() -> Result<Vec<Product>, String> {
-        get_products_paginated(None, None)
+        get_products_paginated(None, None, None)
     }
 
     /// Get products with optional pagination. If limit/offset are None, returns all products.
     #[tauri::command]
-    pub fn get_products_paginated(limit: Option<i32>, offset: Option<i32>) -> Result<Vec<Product>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+    pub fn get_products_paginated(
+        limit: Option<i32>,
+        offset: Option<i32>,
+        category: Option<String>,
+    ) -> Result<Vec<Product>, String> {
+        let conn = get_conn()?;
 
         let lim = limit.unwrap_or(1000).min(5000);
         let off = offset.unwrap_or(0);
@@ -1907,6 +1992,7 @@ pub fn apply_restore_background(
                  COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
                  FROM products p \
                  LEFT JOIN stock_balances sb ON sb.product_id = p.id \
+                 WHERE (?3 IS NULL OR p.category = ?3) \
                  GROUP BY p.id \
                  ORDER BY p.name ASC \
                  LIMIT ?1 OFFSET ?2"
@@ -1914,7 +2000,7 @@ pub fn apply_restore_background(
             .map_err(|e| format!("Failed to prepare database query: {}", e))?;
 
         let prod_iter = stmt
-            .query_map(params![lim, off], |row| {
+            .query_map(params![lim, off, category], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
                 let low_stock_threshold: Option<i32> = row.get(11)?;
@@ -1949,23 +2035,52 @@ pub fn apply_restore_background(
     }
 
     #[tauri::command]
-    pub fn get_products_count() -> Result<i32, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+    pub fn get_products_count(category: Option<String>) -> Result<i32, String> {
+        let conn = get_conn()?;
 
         let count: i32 = conn
-            .query_row("SELECT COUNT(*) FROM products WHERE is_active = 1", [], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM products WHERE is_active = 1 AND (?1 IS NULL OR category = ?1)",
+                params![category],
+                |row| row.get(0),
+            )
             .map_err(|e| format!("Failed to count products: {}", e))?;
 
         Ok(count)
     }
 
+    /// Distinct product categories, for the products-view category filter.
     #[tauri::command]
-    pub fn search_products(query: String, store_id: Option<String>) -> Result<Vec<Product>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+    pub fn get_product_categories() -> Result<Vec<String>, String> {
+        let conn = get_conn()?;
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT DISTINCT category FROM products \
+                 WHERE category IS NOT NULL AND TRIM(category) <> '' \
+                 ORDER BY category ASC",
+            )
+            .map_err(|e| format!("Failed to prepare category query: {}", e))?;
+
+        let rows = stmt
+            .query_map([], |row| row.get::<_, String>(0))
+            .map_err(|e| format!("Failed to query product categories: {}", e))?;
+
+        let mut categories = Vec::new();
+        for row in rows {
+            categories.push(row.map_err(|e| format!("Failed to read category: {}", e))?);
+        }
+
+        Ok(categories)
+    }
+
+    #[tauri::command]
+    pub fn search_products(
+        query: String,
+        store_id: Option<String>,
+        category: Option<String>,
+    ) -> Result<Vec<Product>, String> {
+        let conn = get_conn()?;
 
         let term = query.trim().to_lowercase();
         if term.is_empty() {
@@ -2011,7 +2126,7 @@ pub fn apply_restore_background(
                         ORDER BY rank ASC \
                         LIMIT 100 \
                      ) fts \
-                     JOIN products p ON p.rowid = fts.rowid \
+                     JOIN products p ON p.rowid = fts.rowid AND (?3 IS NULL OR p.category = ?3) \
                      LEFT JOIN stock_balances sb \
                         ON sb.product_id = p.id AND sb.stock_bucket = 'AVAILABLE' AND sb.store_id = COALESCE(?2, sb.store_id) \
                      GROUP BY p.id \
@@ -2020,7 +2135,7 @@ pub fn apply_restore_background(
                 .map_err(|e| format!("Failed to prepare FTS5 search query: {}", e))?;
 
             let prod_iter = stmt
-                .query_map(params![fts_query, store_id], |row| {
+                .query_map(params![fts_query, store_id, category], |row| {
                     let st_int: i32 = row.get(9)?;
                     let active_int: i32 = row.get(10)?;
                     let low_stock_threshold: Option<i32> = row.get(11)?;
@@ -2068,8 +2183,9 @@ pub fn apply_restore_background(
                  COALESCE(SUM(CASE WHEN sb.stock_bucket = 'AVAILABLE' THEN sb.quantity ELSE 0 END), 0) AS stock_quantity \
                  FROM products p \
                  LEFT JOIN stock_balances sb ON sb.product_id = p.id AND sb.store_id = COALESCE(?2, sb.store_id) \
-                 WHERE LOWER(p.name) LIKE ?1 OR LOWER(p.sku) LIKE ?1 OR LOWER(COALESCE(p.model, '')) LIKE ?1 \
-                    OR LOWER(COALESCE(p.barcode, '')) LIKE ?1 OR LOWER(COALESCE(p.alternate_names, '')) LIKE ?1 \
+                 WHERE (LOWER(p.name) LIKE ?1 OR LOWER(p.sku) LIKE ?1 OR LOWER(COALESCE(p.model, '')) LIKE ?1 \
+                    OR LOWER(COALESCE(p.barcode, '')) LIKE ?1 OR LOWER(COALESCE(p.alternate_names, '')) LIKE ?1) \
+                    AND (?3 IS NULL OR p.category = ?3) \
                  GROUP BY p.id \
                  ORDER BY p.name ASC \
                  LIMIT 100"
@@ -2077,7 +2193,7 @@ pub fn apply_restore_background(
             .map_err(|e| format!("Failed to prepare search query: {}", e))?;
 
         let prod_iter = stmt
-            .query_map(params![like_term, store_id], |row| {
+            .query_map(params![like_term, store_id, category], |row| {
                 let st_int: i32 = row.get(9)?;
                 let active_int: i32 = row.get(10)?;
                 let low_stock_threshold: Option<i32> = row.get(11)?;
@@ -2124,7 +2240,7 @@ pub fn apply_restore_background(
         now: &str,
     ) -> Result<(), String> {
         let outbox_id = generate_id("OB");
-        let outbox_event_id = format!("EVT-PROD-UPDATE-{}", prod.id);
+        let base_event_id = format!("EVT-PROD-UPDATE-{}", prod.id);
         let payload = serde_json::to_string(&serde_json::json!({
             "product_id": prod.id,
             "sku": prod.sku,
@@ -2142,11 +2258,58 @@ pub fn apply_restore_background(
         }))
         .map_err(|e| format!("Failed to serialize product update payload: {}", e))?;
 
+        // `event_id` is deterministic per product (`EVT-PROD-UPDATE-{id}`) and
+        // carries a UNIQUE index, so a second mutation of the same product
+        // must not blindly INSERT — that raised "UNIQUE constraint failed:
+        // outbox_events.event_id" on every edit after the first.
+        //
+        // * Existing row not in flight → coalesce: keep the single row, swap
+        //   in the latest payload snapshot and re-queue it as PENDING.
+        // * Existing row currently SENDING → the pusher keys status
+        //   transitions by event_id, so mutating it mid-flight would
+        //   mis-attribute the outcome; queue this edit under a fresh
+        //   suffixed id instead (unique via the OB nanos suffix).
+        let existing_status: Option<String> = match conn.query_row(
+            "SELECT status FROM outbox_events WHERE event_id = ?1",
+            params![base_event_id],
+            |row| row.get(0),
+        ) {
+            Ok(status) => Some(status),
+            Err(rusqlite::Error::QueryReturnedNoRows) => None,
+            Err(e) => return Err(format!("Failed to read product outbox state: {}", e)),
+        };
+
+        if existing_status.as_deref() == Some("SENDING") {
+            let follow_up_event_id = format!("{}-{}", base_event_id, outbox_id);
+            conn.execute(
+                "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    outbox_id,
+                    follow_up_event_id,
+                    "PRODUCT_UPDATE",
+                    payload,
+                    "PENDING",
+                    0,
+                    now
+                ],
+            )
+            .map_err(|e| format!("Failed to queue product update for sync: {}", e))?;
+            return Ok(());
+        }
+
         conn.execute(
-            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO outbox_events (id, event_id, event_type, payload, status, retry_count, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(event_id) DO UPDATE SET \
+                payload = excluded.payload, \
+                status = excluded.status, \
+                retry_count = 0, \
+                next_attempt_at = NULL, \
+                last_error = NULL, \
+                created_at = excluded.created_at",
             params![
                 outbox_id,
-                outbox_event_id,
+                base_event_id,
                 "PRODUCT_UPDATE",
                 payload,
                 "PENDING",
@@ -2709,9 +2872,7 @@ pub fn apply_restore_background(
     /// Used by the UI to display and validate against real local stock before committing a sale.
     #[tauri::command]
     pub fn get_stock_balance(store_id: String, product_id: String) -> Result<i32, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let balance: i32 = conn
             .query_row(
@@ -2885,9 +3046,7 @@ pub fn apply_restore_background(
         product_id: String,
         stock_bucket: String,
     ) -> Result<i32, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let balance: i32 = conn
             .query_row(
@@ -2910,9 +3069,7 @@ pub fn apply_restore_background(
     pub fn get_stock_balances_for_store(
         store_id: String,
     ) -> Result<Vec<serde_json::Value>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let mut stmt = conn
             .prepare(
@@ -3313,9 +3470,7 @@ pub fn apply_restore_background(
 
     #[tauri::command]
     pub fn get_transfers() -> Result<Vec<Transfer>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let mut stmt = conn
             .prepare("SELECT id, source_store_id, destination_store_id, product_id, quantity, status, created_by_user_id, notes, created_at, updated_at FROM transfers ORDER BY created_at DESC")
@@ -3349,9 +3504,7 @@ pub fn apply_restore_background(
 
     #[tauri::command]
     pub fn get_local_transactions() -> Result<Vec<InventoryTransaction>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let mut stmt = conn
             .prepare("SELECT transaction_id, store_id, product_id, movement_type, stock_bucket, quantity_delta, occurred_at, recorded_at, user_id, device_id, reference_number, reason_code, transfer_id, purchase_order_id, batch_id, client_sequence, sync_status, server_accepted_at, original_transaction_id FROM inventory_transactions ORDER BY occurred_at DESC")
@@ -4299,9 +4452,7 @@ pub fn apply_restore_background(
     pub fn get_pending_outbox_count() -> Result<i32, String> {
         println!("[TAURI-SYNC] get_pending_outbox_count called");
         
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let _ = ensure_schema_tables(&conn);
 
@@ -4332,9 +4483,7 @@ pub fn apply_restore_background(
     ) -> Result<Vec<serde_json::Value>, String> {
         println!("[TAURI-SYNC] get_pending_outbox_events called with limit: {:?}, force: {:?}", limit, force);
         
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         let batch_limit = limit.unwrap_or(100).max(1).min(500);
         let force_sync = force.unwrap_or(false);
@@ -4744,9 +4893,7 @@ pub fn apply_restore_background(
     /// Returns null if no sync has completed yet.
     #[tauri::command]
     pub fn get_last_sync_timestamp() -> Result<Option<String>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database: {}", e))?;
+        let conn = get_conn()?;
 
         // Ensure the kv_store table exists and has updated_at column
         ensure_kv_store_table(&conn)?;
@@ -5212,9 +5359,7 @@ pub fn apply_restore_background(
 
     #[tauri::command]
     pub fn search_products_fts5(query: String, store_id: Option<String>) -> Result<Vec<Product>, String> {
-        let db_path = get_db_path();
-        let conn = Connection::open(&db_path)
-            .map_err(|e| format!("Failed to open database at {:?}: {}", db_path, e))?;
+        let conn = get_conn()?;
 
         let term = query.trim();
         if term.is_empty() {
@@ -5296,7 +5441,444 @@ pub fn apply_restore_background(
         }
 
         // Fallback to substring LIKE query if FTS5 returned 0 results or encountered an issue
-        search_products(query, store_id)
+        search_products(query, store_id, None)
+    }
+
+    // ============================================================================
+    // Dashboard Analytics (B1/B2/B3/B4) — server-side (SQLite) aggregation for
+    // the Analytics Dashboard view, replacing the old JS-side aggregation which
+    // shipped the full product + ledger catalogues over IPC in up to 4 round-trips.
+    // ============================================================================
+
+    /// Single-command dashboard analytics.
+    ///
+    /// Aggregates everything the Analytics Dashboard view renders in one IPC
+    /// round-trip, doing the aggregation in SQL. Store scope (the active store,
+    /// when set) restricts every query with `store_id = ...` exactly like the
+    /// old JS-side filtering did.
+    #[tauri::command]
+    pub fn get_dashboard_analytics(
+        store_id: Option<String>,
+        start_date: String,
+        end_date: String,
+    ) -> Result<serde_json::Value, String> {
+        let conn = get_conn()?;
+
+        // ── Validate inputs (dates come from <input type=date>, store ids are UUIDs) ──
+        let start = chrono::NaiveDate::parse_from_str(&start_date, "%Y-%m-%d")
+            .map_err(|_| format!("Invalid start_date: {}", start_date))?;
+        let end = chrono::NaiveDate::parse_from_str(&end_date, "%Y-%m-%d")
+            .map_err(|_| format!("Invalid end_date: {}", end_date))?;
+        if end < start {
+            return Err(format!("start_date ({}) must not be after end_date ({})", start_date, end_date));
+        }
+        // Prior window mirrors the view: the 7 days immediately before start.
+        let prior_start = start - chrono::Duration::days(7);
+        let end_next = end + chrono::Duration::days(1);
+
+        let fmt = |d: chrono::NaiveDate| d.format("%Y-%m-%d").to_string();
+
+        // store_id is validated to be UUID-ish before being inlined into the WHERE clauses.
+        let sid = store_id.clone().unwrap_or_default();
+        let scoped = !sid.is_empty();
+        let store_filter = if scoped {
+            if !sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+                return Err("Invalid store_id".to_string());
+            }
+            format!(" AND store_id = '{}'", sid)
+        } else {
+            String::new()
+        };
+
+        // ── 1. Current total AVAILABLE stock units ──
+        let sql = format!(
+            "SELECT COALESCE(SUM(quantity), 0) FROM stock_balances WHERE stock_bucket = 'AVAILABLE'{}",
+            store_filter
+        );
+        let current_total: i64 = conn
+            .query_row(&sql, [], |r| r.get(0))
+            .map_err(|e| format!("Failed to query total stock units: {}", e))?;
+
+        // ── 2. Products created in the current vs prior window ──
+        // Scoped: only products that have an AVAILABLE balance row in the store
+        // (mirrors the view's `scopedProducts` balance-row membership).
+        let (products_current, products_prior) = if scoped {
+            let sql = format!(
+                "SELECT \
+                   (SELECT COUNT(*) FROM \
+                      (SELECT DISTINCT sb.product_id FROM stock_balances sb \
+                       WHERE sb.stock_bucket = 'AVAILABLE' AND sb.store_id = '{}') t \
+                      JOIN products p ON p.id = t.product_id \
+                      WHERE date(p.created_at) >= '{}' AND date(p.created_at) < '{}'), \
+                   (SELECT COUNT(*) FROM \
+                      (SELECT DISTINCT sb.product_id FROM stock_balances sb \
+                       WHERE sb.stock_bucket = 'AVAILABLE' AND sb.store_id = '{}') t \
+                      JOIN products p ON p.id = t.product_id \
+                      WHERE date(p.created_at) >= '{}' AND date(p.created_at) < '{}')",
+                sid, fmt(start), fmt(end_next), sid, fmt(prior_start), fmt(start)
+            );
+            let counts: (i64, i64) = conn
+                .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| format!("Failed to query products-created in range: {}", e))?;
+            (counts.0, counts.1)
+        } else {
+            let sql = format!(
+                "SELECT \
+                   (SELECT COUNT(*) FROM products WHERE date(created_at) >= '{}' AND date(created_at) < '{}'), \
+                   (SELECT COUNT(*) FROM products WHERE date(created_at) >= '{}' AND date(created_at) < '{}')",
+                fmt(start), fmt(end_next), fmt(prior_start), fmt(start)
+            );
+            let counts: (i64, i64) = conn
+                .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(|e| format!("Failed to query products-created in range: {}", e))?;
+            (counts.0, counts.1)
+        };
+
+        // ── 3. Net stock movement in current vs prior window (all buckets) ──
+        let sql = format!(
+            "SELECT \
+               (SELECT COALESCE(SUM(quantity_delta), 0) FROM inventory_transactions \
+                WHERE occurred_at >= '{}T00:00:00' AND occurred_at < '{}T00:00:00'{}), \
+               (SELECT COALESCE(SUM(quantity_delta), 0) FROM inventory_transactions \
+                WHERE occurred_at >= '{}T00:00:00' AND occurred_at < '{}T00:00:00'{})",
+            fmt(start), fmt(end_next), store_filter, fmt(prior_start), fmt(start), store_filter
+        );
+        let deltas: (i64, i64) = conn
+            .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| format!("Failed to query stock deltas: {}", e))?;
+        let (stock_delta_current, stock_delta_prior) = deltas;
+
+        // ── 4. Cross-store distribution (unscoped only; 0 in single-store scope) ──
+        let cross_store: i64 = if scoped {
+            0
+        } else {
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM ( \
+                       SELECT product_id FROM stock_balances \
+                       WHERE stock_bucket = 'AVAILABLE' AND quantity > 0 \
+                       GROUP BY product_id HAVING COUNT(DISTINCT store_id) > 1)",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("Failed to query cross-store products: {}", e))?;
+            count
+        };
+
+        // ── 5. Receipt-linked sales, current vs prior window ──
+        let sql = format!(
+            "SELECT \
+               (SELECT COUNT(*) FROM inventory_transactions \
+                WHERE movement_type = 'SALE' AND \
+                  ((purchase_order_id IS NOT NULL AND purchase_order_id <> '') OR \
+                   (reference_number IS NOT NULL AND reference_number <> '')) AND \
+                  occurred_at >= '{}T00:00:00' AND occurred_at < '{}T00:00:00'{}), \
+               (SELECT COUNT(*) FROM inventory_transactions \
+                WHERE movement_type = 'SALE' AND \
+                  ((purchase_order_id IS NOT NULL AND purchase_order_id <> '') OR \
+                   (reference_number IS NOT NULL AND reference_number <> '')) AND \
+                  occurred_at >= '{}T00:00:00' AND occurred_at < '{}T00:00:00'{})",
+            fmt(start), fmt(end_next), store_filter, fmt(prior_start), fmt(start), store_filter
+        );
+        let receipt: (i64, i64) = conn
+            .query_row(&sql, [], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(|e| format!("Failed to query receipt-linked sales: {}", e))?;
+        let (receipt_current, receipt_prior) = receipt;
+
+        // ── 6. Stock trend (B4): forward accumulation from the current total,
+        //    AVAILABLE bucket only. Matches the server's stock_trend algorithm
+        //    (services/api/app/api/v1/dashboard.py).
+        let mut trend_by_date: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut d = start;
+        while d <= end {
+            trend_by_date.insert(fmt(d), 0);
+            d += chrono::Duration::days(1);
+        }
+        let sql = format!(
+            "SELECT date(occurred_at), COALESCE(SUM(quantity_delta), 0) \
+             FROM inventory_transactions \
+             WHERE stock_bucket = 'AVAILABLE' AND \
+               occurred_at >= '{}T00:00:00' AND occurred_at < '{}T00:00:00'{} \
+             GROUP BY date(occurred_at)",
+            fmt(start), fmt(end_next), store_filter
+        );
+        let mut trend: Vec<serde_json::Value> = Vec::with_capacity(trend_by_date.len());
+        {
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| format!("Failed to prepare trend query: {}", e))?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .map_err(|e| format!("Failed to run trend query: {}", e))?;
+            for row in rows {
+                let (day, delta) = row.map_err(|e| format!("Trend row error: {}", e))?;
+                trend_by_date.insert(day, delta);
+            }
+        }
+        {
+            let mut running = current_total;
+            let mut ordered: Vec<(String, i64)> = trend_by_date.into_iter().collect();
+            ordered.sort();
+            for (day, delta) in ordered {
+                running += delta;
+                trend.push(serde_json::json!({
+                    "date": day,
+                    "total_stock_units": running.max(0),
+                }));
+            }
+        }
+
+        // ── 7. Product catalogue for category / stock-status / low-stock ──
+        //    Scoped set = products with an AVAILABLE balance row in the store;
+        //    unscoped = all products. The qty map determines each product's
+        //    current units used for classification.
+        let product_rows_sql = if scoped {
+            format!(
+                "SELECT p.id, p.name, p.category FROM products p \
+                 JOIN (SELECT DISTINCT product_id FROM stock_balances \
+                       WHERE stock_bucket = 'AVAILABLE' AND store_id = '{}') sb ON sb.product_id = p.id",
+                sid
+            )
+        } else {
+            "SELECT id, name, category FROM products".to_string()
+        };
+        let qty_sql = if scoped {
+            format!(
+                "SELECT product_id, quantity FROM stock_balances \
+                 WHERE stock_bucket = 'AVAILABLE' AND store_id = '{}'",
+                sid
+            )
+        } else {
+            "SELECT product_id, SUM(quantity) FROM stock_balances \
+             WHERE stock_bucket = 'AVAILABLE' GROUP BY product_id".to_string()
+        };
+        let mut products_out: Vec<(String, String, String)> = Vec::new();
+        {
+            let mut stmt = conn
+                .prepare(&product_rows_sql)
+                .map_err(|e| format!("Failed to prepare product query: {}", e))?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
+                .map_err(|e| format!("Failed to run product query: {}", e))?;
+            for row in rows {
+                products_out.push(row.map_err(|e| format!("Product row error: {}", e))?);
+            }
+        }
+        let mut qty_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        {
+            let mut stmt = conn
+                .prepare(&qty_sql)
+                .map_err(|e| format!("Failed to prepare qty query: {}", e))?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .map_err(|e| format!("Failed to run qty query: {}", e))?;
+            for row in rows {
+                let (pid, q) = row.map_err(|e| format!("Qty row error: {}", e))?;
+                qty_map.insert(pid, q);
+            }
+        }
+
+        // ── 8. Category distribution ──
+        let total_products = products_out.len() as f64;
+        let mut cat_counts: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+        for (_, _, category) in &products_out {
+            *cat_counts.entry(category.clone()).or_insert(0) += 1;
+        }
+        let mut category_distribution: Vec<serde_json::Value> = cat_counts
+            .iter()
+            .map(|(category, count)| {
+                let pct = if total_products > 0.0 {
+                    (*count as f64 / total_products * 1000.0).round() / 10.0
+                } else {
+                    0.0
+                };
+                serde_json::json!({ "category": category, "count": count, "percentage": pct })
+            })
+            .collect();
+        category_distribution.sort_by(|a, b| b["count"].as_i64().cmp(&a["count"].as_i64()));
+
+        // ── 9. Stock status by category + low-stock alerts ──
+        //    Classification matches the view: qty <= 0 => out, 0 < qty < 5 => low, else in.
+        const LOW_STOCK_THRESHOLD: i64 = 5;
+        let mut status_by_cat: std::collections::BTreeMap<String, (i64, i64, i64)> =
+            std::collections::BTreeMap::new();
+        let mut low_stock: Vec<serde_json::Value> = Vec::new();
+        for (id, name, category) in &products_out {
+            let qty = qty_map.get(id).copied().unwrap_or(0);
+            let entry = status_by_cat.entry(category.clone()).or_insert((0, 0, 0));
+            if qty <= 0 {
+                entry.2 += 1;
+            } else if qty < LOW_STOCK_THRESHOLD {
+                entry.1 += 1;
+            } else {
+                entry.0 += 1;
+            }
+            if qty > 0 && qty < LOW_STOCK_THRESHOLD {
+                low_stock.push(serde_json::json!({
+                    "product_id": id,
+                    "product_name": name,
+                    "current_stock": qty,
+                    "threshold": LOW_STOCK_THRESHOLD,
+                    "category": category,
+                }));
+            }
+        }
+        low_stock.sort_by(|a, b| a["current_stock"].as_i64().cmp(&b["current_stock"].as_i64()));
+        low_stock.truncate(5);
+        let stock_status_by_category: Vec<serde_json::Value> = status_by_cat
+            .iter()
+            .map(|(category, (in_s, low, out_s))| {
+                let total = in_s + low + out_s;
+                serde_json::json!({
+                    "category": category,
+                    "in_stock": in_s,
+                    "low_stock": low,
+                    "out_of_stock": out_s,
+                    "total": total,
+                })
+            })
+            .collect();
+
+        // ── 10. Most-sold products (top 10 by |SALE| delta) with prior trend ──
+        let sales_sql = format!(
+            "SELECT product_id, SUM(ABS(quantity_delta)) FROM inventory_transactions \
+             WHERE movement_type = 'SALE' AND \
+               occurred_at >= '{}T00:00:00' AND occurred_at < '{}T00:00:00'{} \
+             GROUP BY product_id",
+            fmt(start), fmt(end_next), store_filter
+        );
+        let prior_sales_sql = format!(
+            "SELECT product_id, SUM(ABS(quantity_delta)) FROM inventory_transactions \
+             WHERE movement_type = 'SALE' AND \
+               occurred_at >= '{}T00:00:00' AND occurred_at < '{}T00:00:00'{} \
+             GROUP BY product_id",
+            fmt(prior_start), fmt(start), store_filter
+        );
+        let mut sales_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        let mut prior_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+        for (sql, map) in [(&sales_sql, &mut sales_map), (&prior_sales_sql, &mut prior_map)] {
+            let mut stmt = conn
+                .prepare(sql)
+                .map_err(|e| format!("Failed to prepare sales query: {}", e))?;
+            let rows = stmt
+                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+                .map_err(|e| format!("Failed to run sales query: {}", e))?;
+            for row in rows {
+                let (pid, u) = row.map_err(|e| format!("Sales row error: {}", e))?;
+                map.insert(pid, u);
+            }
+        }
+        let product_meta: std::collections::HashMap<String, (String, String)> = products_out
+            .iter()
+            .map(|(id, name, category)| (id.clone(), (name.clone(), category.clone())))
+            .collect();
+        let mut most_sold: Vec<serde_json::Value> = sales_map
+            .iter()
+            .map(|(pid, units_sold)| {
+                let (name, category) = product_meta
+                    .get(pid)
+                    .cloned()
+                    .unwrap_or_else(|| (pid.clone(), String::new()));
+                let prior = prior_map.get(pid).copied().unwrap_or(0);
+                let trend_direction = if units_sold > &prior {
+                    "up"
+                } else if units_sold < &prior {
+                    "down"
+                } else {
+                    "neutral"
+                };
+                let trend_percentage = if prior > 0 {
+                    Some(((*units_sold - prior) as f64 / prior as f64 * 1000.0).round() / 10.0)
+                } else {
+                    None
+                };
+                serde_json::json!({
+                    "product_id": pid,
+                    "product_name": name,
+                    "category": category,
+                    "units_sold": units_sold,
+                    "trend_direction": trend_direction,
+                    "trend_percentage": trend_percentage,
+                })
+            })
+            .collect();
+        most_sold.sort_by(|a, b| b["units_sold"].as_i64().cmp(&a["units_sold"].as_i64()));
+        most_sold.truncate(10);
+
+        // ── 11. Recent activity (top 5 by occurred_at) ──
+        let sql = format!(
+            "SELECT t.transaction_id, t.product_id, COALESCE(p.name, ''), t.store_id, \
+                    COALESCE(s.name, ''), t.quantity_delta, t.occurred_at, \
+                    COALESCE(t.reference_number, ''), t.movement_type, COALESCE(p.sku, '') \
+             FROM inventory_transactions t \
+             LEFT JOIN products p ON p.id = t.product_id \
+             LEFT JOIN stores s ON s.id = t.store_id \
+             WHERE t.occurred_at >= '{}T00:00:00' AND t.occurred_at < '{}T00:00:00'{} \
+             ORDER BY t.occurred_at DESC LIMIT 5",
+            fmt(start), fmt(end_next), store_filter
+        );
+        let mut recent_activity: Vec<serde_json::Value> = Vec::new();
+        {
+            let mut stmt = conn
+                .prepare(&sql)
+                .map_err(|e| format!("Failed to prepare activity query: {}", e))?;
+            let rows = stmt
+                .query_map([], |r| {
+                    let movement: String = r.get(8)?;
+                    let act_type = if movement == "RECEIPT" {
+                        "stock_added"
+                    } else if movement == "SALE" {
+                        "stock_sold"
+                    } else if movement.starts_with("TRANSFER") {
+                        "transfer_completed"
+                    } else if movement == "RETURN" {
+                        "return"
+                    } else if movement == "DAMAGE" {
+                        "damage"
+                    } else if movement == "ADJUSTMENT" {
+                        "adjustment"
+                    } else {
+                        "stock_removed"
+                    };
+                    let rn: String = r.get(7)?;
+                    let reference_number = if rn.is_empty() { None } else { Some(rn) };
+                    Ok(serde_json::json!({
+                        "id": r.get::<_, String>(0)?,
+                        "product_id": r.get::<_, String>(1)?,
+                        "product_name": r.get::<_, String>(2)?,
+                        "store_id": r.get::<_, String>(3)?,
+                        "store_name": r.get::<_, String>(4)?,
+                        "quantity": r.get::<_, i64>(5)?,
+                        "occurred_at": r.get::<_, String>(6)?,
+                        "reference_number": reference_number,
+                        "type": act_type,
+                        "sku": r.get::<_, String>(9)?,
+                    }))
+                })
+                .map_err(|e| format!("Failed to run activity query: {}", e))?;
+            for row in rows {
+                recent_activity.push(row.map_err(|e| format!("Activity row error: {}", e))?);
+            }
+        }
+
+        Ok(serde_json::json!({
+            "kpis": {
+                "total_products_current": products_current,
+                "total_products_prior": products_prior,
+                "total_stock_units": current_total,
+                "stock_delta_current": stock_delta_current,
+                "stock_delta_prior": stock_delta_prior,
+                "products_in_multiple_stores": cross_store,
+                "receipt_linked_sales_current": receipt_current,
+                "receipt_linked_sales_prior": receipt_prior,
+            },
+            "stock_trend": trend,
+            "category_distribution": category_distribution,
+            "stock_status_by_category": stock_status_by_category,
+            "most_sold_products": most_sold,
+            "low_stock_alerts": low_stock,
+            "recent_activity": recent_activity,
+        }))
     }
 
     // ============================================================================
@@ -5429,6 +6011,11 @@ pub fn apply_restore_background(
         
         conn.execute("DELETE FROM stock_balances", [])
             .map_err(|e| format!("Failed to delete stock_balances: {}", e))?;
+
+        // The daily_stock_snapshot trigger only fires on INSERT/UPDATE of
+        // stock_balances, so wipe it explicitly to keep analytics empty too.
+        conn.execute("DELETE FROM daily_stock_snapshot", [])
+            .map_err(|e| format!("Failed to delete daily_stock_snapshot: {}", e))?;
         
         conn.execute("DELETE FROM transfers", [])
             .map_err(|e| format!("Failed to delete transfers: {}", e))?;
@@ -5775,6 +6362,12 @@ pub fn run() {
             if let Err(e) = ensure_day_books_tables(&conn) {
                 eprintln!("[TAURI-LOG] Warning: Failed to initialize day_books tables: {}", e);
             }
+
+            // Backfill today's materialized stock snapshot so analytics have a
+            // same-day anchor on databases created before the snapshot existed.
+            if let Err(e) = commands::backfill_daily_stock_snapshot(&conn) {
+                eprintln!("[TAURI-LOG] Warning: Failed to backfill daily stock snapshot: {}", e);
+            }
         }
     }
 
@@ -5792,9 +6385,11 @@ pub fn run() {
             commands::get_products,
             commands::get_products_paginated,
             commands::get_products_count,
+            commands::get_product_categories,
             commands::get_products_by_store,
             commands::search_products,
             commands::search_products_fts5,
+            commands::get_dashboard_analytics,
             commands::create_product,
             commands::create_products_batch,
             commands::update_product,
