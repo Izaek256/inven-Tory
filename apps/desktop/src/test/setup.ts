@@ -235,6 +235,9 @@ vi.mock('@tauri-apps/api/core', () => {
       case 'get_products_count':
         return Promise.resolve(2);
 
+      case 'get_product_categories':
+        return Promise.resolve(['Appliances', 'Audio', 'Electronics', 'Smartphones']);
+
       case 'list_local_backups':
         return Promise.resolve<BackupInfo[]>([]);
 

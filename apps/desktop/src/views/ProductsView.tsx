@@ -5,13 +5,22 @@ import { Store } from '../types/store';
 import {
   getProductsPaginated,
   getProductsCount,
+  getProductCategories,
   createProduct,
   updateProduct,
 } from '../services/tauriProductService';
 import { getStockBalancesForStore } from '../services/tauriTransactionService';
 import { getStores } from '../services/tauriStoreService';
 import { ProductModal } from '../components/ProductModal';
-import { Button, Badge, DataTable, EmptyState, SearchInput, ColumnDef } from '@invenTory/ui';
+import {
+  Button,
+  Badge,
+  DataTable,
+  EmptyState,
+  SearchInput,
+  Select,
+  ColumnDef,
+} from '@invenTory/ui';
 import { Package, Plus, Edit2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useActiveStore } from '../context/StoreContext';
 import { storeColor } from '../utils/storeColors';
@@ -29,6 +38,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
+  const [categories, setCategories] = useState<string[]>([]);
   const [currentPage, setCurrentPage] = useState(1);
 
   const PAGE_SIZE = 50;
@@ -52,17 +63,22 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     setLoading(true);
     setError(null);
     try {
+      const category = categoryFilter === 'all' ? null : categoryFilter;
       let data: Product[];
       let count: number;
       if (searchQuery.trim()) {
         // Use search_products for search queries (it has its own LIMIT 100)
-        data = await invoke<Product[]>('search_products', { query: searchQuery, storeId: null });
+        data = await invoke<Product[]>('search_products', {
+          query: searchQuery,
+          storeId: null,
+          category,
+        });
         count = data.length;
       } else {
         // Use paginated get_products for normal listing
         [data, count] = await Promise.all([
-          getProductsPaginated(PAGE_SIZE, (currentPage - 1) * PAGE_SIZE),
-          getProductsCount(),
+          getProductsPaginated(PAGE_SIZE, (currentPage - 1) * PAGE_SIZE, category),
+          getProductsCount(category),
         ]);
       }
       setProducts(data);
@@ -74,7 +90,18 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchQuery]);
+  }, [currentPage, searchQuery, categoryFilter]);
+
+  // Distinct categories for the filter dropdown (refreshed after mutations
+  // so a newly created category is immediately selectable).
+  const fetchCategories = useCallback(async () => {
+    try {
+      const list = await getProductCategories();
+      setCategories(list);
+    } catch {
+      // non-fatal: the filter simply shows "All Categories" only
+    }
+  }, []);
 
   // Store list — read-only reference data for the breakdown columns
   useEffect(() => {
@@ -86,10 +113,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
       .catch(() => {
         // non-fatal: table still renders with the active store column
       });
+    void fetchCategories();
     return (): void => {
       cancelled = true;
     };
-  }, []);
+  }, [fetchCategories]);
 
   // Fetch cross-store balances when products, stores, or activeStoreId change.
   // Read-only aggregation: per-store records are untouched (Phase 3, Task I).
@@ -132,11 +160,14 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     fetchProductsList();
   }, [fetchProductsList]);
 
-  // Filtered products list — search only (Category/Status columns removed
-  // per Phase 3, Task I). When search is active, we use the already-loaded
-  // products (which came from search_products) and don't paginate.
-  // When no search, we use server-side pagination.
+  // Filtered products list — search + category, both applied server-side
+  // (search via search_products, category via the `category` argument on
+  // get_products_paginated / get_products_count / search_products). When
+  // search is active, we use the already-loaded products (which came from
+  // search_products) and don't paginate. When no search, we use
+  // server-side pagination.
   const isSearching = searchQuery.trim().length > 0;
+  const isFilteringCategory = categoryFilter !== 'all';
   const filteredProducts = isSearching
     ? products // Already filtered by search_products on the backend
     : products; // Already paginated by get_products_paginated on the backend
@@ -151,10 +182,17 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     setCurrentPage((prev) => Math.min(totalPages, prev + 1));
   };
 
-  // Reset pagination when search query changes
+  // Reset pagination when search query or category filter changes
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchQuery]);
+  }, [searchQuery, categoryFilter]);
+
+  const hasActiveFilter = isSearching || isFilteringCategory;
+
+  const handleClearFilters = (): void => {
+    setSearchQuery('');
+    setCategoryFilter('all');
+  };
 
   const handleOpenCreateModal = (): void => {
     setActionError(null);
@@ -172,7 +210,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     setActionError(null);
     try {
       await createProduct(input);
-      await fetchProductsList();
+      await Promise.all([fetchProductsList(), fetchCategories()]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setActionError(message);
@@ -184,7 +222,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
     setActionError(null);
     try {
       await updateProduct(input);
-      await fetchProductsList();
+      await Promise.all([fetchProductsList(), fetchCategories()]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setActionError(message);
@@ -430,13 +468,37 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
           justifyContent: 'space-between',
         }}
       >
-        <div style={{ flex: 1, minWidth: '280px' }}>
-          <SearchInput
-            placeholder="Search catalogue by name, SKU, brand, model, barcode or alias..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            data-testid="product-search-input"
-          />
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: '16px',
+            alignItems: 'center',
+            flex: 1,
+          }}
+        >
+          <div style={{ flex: 1, minWidth: '280px' }}>
+            <SearchInput
+              placeholder="Search catalogue by name, SKU, brand, model, barcode or alias..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              aria-label="Search products"
+              data-testid="product-search-input"
+            />
+          </div>
+          <div style={{ minWidth: '190px' }}>
+            <Select
+              id="product-category-filter"
+              aria-label="Filter by category"
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              data-testid="product-category-filter"
+              options={[
+                { value: 'all', label: 'All Categories' },
+                ...categories.map((c) => ({ value: c, label: c })),
+              ]}
+            />
+          </div>
         </div>
       </div>
 
@@ -524,13 +586,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
                   heading="No products found"
                   body="No products match the selected criteria."
                   action={
-                    searchQuery ? (
-                      <Button
-                        variant="secondary"
-                        onClick={() => {
-                          setSearchQuery('');
-                        }}
-                      >
+                    hasActiveFilter ? (
+                      <Button variant="secondary" onClick={handleClearFilters}>
                         Clear Filters
                       </Button>
                     ) : (

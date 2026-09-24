@@ -99,10 +99,18 @@ export async function getProducts(): Promise<Product[]> {
   throw new Error('[ProductService] getProducts() requires the desktop app runtime.');
 }
 
-export async function getProductsPaginated(limit: number, offset: number): Promise<Product[]> {
+export async function getProductsPaginated(
+  limit: number,
+  offset: number,
+  category?: string | null,
+): Promise<Product[]> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<Product[]>('get_products_paginated', { limit, offset });
+      return await invoke<Product[]>('get_products_paginated', {
+        limit,
+        offset,
+        category: category ?? null,
+      });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[ProductService] getProductsPaginated failed:', err);
@@ -112,10 +120,10 @@ export async function getProductsPaginated(limit: number, offset: number): Promi
   throw new Error('[ProductService] getProductsPaginated() requires the desktop app runtime.');
 }
 
-export async function getProductsCount(): Promise<number> {
+export async function getProductsCount(category?: string | null): Promise<number> {
   if (isTauriEnvironment()) {
     try {
-      return await invoke<number>('get_products_count');
+      return await invoke<number>('get_products_count', { category: category ?? null });
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[ProductService] getProductsCount failed:', err);
@@ -123,6 +131,20 @@ export async function getProductsCount(): Promise<number> {
     }
   }
   throw new Error('[ProductService] getProductsCount() requires the desktop app runtime.');
+}
+
+/** Distinct product categories for the products-view category filter. */
+export async function getProductCategories(): Promise<string[]> {
+  if (isTauriEnvironment()) {
+    try {
+      return await invoke<string[]>('get_product_categories');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[ProductService] getProductCategories failed:', err);
+      throw new Error(`Failed to load product categories: ${String(err)}`);
+    }
+  }
+  return [];
 }
 
 export async function searchProducts(query: string, storeId?: string | null): Promise<Product[]> {

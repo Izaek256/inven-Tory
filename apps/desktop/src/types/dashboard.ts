@@ -62,3 +62,38 @@ export interface DateRange {
   start: string;
   end: string;
 }
+
+export interface DashboardKPIs {
+  total_products_current: number;
+  total_products_prior: number;
+  total_stock_units: number;
+  stock_delta_current: number;
+  stock_delta_prior: number;
+  products_in_multiple_stores: number;
+  receipt_linked_sales_current: number;
+  receipt_linked_sales_prior: number;
+}
+
+export interface LowStockAlert {
+  product_id: string;
+  product_name: string;
+  current_stock: number;
+  threshold: number;
+  category: string;
+}
+
+/**
+ * Entire Analytics Dashboard payload, aggregated in SQLite by the
+ * `get_dashboard_analytics` Tauri command (B1/B2/B3/B4). The view renders
+ * straight from this payload — it no longer ships the full product/ledger
+ * catalogues over IPC to derive these values in JS.
+ */
+export interface DashboardAnalytics {
+  kpis: DashboardKPIs;
+  stock_trend: StockTrendPoint[];
+  category_distribution: CategoryDistributionPoint[];
+  stock_status_by_category: StockStatusCategoryRow[];
+  most_sold_products: MostSoldProduct[];
+  low_stock_alerts: LowStockAlert[];
+  recent_activity: RecentActivityItem[];
+}

@@ -4,11 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ThemeProvider, ToastProvider } from '@invenTory/ui';
 import { StoreProvider } from '../context/StoreContext';
 import { DashboardView } from '../views/DashboardView';
-import * as tauriProductService from '../services/tauriProductService';
-import * as tauriTransactionService from '../services/tauriTransactionService';
+import * as tauriDashboardService from '../services/tauriDashboardService';
 import * as tauriSyncService from '../services/tauriSyncService';
 import { ClientSyncState } from '../types/sync';
-import { InventoryTransaction } from '../types/transaction';
+import { DashboardAnalytics } from '../types/dashboard';
 
 // Mock Recharts to avoid width/height warnings in jsdom
 vi.mock('recharts', () => ({
@@ -45,151 +44,92 @@ function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> 
 
 const now = Date.now();
 
-const mockProducts = [
-  {
-    id: 'PROD-1',
-    sku: 'WIDGET-A',
-    name: 'Widget Alpha',
-    category: 'Electronics',
-    unit: 'pcs',
-    is_active: true,
-    low_stock_threshold: 10,
-    stock_quantity: 50,
-    serial_tracking_enabled: false,
-    created_at: new Date(now - 3 * 86_400_000).toISOString(),
-    updated_at: new Date(now - 3 * 86_400_000).toISOString(),
+const mockAnalytics: DashboardAnalytics = {
+  kpis: {
+    total_products_current: 3,
+    total_products_prior: 1,
+    total_stock_units: 153,
+    stock_delta_current: 143,
+    stock_delta_prior: -5,
+    products_in_multiple_stores: 2,
+    receipt_linked_sales_current: 4,
+    receipt_linked_sales_prior: 1,
   },
-  {
-    id: 'PROD-2',
-    sku: 'GADGET-B',
-    name: 'Gadget Beta',
-    category: 'Electronics',
-    unit: 'pcs',
-    is_active: true,
-    low_stock_threshold: 5,
-    stock_quantity: 3,
-    serial_tracking_enabled: false,
-    created_at: new Date(now - 20 * 86_400_000).toISOString(),
-    updated_at: new Date(now - 20 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'PROD-3',
-    sku: 'CABLE-C',
-    name: 'Cable Gamma',
-    category: 'Accessories',
-    unit: 'm',
-    is_active: true,
-    low_stock_threshold: null,
-    stock_quantity: 100,
-    serial_tracking_enabled: false,
-    created_at: new Date(now - 2 * 86_400_000).toISOString(),
-    updated_at: new Date(now - 2 * 86_400_000).toISOString(),
-  },
-  {
-    id: 'PROD-4',
-    sku: 'MOUSE-D',
-    name: 'Mouse Delta',
-    category: 'Accessories',
-    unit: 'pcs',
-    is_active: true,
-    low_stock_threshold: 20,
-    stock_quantity: 0,
-    serial_tracking_enabled: false,
-    created_at: new Date(now - 1 * 86_400_000).toISOString(),
-    updated_at: new Date(now - 1 * 86_400_000).toISOString(),
-  },
-];
-
-const mockTransactions: InventoryTransaction[] = [
-  {
-    transaction_id: 'TXN-1',
-    store_id: 'STORE-1',
-    product_id: 'PROD-1',
-    movement_type: 'RECEIPT',
-    stock_bucket: 'AVAILABLE',
-    quantity_delta: 50,
-    occurred_at: new Date(now - 4 * 86_400_000).toISOString(),
-    recorded_at: new Date(now - 4 * 86_400_000).toISOString(),
-    user_id: 'U1',
-    device_id: 'D1',
-    reference_number: 'PO-001',
-    reason_code: null,
-    transfer_id: null,
-    purchase_order_id: 'PO-001',
-    batch_id: null,
-    client_sequence: null,
-    sync_status: 'SYNCED',
-    server_accepted_at: null,
-    original_transaction_id: null,
-    product_name: 'Widget Alpha',
-  },
-  {
-    transaction_id: 'TXN-2',
-    store_id: 'STORE-1',
-    product_id: 'PROD-1',
-    movement_type: 'SALE',
-    stock_bucket: 'AVAILABLE',
-    quantity_delta: -5,
-    occurred_at: new Date(now - 3 * 86_400_000).toISOString(),
-    recorded_at: new Date(now - 3 * 86_400_000).toISOString(),
-    user_id: 'U1',
-    device_id: 'D1',
-    reference_number: 'SL-001',
-    reason_code: null,
-    transfer_id: null,
-    purchase_order_id: null,
-    batch_id: null,
-    client_sequence: null,
-    sync_status: 'SYNCED',
-    server_accepted_at: null,
-    original_transaction_id: null,
-    product_name: 'Widget Alpha',
-  },
-  {
-    transaction_id: 'TXN-3',
-    store_id: 'STORE-1',
-    product_id: 'PROD-2',
-    movement_type: 'SALE',
-    stock_bucket: 'AVAILABLE',
-    quantity_delta: -2,
-    occurred_at: new Date(now - 2 * 86_400_000).toISOString(),
-    recorded_at: new Date(now - 2 * 86_400_000).toISOString(),
-    user_id: 'U1',
-    device_id: 'D1',
-    reference_number: null,
-    reason_code: null,
-    transfer_id: null,
-    purchase_order_id: null,
-    batch_id: null,
-    client_sequence: null,
-    sync_status: 'SYNCED',
-    server_accepted_at: null,
-    original_transaction_id: null,
-    product_name: 'Gadget Beta',
-  },
-  {
-    transaction_id: 'TXN-4',
-    store_id: 'STORE-2',
-    product_id: 'PROD-3',
-    movement_type: 'RECEIPT',
-    stock_bucket: 'AVAILABLE',
-    quantity_delta: 100,
-    occurred_at: new Date(now - 1 * 86_400_000).toISOString(),
-    recorded_at: new Date(now - 1 * 86_400_000).toISOString(),
-    user_id: 'U1',
-    device_id: 'D1',
-    reference_number: 'PO-002',
-    reason_code: null,
-    transfer_id: null,
-    purchase_order_id: null,
-    batch_id: null,
-    client_sequence: null,
-    sync_status: 'SYNCED',
-    server_accepted_at: null,
-    original_transaction_id: null,
-    product_name: 'Cable Gamma',
-  },
-];
+  stock_trend: [
+    { date: '2026-09-17', total_stock_units: 153 },
+    { date: '2026-09-18', total_stock_units: 153 },
+    { date: '2026-09-19', total_stock_units: 153 },
+    { date: '2026-09-20', total_stock_units: 153 },
+    { date: '2026-09-21', total_stock_units: 153 },
+    { date: '2026-09-22', total_stock_units: 153 },
+    { date: '2026-09-23', total_stock_units: 153 },
+  ],
+  category_distribution: [
+    { category: 'Electronics', count: 2, percentage: 50 },
+    { category: 'Accessories', count: 2, percentage: 50 },
+  ],
+  stock_status_by_category: [
+    { category: 'Electronics', in_stock: 1, low_stock: 1, out_of_stock: 0, total: 2 },
+    { category: 'Accessories', in_stock: 1, low_stock: 0, out_of_stock: 1, total: 2 },
+  ],
+  most_sold_products: [
+    {
+      product_id: 'PROD-1',
+      product_name: 'Widget Alpha',
+      category: 'Electronics',
+      units_sold: 5,
+      trend_direction: 'up',
+      trend_percentage: 25,
+    },
+  ],
+  low_stock_alerts: [
+    {
+      product_id: 'PROD-2',
+      product_name: 'Gadget Beta',
+      current_stock: 3,
+      threshold: 5,
+      category: 'Electronics',
+    },
+  ],
+  recent_activity: [
+    {
+      id: 'TXN-4',
+      type: 'stock_added',
+      product_id: 'PROD-3',
+      product_name: 'Cable Gamma',
+      sku: 'CABLE-C',
+      store_id: 'STORE-2',
+      store_name: 'Store Beta',
+      quantity: 100,
+      occurred_at: new Date(now - 1 * 86_400_000).toISOString(),
+      reference_number: 'PO-002',
+    },
+    {
+      id: 'TXN-2',
+      type: 'stock_sold',
+      product_id: 'PROD-1',
+      product_name: 'Widget Alpha',
+      sku: 'WIDGET-A',
+      store_id: 'STORE-1',
+      store_name: 'Store Alpha',
+      quantity: -5,
+      occurred_at: new Date(now - 3 * 86_400_000).toISOString(),
+      reference_number: 'SL-001',
+    },
+    {
+      id: 'TXN-3',
+      type: 'stock_sold',
+      product_id: 'PROD-2',
+      product_name: 'Gadget Beta',
+      sku: 'GADGET-B',
+      store_id: 'STORE-1',
+      store_name: 'Store Alpha',
+      quantity: -2,
+      occurred_at: new Date(now - 2 * 86_400_000).toISOString(),
+      reference_number: null,
+    },
+  ],
+};
 
 const mockStores = [
   {
@@ -223,11 +163,7 @@ beforeEach(() => {
         disconnect: vi.fn(),
       }));
   }
-  vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(mockProducts);
-  vi.spyOn(tauriTransactionService, 'getLocalTransactions').mockResolvedValue(
-    mockTransactions as InventoryTransaction[],
-  );
-  vi.spyOn(tauriTransactionService, 'getStockBalancesForStore').mockResolvedValue(new Map());
+  vi.spyOn(tauriDashboardService, 'getDashboardAnalytics').mockResolvedValue(mockAnalytics);
   vi.spyOn(tauriSyncService, 'getLastSyncTimestamp').mockResolvedValue('2026-09-12T08:00:00Z');
   vi.spyOn(tauriSyncService, 'triggerSync').mockResolvedValue({
     lastSyncAt: '2026-09-12T08:00:00Z',
@@ -239,7 +175,7 @@ beforeEach(() => {
 });
 
 describe('DashboardView — Analytics Dashboard', () => {
-  it('renders analytics dashboard with KPIs from local data', async () => {
+  it('renders analytics dashboard with KPIs from the aggregated payload', async () => {
     renderWithProviders(
       <DashboardView
         stores={mockStores}
@@ -261,7 +197,7 @@ describe('DashboardView — Analytics Dashboard', () => {
     });
   });
 
-  it('displays correct KPI values from local data', async () => {
+  it('displays correct KPI values from the analytics payload', async () => {
     renderWithProviders(
       <DashboardView
         stores={mockStores}
@@ -273,9 +209,10 @@ describe('DashboardView — Analytics Dashboard', () => {
     );
 
     await waitFor(() => {
-      const el = screen.getByTestId('kpi-total-products');
-      // Date range defaults to last 7 days; only products created in range count
-      expect(el.textContent).toMatch(/2|Total Products/);
+      expect(screen.getByTestId('kpi-total-products')).toHaveTextContent('3');
+      expect(screen.getByTestId('kpi-total-stock')).toHaveTextContent('153');
+      expect(screen.getByTestId('kpi-cross-store')).toHaveTextContent('2');
+      expect(screen.getByTestId('kpi-receipt-sales')).toHaveTextContent('4');
     });
   });
 
@@ -392,6 +329,38 @@ describe('DashboardView — Analytics Dashboard', () => {
     });
   });
 
+  it('refetches analytics when the date range changes', async () => {
+    const fetchSpy = vi.spyOn(tauriDashboardService, 'getDashboardAnalytics');
+    renderWithProviders(
+      <DashboardView
+        stores={mockStores}
+        loading={false}
+        error={null}
+        onRetry={() => {}}
+        userRole="ADMIN"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalled();
+    });
+    const firstCall = fetchSpy.mock.calls[0];
+
+    await act(async () => {
+      fireEvent.change(screen.getByTestId('date-range-start'), {
+        target: { value: '2026-09-01' },
+      });
+    });
+
+    await waitFor(() => {
+      expect(fetchSpy.mock.calls.length).toBeGreaterThan(1);
+    });
+    const lastCall = fetchSpy.mock.calls[fetchSpy.mock.calls.length - 1];
+    expect(lastCall![1]).toBe('2026-09-01');
+    // End date carried over from the default range.
+    expect(lastCall![2]).toBe(firstCall![2]);
+  });
+
   it('has a Sync Now button wired to triggerSync', async () => {
     renderWithProviders(
       <DashboardView
@@ -414,9 +383,8 @@ describe('DashboardView — Analytics Dashboard', () => {
     expect(tauriSyncService.triggerSync).toHaveBeenCalled();
   });
 
-  it('renders dashboard with local data even when sync server unreachable', async () => {
-    vi.spyOn(tauriProductService, 'getProducts').mockRejectedValue(new Error('DB locked'));
-    vi.spyOn(tauriTransactionService, 'getLocalTransactions').mockRejectedValue(
+  it('renders dashboard even when analytics fetch fails', async () => {
+    vi.spyOn(tauriDashboardService, 'getDashboardAnalytics').mockRejectedValue(
       new Error('DB locked'),
     );
 
@@ -433,15 +401,10 @@ describe('DashboardView — Analytics Dashboard', () => {
     await waitFor(() => {
       expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
     });
-
-    expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
   });
 
-  it('shows error state when local data fails', async () => {
-    vi.spyOn(tauriProductService, 'getProducts').mockRejectedValue(
-      new Error('Failed to read local database'),
-    );
-    vi.spyOn(tauriTransactionService, 'getLocalTransactions').mockRejectedValue(
+  it('shows error state when analytics fetch fails', async () => {
+    vi.spyOn(tauriDashboardService, 'getDashboardAnalytics').mockRejectedValue(
       new Error('Failed to read local database'),
     );
 
@@ -481,41 +444,35 @@ describe('DashboardView — Analytics Dashboard', () => {
       expect(activityList).toBeInTheDocument();
     });
 
-    // Verify that product names are displayed, not raw IDs
     expect(screen.getAllByText('Widget Alpha')[0]).toBeInTheDocument();
     expect(screen.getAllByText('Gadget Beta')[0]).toBeInTheDocument();
+    expect(screen.getAllByText('Cable Gamma')[0]).toBeInTheDocument();
     expect(screen.queryByText('PROD-1')).not.toBeInTheDocument();
     expect(screen.queryByText('PROD-2')).not.toBeInTheDocument();
   });
 
   it('handles deleted products with fallback in Recent Activity', async () => {
-    // Create a transaction for a product that doesn't exist in the products list
-    const transactionWithDeletedProduct: InventoryTransaction = {
-      transaction_id: 'TXN-DELETED',
-      store_id: 'STORE-1',
-      product_id: 'PROD-DELETED',
-      movement_type: 'SALE',
-      stock_bucket: 'AVAILABLE',
-      quantity_delta: -1,
-      occurred_at: new Date(Date.now() - 3600_000).toISOString(),
-      recorded_at: new Date(Date.now() - 3600_000).toISOString(),
-      user_id: 'U1',
-      device_id: 'D1',
-      reference_number: null,
-      reason_code: null,
-      transfer_id: null,
-      purchase_order_id: null,
-      batch_id: null,
-      client_sequence: null,
-      sync_status: 'SYNCED',
-      server_accepted_at: null,
-      original_transaction_id: null,
+    const withDeletedProduct: DashboardAnalytics = {
+      ...mockAnalytics,
+      recent_activity: [
+        {
+          id: 'TXN-DELETED',
+          type: 'stock_sold',
+          product_id: 'PROD-DELETED',
+          product_name: '',
+          sku: '',
+          store_id: 'STORE-1',
+          store_name: 'Store Alpha',
+          quantity: -1,
+          occurred_at: new Date(now - 3600_000).toISOString(),
+          reference_number: null,
+        },
+      ],
     };
 
-    vi.spyOn(tauriTransactionService, 'getLocalTransactions').mockResolvedValueOnce([
-      ...mockTransactions,
-      transactionWithDeletedProduct,
-    ]);
+    vi.spyOn(tauriDashboardService, 'getDashboardAnalytics').mockResolvedValueOnce(
+      withDeletedProduct,
+    );
 
     renderWithProviders(
       <DashboardView
@@ -532,7 +489,6 @@ describe('DashboardView — Analytics Dashboard', () => {
       expect(activityList).toBeInTheDocument();
     });
 
-    // Verify that the deleted product shows a fallback message
     expect(screen.getByText(/Unknown Product.*PROD-DELETED/)).toBeInTheDocument();
   });
 });
@@ -556,53 +512,41 @@ describe('DashboardView — active-store scoping', () => {
     );
   }
 
-  it('fetches balances for the active store only', async () => {
-    const balancesSpy = vi.spyOn(tauriTransactionService, 'getStockBalancesForStore');
+  it('requests analytics scoped to the active store only', async () => {
+    const fetchSpy = vi.spyOn(tauriDashboardService, 'getDashboardAnalytics');
     renderScoped('STORE-1');
 
     await waitFor(() => {
       expect(screen.getByTestId('dashboard-view')).toBeInTheDocument();
     });
     await waitFor(() => {
-      expect(balancesSpy).toHaveBeenCalledWith('STORE-1');
+      expect(fetchSpy).toHaveBeenCalled();
     });
-    expect(balancesSpy).not.toHaveBeenCalledWith('STORE-2');
+    // Every analytics request is scoped to the active store, never STORE-2.
+    expect(fetchSpy.mock.calls.length).toBeGreaterThan(0);
+    expect(fetchSpy.mock.calls.every((call) => call[0] === 'STORE-1')).toBe(true);
   });
 
-  it('scopes tiles and subtitle to the active store', async () => {
-    // STORE-1 holds PROD-1 (50 units) and PROD-2 (3 units).
-    vi.spyOn(tauriTransactionService, 'getStockBalancesForStore').mockImplementation(
-      async (storeId: string) =>
-        storeId === 'STORE-1'
-          ? new Map([
-              ['PROD-1', 50],
-              ['PROD-2', 3],
-            ])
-          : new Map(),
-    );
-    // Fresh creation dates so the in-range product count is deterministic.
-    vi.spyOn(tauriProductService, 'getProducts').mockResolvedValue(
-      mockProducts.map((p) => ({ ...p, created_at: new Date().toISOString() })),
-    );
+  it('scopes tile and subtitle to the active store', async () => {
     renderScoped('STORE-1');
 
     // Scoped subtitle names the store.
     await waitFor(() => {
       expect(screen.getByText('Live overview of Store Alpha')).toBeInTheDocument();
     });
-    // Scoped totals: 2 products, 53 units (waits for the scoped balance load).
-    await waitFor(() => {
-      expect(screen.getByTestId('kpi-total-products')).toHaveTextContent('2');
-    });
-    expect(screen.getByTestId('kpi-total-stock')).toHaveTextContent('53');
     // Cross-store tile is replaced by Low Stock in scoped view.
-    expect(screen.getByTestId('kpi-low-stock')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('kpi-low-stock')).toBeInTheDocument();
+    });
     expect(screen.queryByTestId('kpi-cross-store')).not.toBeInTheDocument();
-    // Recent activity excludes STORE-2's receipt (Cable Gamma).
+    // Fixed payload values still render from the aggregated result.
+    expect(screen.getByTestId('kpi-total-products')).toHaveTextContent('3');
+    expect(screen.getByTestId('kpi-total-stock')).toHaveTextContent('153');
+    // Recent activity reflects the store-scoped payload (no STORE-2 rows needed).
     await waitFor(() => {
       expect(screen.getByTestId('recent-activity-list')).toBeInTheDocument();
     });
-    expect(screen.queryByText('Cable Gamma')).not.toBeInTheDocument();
+    expect(screen.queryByText('PROD-DELETED')).not.toBeInTheDocument();
   });
 
   it('aggregates globally without an active store', async () => {
@@ -612,5 +556,6 @@ describe('DashboardView — active-store scoping', () => {
       expect(screen.getByText('Live overview of your stock, sales and stores')).toBeInTheDocument();
     });
     expect(screen.getByTestId('kpi-cross-store')).toBeInTheDocument();
+    expect(screen.queryByTestId('kpi-low-stock')).not.toBeInTheDocument();
   });
 });
