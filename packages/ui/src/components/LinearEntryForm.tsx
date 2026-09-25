@@ -320,6 +320,7 @@ export function LinearEntryForm<TRow extends object = Record<string, unknown>>({
             onSelect={handleSearchSelect}
             highlightedIndex={highlightedIndex}
             onHighlightedIndexChange={setHighlightedIndex}
+            onHistorySelect={(term) => setSearchQuery(term)}
             dataTestid="live-search-panel"
           />
         </div>

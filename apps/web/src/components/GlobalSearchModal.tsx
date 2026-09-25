@@ -16,11 +16,14 @@
  *
  * Responsive: the breakdown table scrolls horizontally inside the modal on
  * narrow viewports instead of squeezing columns.
+ *
+ * Features: caching (60s TTL), request deduplication, skeleton loading,
+ * useTransition for search query updates, and request timeout.
  */
-import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, SearchInput, DataTable, EmptyState, type ColumnDef } from '@invenTory/ui';
-import { searchProducts } from '../services/dashboardService';
-import type { ProductSearchResult } from '../types/dashboard';
+import React, { useEffect, useMemo, useState, useTransition } from 'react';
+import { Modal, SearchInput, DataTable, EmptyState, Skeleton, type ColumnDef } from '@invenTory/ui';
+import { searchProductsServer } from '../services/dashboardService';
+import type { ProductSearchResponse, ProductSearchResult } from '../types/dashboard';
 
 export interface GlobalSearchStore {
   id: string;
@@ -42,6 +45,14 @@ interface SearchResultRow {
   total: number;
 }
 
+const CACHE_TTL_MS = 60_000;
+const cacheMap = new Map<string, { data: ProductSearchResult[]; expiresAt: number }>();
+const inFlightMap = new Map<string, Promise<ProductSearchResponse>>();
+
+function getCacheKey(query: string): string {
+  return `global:${query}`;
+}
+
 export function GlobalSearchModal({
   isOpen,
   onClose,
@@ -52,39 +63,76 @@ export function GlobalSearchModal({
   const [products, setProducts] = useState<ProductSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isPending, startTransition] = useTransition();
 
-  // Sync the header query every time the modal opens.
+  const isLoading = loading || isPending;
+
   useEffect(() => {
-    if (isOpen) setQuery(initialQuery);
+    if (!isOpen) return;
+    setQuery(initialQuery);
   }, [isOpen, initialQuery]);
 
-  // Load the full catalogue when the modal opens (single all-stores request
-  // carrying the per-store breakdown — the web equivalent of desktop's
-  // getProducts() + per-cell getStockBalance() loop).
   useEffect(() => {
     if (!isOpen) return;
     let cancelled = false;
+
+    const cacheKey = getCacheKey(query);
+    const now = Date.now();
+    const cached = cacheMap.get(cacheKey);
+
+    if (cached && cached.expiresAt > now && products.length > 0) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
-    searchProducts('', 200, 'all-stores')
+
+    const existingInFlight = inFlightMap.get(cacheKey);
+    if (existingInFlight) {
+      existingInFlight
+        .then((data) => {
+          if (!cancelled) {
+            setProducts(data.results);
+            setLoading(false);
+          }
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setProducts([]);
+            setError(err instanceof Error ? err.message : String(err));
+            setLoading(false);
+          }
+        });
+      return;
+    }
+
+    const promise = searchProductsServer(query, 1, 200);
+    inFlightMap.set(cacheKey, promise);
+
+    promise
       .then((data) => {
-        if (!cancelled) setProducts(data.results ?? []);
+        cacheMap.set(cacheKey, { data: data.results, expiresAt: now + CACHE_TTL_MS });
+        if (!cancelled) {
+          setProducts(data.results ?? []);
+          setLoading(false);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) {
           setProducts([]);
           setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
         }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        inFlightMap.delete(cacheKey);
       });
+
     return (): void => {
       cancelled = true;
     };
-  }, [isOpen]);
+  }, [isOpen, query]);
 
-  // Name/SKU/brand/model/category matching — across ALL stores (desktop parity).
   const results = useMemo<SearchResultRow[]>(() => {
     const term = query.toLowerCase().trim();
     const filtered = products.filter(
@@ -156,8 +204,6 @@ export function GlobalSearchModal({
       ),
       accessor: (r: SearchResultRow) => r.product.name,
     },
-    // One dedicated column per store so the full cross-store breakdown is
-    // visible at a glance (desktop parity).
     ...storeColumns,
     {
       key: 'total',
@@ -181,6 +227,8 @@ export function GlobalSearchModal({
     },
   ];
 
+  const skeletonRows = Array.from({ length: 5 }, (_, i) => i);
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Global Product Search (All Stores)" size="xl">
       <div data-testid="global-search-modal">
@@ -189,18 +237,23 @@ export function GlobalSearchModal({
             autoFocus
             placeholder="Search all stores by name, SKU, brand, model or category..."
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              startTransition(() => {
+                setQuery(e.target.value);
+              });
+            }}
             data-testid="global-search-input"
           />
         </div>
 
-        {loading ? (
-          <EmptyState
-            heading="Searching…"
-            body="Loading catalogue across all stores."
-            data-testid="global-search-loading"
-          />
-        ) : error ? (
+        {isLoading && (
+          <div className="web-skeleton-list">
+            {skeletonRows.map((i) => (
+              <Skeleton key={i} height={48} />
+            ))}
+          </div>
+        )}
+        {error ? (
           <EmptyState
             variant="error"
             heading="Search unavailable"
@@ -217,8 +270,6 @@ export function GlobalSearchModal({
             }
           />
         ) : (
-          // Responsive: horizontal scroll on narrow viewports keeps every
-          // per-store column readable instead of crushing the table.
           <div
             style={{ overflowX: 'auto', maxWidth: '100%' }}
             data-testid="global-search-results-scroll"

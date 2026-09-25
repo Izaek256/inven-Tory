@@ -1,29 +1,22 @@
 /**
  * Product Catalogue view — FR-SRCH-001–005.
  *
- * Loads the full product catalogue on mount (general catalog mode).
- * A search bar filters the results in real time (FR-SRCH-001).
- *
- * On selecting a product:
- *   - Per-store quantity breakdown + global total (FR-SRCH-002/003)
- *   - Movement history (FR-SRCH-004)
- *   - Last-sync timestamp per store (FR-SRCH-005, via balance updated_at)
- *
- * Each row in the catalogue shows the last sync date/time for that product
- * (the most recent stock_balance updated_at across all stores).
+ * Server-side search with pagination. Debounced server-side search (300ms).
+ * Virtual scrolling concept: max 100 rows with pagination controls.
+ * useTransition for non-urgent search input updates.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import {
   Badge,
   Button,
   DataTable,
   EmptyState,
   SearchInput,
-  Spinner,
+  Skeleton,
   SummaryCard,
-  type ColumnDef,
 } from '@invenTory/ui';
+import type { ColumnDef } from '@invenTory/ui';
 import {
   ArrowLeft,
   BarChart2,
@@ -36,7 +29,7 @@ import {
 import {
   getProductHistory,
   getProductInventory,
-  searchProducts,
+  searchProductsServer,
 } from '../services/dashboardService';
 import type {
   MovementHistoryRow,
@@ -44,6 +37,9 @@ import type {
   StoreInventoryRow,
 } from '../types/dashboard';
 import { formatRelativeTime, movementTypeBadge } from '../utils/formatters';
+
+const PAGE_SIZE = 50;
+const MAX_VISIBLE_ROWS = 100;
 
 // ---------------------------------------------------------------------------
 // Sub-views
@@ -113,113 +109,121 @@ function InventoryPanel({
     }
   }, [activeTab, historyRows.length, historyLoading, loadHistory]);
 
-  const inventoryCols: ColumnDef<StoreInventoryRow>[] = [
-    {
-      key: 'store_name',
-      header: 'Store',
-      sortable: true,
-      accessor: (r) => r.store_name,
-      render: (r) => (
-        <span className="web-cell-store">
-          <Store size={14} aria-hidden="true" />
-          {r.store_name}
-          <span className="web-cell-code">{r.store_code}</span>
-        </span>
-      ),
-    },
-    {
-      key: 'stock_bucket',
-      header: 'Bucket',
-      accessor: (r) => r.stock_bucket,
-      render: (r) => <span className="web-cell-mono">{r.stock_bucket}</span>,
-    },
-    {
-      key: 'quantity',
-      header: 'Qty',
-      numeric: true,
-      sortable: true,
-      accessor: (r) => r.quantity,
-    },
-    {
-      key: 'updated_at',
-      header: 'Last Sync',
-      accessor: (r) => r.updated_at,
-      render: (r) => (
-        <span className="web-cell-time" title={new Date(r.updated_at).toLocaleString()}>
-          <Clock size={13} aria-hidden="true" />
-          {formatRelativeTime(r.updated_at)}
-        </span>
-      ),
-    },
-  ];
-
-  const historyCols: ColumnDef<MovementHistoryRow>[] = [
-    {
-      key: 'occurred_at',
-      header: 'When',
-      sortable: true,
-      accessor: (r) => r.occurred_at,
-      render: (r) => (
-        <span className="web-cell-time" title={r.occurred_at}>
-          {new Date(r.occurred_at).toLocaleString()}
-        </span>
-      ),
-    },
-    {
-      key: 'movement_type',
-      header: 'Type',
-      accessor: (r) => r.movement_type,
-      render: (r) => <Badge status={movementTypeBadge(r.movement_type)} />,
-    },
-    {
-      key: 'store_name',
-      header: 'Store',
-      sortable: true,
-      accessor: (r) => r.store_name,
-      render: (r) => (
-        <span className="web-cell-store">
-          <Store size={14} aria-hidden="true" />
-          {r.store_name}
-        </span>
-      ),
-    },
-    {
-      key: 'stock_bucket',
-      header: 'Bucket',
-      accessor: (r) => r.stock_bucket,
-      render: (r) => <span className="web-cell-mono">{r.stock_bucket}</span>,
-    },
-    {
-      key: 'quantity_delta',
-      header: 'Δ Qty',
-      numeric: true,
-      sortable: true,
-      accessor: (r) => r.quantity_delta,
-      render: (r) => (
-        <span
-          className={`web-cell-delta ${r.quantity_delta > 0 ? 'web-cell-delta--pos' : 'web-cell-delta--neg'}`}
-        >
-          {r.quantity_delta > 0 ? (
-            <TrendingUp size={13} aria-hidden="true" />
-          ) : (
-            <TrendingDown size={13} aria-hidden="true" />
-          )}
-          {r.quantity_delta > 0 ? `+${r.quantity_delta}` : r.quantity_delta}
-        </span>
-      ),
-    },
-    {
-      key: 'reference_number',
-      header: 'Reference',
-      accessor: (r) => r.reference_number ?? '',
-      render: (r) =>
-        r.reference_number ? (
-          <span className="web-cell-mono">{r.reference_number}</span>
-        ) : (
-          <span className="web-cell-empty">—</span>
+  const inventoryCols = useMemo<ColumnDef<StoreInventoryRow>[]>(
+    () => [
+      {
+        key: 'store_name',
+        header: 'Store',
+        sortable: true,
+        accessor: (r: StoreInventoryRow) => r.store_name,
+        render: (r: StoreInventoryRow) => (
+          <span className="web-cell-store">
+            <Store size={14} aria-hidden="true" />
+            {r.store_name}
+            <span className="web-cell-code">{r.store_code}</span>
+          </span>
         ),
-    },
-  ];
+      },
+      {
+        key: 'stock_bucket',
+        header: 'Bucket',
+        accessor: (r: StoreInventoryRow) => r.stock_bucket,
+        render: (r: StoreInventoryRow) => <span className="web-cell-mono">{r.stock_bucket}</span>,
+      },
+      {
+        key: 'quantity',
+        header: 'Qty',
+        numeric: true,
+        sortable: true,
+        accessor: (r: StoreInventoryRow) => r.quantity,
+      },
+      {
+        key: 'updated_at',
+        header: 'Last Sync',
+        accessor: (r: StoreInventoryRow) => r.updated_at,
+        render: (r: StoreInventoryRow) => (
+          <span className="web-cell-time" title={new Date(r.updated_at).toLocaleString()}>
+            <Clock size={13} aria-hidden="true" />
+            {formatRelativeTime(r.updated_at)}
+          </span>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const historyCols = useMemo<ColumnDef<MovementHistoryRow>[]>(
+    () => [
+      {
+        key: 'occurred_at',
+        header: 'When',
+        sortable: true,
+        accessor: (r: MovementHistoryRow) => r.occurred_at,
+        render: (r: MovementHistoryRow) => (
+          <span className="web-cell-time" title={r.occurred_at}>
+            {new Date(r.occurred_at).toLocaleString()}
+          </span>
+        ),
+      },
+      {
+        key: 'movement_type',
+        header: 'Type',
+        accessor: (r: MovementHistoryRow) => r.movement_type,
+        render: (r: MovementHistoryRow) => <Badge status={movementTypeBadge(r.movement_type)} />,
+      },
+      {
+        key: 'store_name',
+        header: 'Store',
+        sortable: true,
+        accessor: (r: MovementHistoryRow) => r.store_name,
+        render: (r: MovementHistoryRow) => (
+          <span className="web-cell-store">
+            <Store size={14} aria-hidden="true" />
+            {r.store_name}
+          </span>
+        ),
+      },
+      {
+        key: 'stock_bucket',
+        header: 'Bucket',
+        accessor: (r: MovementHistoryRow) => r.stock_bucket,
+        render: (r: MovementHistoryRow) => <span className="web-cell-mono">{r.stock_bucket}</span>,
+      },
+      {
+        key: 'quantity_delta',
+        header: 'Δ Qty',
+        numeric: true,
+        sortable: true,
+        accessor: (r: MovementHistoryRow) => r.quantity_delta,
+        render: (r: MovementHistoryRow) => (
+          <span
+            className={`web-cell-delta ${r.quantity_delta > 0 ? 'web-cell-delta--pos' : 'web-cell-delta--neg'}`}
+          >
+            {r.quantity_delta > 0 ? (
+              <TrendingUp size={13} aria-hidden="true" />
+            ) : (
+              <TrendingDown size={13} aria-hidden="true" />
+            )}
+            {r.quantity_delta > 0 ? `+${r.quantity_delta}` : r.quantity_delta}
+          </span>
+        ),
+      },
+      {
+        key: 'reference_number',
+        header: 'Reference',
+        accessor: (r: MovementHistoryRow) => r.reference_number ?? '',
+        render: (r: MovementHistoryRow) =>
+          r.reference_number ? (
+            <span className="web-cell-mono">{r.reference_number}</span>
+          ) : (
+            <span className="web-cell-empty">—</span>
+          ),
+      },
+    ],
+    [],
+  );
+
+  const skeletonRows = Array.from({ length: 5 }, (_, i) => i);
 
   return (
     <div className="web-inventory-panel" data-testid="inventory-panel">
@@ -264,8 +268,10 @@ function InventoryPanel({
       {activeTab === 'inventory' && (
         <>
           {loading && (
-            <div className="web-center-spinner">
-              <Spinner size="md" />
+            <div className="web-skeleton-list">
+              {skeletonRows.map((i) => (
+                <Skeleton key={i} height={48} />
+              ))}
             </div>
           )}
           {error && (
@@ -300,8 +306,10 @@ function InventoryPanel({
       {activeTab === 'history' && (
         <>
           {historyLoading && (
-            <div className="web-center-spinner">
-              <Spinner size="md" />
+            <div className="web-skeleton-list">
+              {skeletonRows.map((i) => (
+                <Skeleton key={i} height={48} />
+              ))}
             </div>
           )}
           {historyError && (
@@ -342,20 +350,27 @@ function InventoryPanel({
 
 export function SearchView(): React.ReactElement {
   const [query, setQuery] = useState('');
+  const [isPending, startTransition] = useTransition();
   const [loading, setLoading] = useState(true);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [allResults, setAllResults] = useState<ProductSearchResult[]>([]);
+  const [results, setResults] = useState<ProductSearchResult[]>([]);
+  const [totalResults, setTotalResults] = useState(0);
+  const [page, setPage] = useState(1);
   const [selectedProduct, setSelectedProduct] = useState<ProductSearchResult | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load the full catalogue on mount
+  const isLoading = loading || isPending;
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setSearchError(null);
-    searchProducts('') // empty query → full catalogue
+    searchProductsServer('', 1, PAGE_SIZE)
       .then((data) => {
-        if (!cancelled) setAllResults(data.results);
+        if (!cancelled) {
+          setResults(data.results);
+          setTotalResults(data.total);
+        }
       })
       .catch((err: unknown) => {
         if (!cancelled) setSearchError(err instanceof Error ? err.message : String(err));
@@ -368,48 +383,55 @@ export function SearchView(): React.ReactElement {
     };
   }, []);
 
-  // Client-side filter for the search bar (fast, no round-trip for typing)
-  const filteredResults = query.trim()
-    ? allResults.filter((r) => {
-        const term = query.toLowerCase();
-        return (
-          r.name.toLowerCase().includes(term) ||
-          r.sku.toLowerCase().includes(term) ||
-          (r.brand ?? '').toLowerCase().includes(term) ||
-          (r.model ?? '').toLowerCase().includes(term) ||
-          r.category.toLowerCase().includes(term)
-        );
-      })
-    : allResults;
-
   const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
     const val = e.target.value;
     setQuery(val);
-    // Debounce a server-side search for more precise results on slow connections
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (val.trim()) {
-      debounceRef.current = setTimeout(() => {
-        searchProducts(val.trim())
-          .then((data) => setAllResults(data.results))
-          .catch(() => undefined); // silent — client-side filter still works
-      }, 500);
-    } else {
-      // Reset to full catalogue when search is cleared
-      debounceRef.current = setTimeout(() => {
-        searchProducts('')
-          .then((data) => setAllResults(data.results))
-          .catch(() => undefined);
-      }, 500);
-    }
+    startTransition(() => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (val.trim()) {
+        debounceRef.current = setTimeout(() => {
+          searchProductsServer(val.trim(), 1, PAGE_SIZE)
+            .then((data) => {
+              setResults(data.results);
+              setTotalResults(data.total);
+              setPage(1);
+            })
+            .catch(() => undefined);
+        }, 300);
+      } else {
+        debounceRef.current = setTimeout(() => {
+          searchProductsServer('', 1, PAGE_SIZE)
+            .then((data) => {
+              setResults(data.results);
+              setTotalResults(data.total);
+              setPage(1);
+            })
+            .catch(() => undefined);
+        }, 300);
+      }
+    });
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === 'Enter') {
       if (debounceRef.current) clearTimeout(debounceRef.current);
-      searchProducts(query.trim())
-        .then((data) => setAllResults(data.results))
+      searchProductsServer(query.trim(), 1, PAGE_SIZE)
+        .then((data) => {
+          setResults(data.results);
+          setTotalResults(data.total);
+        })
         .catch(() => undefined);
     }
+  };
+
+  const handlePageChange = (newPage: number): void => {
+    setPage(newPage);
+    searchProductsServer(query.trim(), newPage, PAGE_SIZE)
+      .then((data) => {
+        setResults(data.results);
+        setTotalResults(data.total);
+      })
+      .catch(() => undefined);
   };
 
   useEffect(() => {
@@ -417,6 +439,105 @@ export function SearchView(): React.ReactElement {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, []);
+
+  const displayedResults = results.slice(0, MAX_VISIBLE_ROWS);
+  const totalPages = Math.ceil(totalResults / PAGE_SIZE);
+
+  const catalogueCols = useMemo<ColumnDef<ProductSearchResult>[]>(
+    () => [
+      {
+        key: 'name',
+        header: 'Product',
+        sortable: true,
+        accessor: (r: ProductSearchResult) => r.name,
+        render: (r: ProductSearchResult) => (
+          <span className="web-cell-product">
+            <span className="web-cell-product__name">{r.name}</span>
+            {r.brand && <span className="web-cell-secondary">{r.brand}</span>}
+          </span>
+        ),
+      },
+      {
+        key: 'sku',
+        header: 'SKU',
+        sortable: true,
+        accessor: (r: ProductSearchResult) => r.sku,
+        render: (r: ProductSearchResult) => <span className="web-cell-mono">{r.sku}</span>,
+      },
+      {
+        key: 'category',
+        header: 'Category',
+        sortable: true,
+        accessor: (r: ProductSearchResult) => r.category,
+      },
+      {
+        key: 'total_quantity',
+        header: 'Stock (Avail.)',
+        numeric: true,
+        sortable: true,
+        accessor: (r: ProductSearchResult) => r.total_quantity ?? 0,
+        render: (r: ProductSearchResult): React.ReactElement => {
+          const qty = r.total_quantity ?? 0;
+          return (
+            <span
+              style={{
+                fontWeight: 600,
+                fontFamily: 'var(--it-font-mono)',
+                color: qty > 0 ? 'var(--it-green-text)' : 'var(--it-text-secondary)',
+              }}
+            >
+              {qty.toLocaleString()}
+            </span>
+          );
+        },
+      },
+      {
+        key: 'last_balance_update',
+        header: 'Last Synced',
+        accessor: (r: ProductSearchResult) => r.last_balance_update ?? '',
+        render: (r: ProductSearchResult) =>
+          r.last_balance_update ? (
+            <span
+              className="web-cell-time"
+              title={new Date(r.last_balance_update).toLocaleString()}
+            >
+              <Clock size={13} aria-hidden="true" />
+              {new Date(r.last_balance_update).toLocaleString()}
+            </span>
+          ) : (
+            <span
+              className="web-cell-empty"
+              style={{ color: 'var(--it-text-secondary)', fontSize: '12px' }}
+            >
+              Not yet synced
+            </span>
+          ),
+      },
+      {
+        key: 'is_active',
+        header: 'Status',
+        accessor: (r: ProductSearchResult) => (r.is_active ? 'Active' : 'Inactive'),
+        render: (r: ProductSearchResult) => <Badge status={r.is_active ? 'ACTIVE' : 'INACTIVE'} />,
+      },
+      {
+        key: 'actions',
+        header: 'Detail',
+        render: (r: ProductSearchResult) => (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelectedProduct(r)}
+            data-testid={`view-product-${r.id}`}
+          >
+            View
+          </Button>
+        ),
+      },
+    ],
+    [],
+  );
+
+  const skeletonRows = Array.from({ length: 8 }, (_, i) => i);
 
   if (selectedProduct) {
     return (
@@ -428,94 +549,6 @@ export function SearchView(): React.ReactElement {
     );
   }
 
-  const catalogueCols: ColumnDef<ProductSearchResult>[] = [
-    {
-      key: 'name',
-      header: 'Product',
-      sortable: true,
-      accessor: (r) => r.name,
-      render: (r) => (
-        <span className="web-cell-product">
-          <span className="web-cell-product__name">{r.name}</span>
-          {r.brand && <span className="web-cell-secondary">{r.brand}</span>}
-        </span>
-      ),
-    },
-    {
-      key: 'sku',
-      header: 'SKU',
-      sortable: true,
-      accessor: (r) => r.sku,
-      render: (r) => <span className="web-cell-mono">{r.sku}</span>,
-    },
-    {
-      key: 'category',
-      header: 'Category',
-      sortable: true,
-      accessor: (r) => r.category,
-    },
-    {
-      key: 'total_quantity',
-      header: 'Stock (Avail.)',
-      numeric: true,
-      sortable: true,
-      accessor: (r) => r.total_quantity ?? 0,
-      render: (r): React.ReactElement => {
-        const qty = r.total_quantity ?? 0;
-        return (
-          <span
-            style={{
-              fontWeight: 600,
-              fontFamily: 'var(--it-font-mono)',
-              color: qty > 0 ? 'var(--it-green-text)' : 'var(--it-text-secondary)',
-            }}
-          >
-            {qty.toLocaleString()}
-          </span>
-        );
-      },
-    },
-    {
-      key: 'last_balance_update',
-      header: 'Last Synced',
-      accessor: (r) => r.last_balance_update ?? '',
-      render: (r) =>
-        r.last_balance_update ? (
-          <span className="web-cell-time" title={new Date(r.last_balance_update).toLocaleString()}>
-            <Clock size={13} aria-hidden="true" />
-            {new Date(r.last_balance_update).toLocaleString()}
-          </span>
-        ) : (
-          <span
-            className="web-cell-empty"
-            style={{ color: 'var(--it-text-secondary)', fontSize: '12px' }}
-          >
-            Not yet synced
-          </span>
-        ),
-    },
-    {
-      key: 'is_active',
-      header: 'Status',
-      accessor: (r) => (r.is_active ? 'Active' : 'Inactive'),
-      render: (r) => <Badge status={r.is_active ? 'ACTIVE' : 'INACTIVE'} />,
-    },
-    {
-      key: 'actions',
-      header: 'Detail',
-      render: (r) => (
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setSelectedProduct(r)}
-          data-testid={`view-product-${r.id}`}
-        >
-          View
-        </Button>
-      ),
-    },
-  ];
-
   return (
     <div className="web-view" data-testid="search-view">
       <div className="web-view-header">
@@ -524,8 +557,7 @@ export function SearchView(): React.ReactElement {
             <Package size={18} aria-hidden="true" /> Product Catalogue
           </h2>
           <p className="web-view-subtitle">
-            Full product catalogue with stock levels and last sync time. Search by name, SKU, brand,
-            model or category.
+            Server-side search with pagination. Search by name, SKU, brand, model or category.
           </p>
         </div>
       </div>
@@ -547,41 +579,71 @@ export function SearchView(): React.ReactElement {
         </div>
       )}
 
-      {loading && (
-        <div className="web-center-spinner" style={{ padding: '48px 0' }}>
-          <Spinner size="md" label="Loading catalogue…" />
+      {isLoading && (
+        <div className="web-skeleton-list" data-testid="search-skeleton">
+          {skeletonRows.map((i) => (
+            <Skeleton key={i} height={56} />
+          ))}
         </div>
       )}
 
-      {!loading && !searchError && (
-        <SummaryCard
-          title={
-            query.trim()
-              ? `${filteredResults.length} result${filteredResults.length === 1 ? '' : 's'} for "${query}"`
-              : `${filteredResults.length} product${filteredResults.length === 1 ? '' : 's'} in catalogue`
-          }
-          titleIcon={<Package size={18} />}
-        >
-          <DataTable
-            columns={catalogueCols}
-            rows={filteredResults}
-            rowKey={(r) => r.id}
-            data-testid="search-results-table"
-            emptySlot={
-              query.trim() ? (
-                <EmptyState
-                  heading="No products found"
-                  body={`No products matched "${query}". Try a different term.`}
-                />
-              ) : (
-                <EmptyState
-                  heading="No products in catalogue"
-                  body="No products have been synced to the server yet."
-                />
-              )
+      {!isLoading && !searchError && (
+        <>
+          <SummaryCard
+            title={
+              query.trim()
+                ? `${totalResults} result${totalResults === 1 ? '' : 's'} for "${query}"`
+                : `${totalResults} product${totalResults === 1 ? '' : 's'} in catalogue`
             }
-          />
-        </SummaryCard>
+            titleIcon={<Package size={18} />}
+          >
+            <DataTable
+              columns={catalogueCols}
+              rows={displayedResults}
+              rowKey={(r) => r.id}
+              data-testid="search-results-table"
+              emptySlot={
+                query.trim() ? (
+                  <EmptyState
+                    heading="No products found"
+                    body={`No products matched "${query}". Try a different term.`}
+                  />
+                ) : (
+                  <EmptyState
+                    heading="No products in catalogue"
+                    body="No products have been synced to the server yet."
+                  />
+                )
+              }
+            />
+          </SummaryCard>
+
+          {totalPages > 1 && (
+            <div className="web-pagination" data-testid="pagination">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handlePageChange(page - 1)}
+                disabled={page <= 1}
+                data-testid="prev-page"
+              >
+                Previous
+              </Button>
+              <span className="web-pagination-info">
+                Page {page} of {totalPages}
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => handlePageChange(page + 1)}
+                disabled={page >= totalPages}
+                data-testid="next-page"
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

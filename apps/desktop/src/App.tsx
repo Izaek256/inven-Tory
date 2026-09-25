@@ -129,6 +129,7 @@ export function App(): React.ReactElement {
 
   const { currentView, setCurrentView, activeStoreId, setActiveStoreId } = useAppState();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [liveMessage, setLiveMessage] = useState('');
 
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -434,6 +435,27 @@ export function App(): React.ReactElement {
     };
   }, []);
 
+  // Focus management on view transitions: move keyboard focus to the main
+  // content region (and announce it) whenever the active view changes, so
+  // keyboard/screen-reader users don't start from the top of the sidebar.
+  const previousViewRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    if (previousViewRef.current === null) {
+      previousViewRef.current = currentView;
+      return;
+    }
+    if (previousViewRef.current === currentView) return;
+    previousViewRef.current = currentView;
+
+    const el = document.getElementById('main-content');
+    if (el) el.focus({ preventScroll: true });
+    setLiveMessage(`${currentView} view loaded`);
+
+    const timer = window.setTimeout(() => setLiveMessage(''), 1500);
+    return (): void => window.clearTimeout(timer);
+  }, [currentView, authState]);
+
   const handleReauthSuccess = (): void => {
     const refresh = async (): Promise<void> => {
       const s = await getSession();
@@ -561,6 +583,9 @@ export function App(): React.ReactElement {
 
   return (
     <div className="app-container" data-testid="app-container">
+      <a href="#main-content" className="skip-link">
+        Skip to main content
+      </a>
       {showGenesis && genesis.state && !genesis.state.ready && (
         <GenesisWizard
           state={genesis.state}
@@ -633,7 +658,7 @@ export function App(): React.ReactElement {
                 restoreProgress={restoreProgress}
               />
             )}
-            <main className="app-content">
+            <main className="app-content" id="main-content" tabIndex={-1}>
               {authState === 'expired_offline' && session && (
                 <OfflineAuthBanner
                   username={session.username}
@@ -642,12 +667,18 @@ export function App(): React.ReactElement {
                 />
               )}
               <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={setActiveStoreId}>
-                {renderView()}
+                <div key={currentView} className="it-view-enter">
+                  {renderView()}
+                </div>
               </StoreProvider>
             </main>
           </div>
         </>
       )}
+      {/* ARIA live region for screen reader announcements */}
+      <div className="it-aria-live" aria-live="polite" aria-atomic="true" role="status">
+        {liveMessage}
+      </div>
     </div>
   );
 }

@@ -567,6 +567,8 @@ export const TransferStockView: React.FC = () => {
       {successMessage && (
         <div
           className="it-toast it-toast--success"
+          role="status"
+          aria-live="polite"
           style={{ marginBottom: '16px' }}
           data-testid="alert-success"
         >

@@ -1,0 +1,30 @@
+feat: implement inventory optimization plan (36 items)
+
+Web frontend optimizations:
+- apiClient.ts: request timeout (30s), in-flight request deduplication, response caching with TTL, in-memory auth token storage
+- useResistantQuery.ts: in-memory cache with TTL, request deduplication, useTransition support, cache invalidation
+- dashboardService.ts: request deduplication, response caching, server-side pagination for searchProducts
+- SearchView.tsx: server-side search with pagination, debounced search (300ms), skeleton loading, useTransition, virtual scrolling (max 100 rows), useMemo for columns
+- GlobalSearchModal.tsx: caching (60s TTL), request deduplication, skeleton loading, useTransition
+- StoreView.tsx: N+1 fix via getStoresInventoryBulk, optimistic updates, skeleton loading
+- ProductsCatalogView.tsx: server-side search with pagination, skeleton loading, useMemo for columns
+- App.tsx: code splitting with React.lazy + Suspense for heavy views
+
+Backend API optimizations:
+- products.py: full-text search endpoint using PostgreSQL tsvector (@@ to_tsquery), server-side pagination, GIN index
+- sync.py: coalescing window (0.5s), request timeout (30s), response compression (gzip), paginated pull, delta sync
+- db.py: asyncpg pool_size=20, min_size=5, max_overflow=20, statement_timeout=30s, SQLite cache_size=64MB temp_store=memory
+- product.py: ts_vector column, GIN index, composite indexes (category_active, store_quantity)
+- stock_balance.py: composite indexes (store_product_bucket, updated_at partial)
+- config.py: sync_coalescing_window_s=0.5, sync_request_timeout_s=30, compression_enabled=true, cache_ttl_s=30
+- stores.py: bulk inventory endpoint (/stores/inventory/bulk) for N+1 fix
+
+Database migrations:
+- 0007_add_fts_and_composite_indexes.py: GIN index on ts_vector, composite indexes for dashboard queries
+
+Desktop sync optimizations:
+- tauriSyncService.ts: coalescing window (500ms), max retries (3), delta sync default, payload compression (CompressionStream), request timeout (30s), optimistic updates, TTL for outbox events, setTimeout chaining for background sync, batch stock operations
+
+Infrastructure:
+- docker-compose.yml: DB_POOL_SIZE=20, DB_MAX_OVERFLOW=40, PGCONNECT_TIMEOUT, PGTASKS
+- Dockerfile.api: PGOPTIONS for statement_timeout, DATABASE_POOL_SIZE, DATABASE_MAX_OVERFLOW

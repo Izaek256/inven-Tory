@@ -5,35 +5,30 @@
  * Clicking [VIEW] drills into a store's full product inventory.
  *
  * Notification / PO widgets are explicitly v1.1.0 (Issues 21/22) — not included.
+ *
+ * Features: N+1 fix via batch endpoint (getStoresInventoryBulk),
+ * optimistic updates, and proper loading states.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useTransition } from 'react';
 import {
   Badge,
   Button,
   DataTable,
   EmptyState,
-  Spinner,
+  Skeleton,
   StatCard,
   SummaryCard,
   type ColumnDef,
 } from '@invenTory/ui';
 import { ArrowLeft, Clock, Package, RefreshCw, Store, Warehouse } from 'lucide-react';
-import { getStoreInventory } from '../services/dashboardService';
+import { getStoreInventory, getStoresInventoryBulk } from '../services/dashboardService';
 import type { FreshnessStatus, StoreInventoryResponse, StoreProductRow } from '../types/dashboard';
 import { formatRelativeTime } from '../utils/formatters';
-
-// ---------------------------------------------------------------------------
-// Freshness badge helper — maps FreshnessStatus to Badge status prop
-// ---------------------------------------------------------------------------
 
 function FreshnessBadge({ freshness }: { freshness: FreshnessStatus }): React.ReactElement {
   return <Badge status={freshness === 'VERY_STALE' ? 'VERY_STALE' : freshness} />;
 }
-
-// ---------------------------------------------------------------------------
-// Store drill-down panel
-// ---------------------------------------------------------------------------
 
 interface StorePanelProps {
   storeId: string;
@@ -114,6 +109,8 @@ function StorePanel({ storeId, onBack }: StorePanelProps): React.ReactElement {
     },
   ];
 
+  const skeletonRows = Array.from({ length: 5 }, (_, i) => i);
+
   return (
     <div className="web-store-panel" data-testid="store-panel">
       <div className="web-panel-header">
@@ -164,8 +161,10 @@ function StorePanel({ storeId, onBack }: StorePanelProps): React.ReactElement {
       </div>
 
       {loading && (
-        <div className="web-center-spinner">
-          <Spinner size="md" />
+        <div className="web-skeleton-list">
+          {skeletonRows.map((i) => (
+            <Skeleton key={i} height={48} />
+          ))}
         </div>
       )}
 
@@ -200,10 +199,6 @@ function StorePanel({ storeId, onBack }: StorePanelProps): React.ReactElement {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Store list row type (local, not from API — built from per-store fetches)
-// ---------------------------------------------------------------------------
-
 interface StoreListItem {
   storeId: string;
   storeCode: string;
@@ -214,75 +209,99 @@ interface StoreListItem {
   totalProducts: number;
 }
 
-// ---------------------------------------------------------------------------
-// Main store list view
-// ---------------------------------------------------------------------------
-
-interface StoreViewProps {
-  /** Store IDs available in the system — fetched from sync/pull or a stores list endpoint. */
-  storeIds: string[];
-  loading: boolean;
-  onRefresh: () => void;
-}
-
-export function StoreView({ storeIds, loading, onRefresh }: StoreViewProps): React.ReactElement {
+export function StoreView({
+  storeIds,
+  loading: externalLoading,
+  onRefresh,
+}: StoreViewProps): React.ReactElement {
   const [selectedStoreId, setSelectedStoreId] = useState<string | null>(null);
   const [storeData, setStoreData] = useState<Map<string, StoreListItem>>(new Map());
-  const [fetchingIds, setFetchingIds] = useState<Set<string>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
+  const [isPending] = useTransition();
 
-  // Fetch store inventory for each storeId to populate freshness + stats
+  const loadAllStores = useCallback(
+    async (storeIdsToLoad: string[], optimistic?: Map<string, StoreListItem>) => {
+      setBatchLoading(true);
+      try {
+        const data = await getStoresInventoryBulk(storeIdsToLoad);
+        const newMap = new Map<string, StoreListItem>();
+        for (const d of data) {
+          const item: StoreListItem = {
+            storeId: d.store_id,
+            storeCode: d.store_code,
+            storeName: d.store_name,
+            freshness: d.freshness,
+            lastSyncAt: d.last_sync_at,
+            totalQuantity: d.total_quantity,
+            totalProducts: d.total_products,
+          };
+          newMap.set(item.storeId, item);
+        }
+        if (optimistic) {
+          for (const [id, item] of optimistic) {
+            if (!newMap.has(id)) {
+              newMap.set(id, item);
+            }
+          }
+        }
+        setStoreData(newMap);
+      } catch {
+        // Fall back to per-store fetching on batch failure
+        for (const id of storeIdsToLoad) {
+          getStoreInventory(id)
+            .then((d) => {
+              const item: StoreListItem = {
+                storeId: d.store_id,
+                storeCode: d.store_code,
+                storeName: d.store_name,
+                freshness: d.freshness,
+                lastSyncAt: d.last_sync_at,
+                totalQuantity: d.total_quantity,
+                totalProducts: d.total_products,
+              };
+              setStoreData((prev) => new Map(prev).set(id, item));
+            })
+            .catch(() => {
+              const placeholder: StoreListItem = {
+                storeId: id,
+                storeCode: '???',
+                storeName: id,
+                freshness: 'VERY_STALE',
+                lastSyncAt: null,
+                totalQuantity: 0,
+                totalProducts: 0,
+              };
+              setStoreData((prev) => new Map(prev).set(id, placeholder));
+            });
+        }
+      } finally {
+        setBatchLoading(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     if (storeIds.length === 0) return;
+    const unknownIds = storeIds.filter((id) => !storeData.has(id));
+    if (unknownIds.length === 0) return;
+    loadAllStores(unknownIds);
+  }, [storeIds, loadAllStores]);
 
-    const newIds = storeIds.filter((id) => !storeData.has(id) && !fetchingIds.has(id));
-    if (newIds.length === 0) return;
-
-    setFetchingIds((prev) => new Set([...prev, ...newIds]));
-
-    newIds.forEach((id) => {
-      getStoreInventory(id)
-        .then((data) => {
-          const item: StoreListItem = {
-            storeId: data.store_id,
-            storeCode: data.store_code,
-            storeName: data.store_name,
-            freshness: data.freshness,
-            lastSyncAt: data.last_sync_at,
-            totalQuantity: data.total_quantity,
-            totalProducts: data.total_products,
-          };
-          setStoreData((prev) => new Map(prev).set(id, item));
-        })
-        .catch(() => {
-          // Store fetch failed — show placeholder
-          const placeholder: StoreListItem = {
-            storeId: id,
-            storeCode: '???',
-            storeName: id,
-            freshness: 'VERY_STALE',
-            lastSyncAt: null,
-            totalQuantity: 0,
-            totalProducts: 0,
-          };
-          setStoreData((prev) => new Map(prev).set(id, placeholder));
-        })
-        .finally(() => {
-          setFetchingIds((prev) => {
-            const next = new Set(prev);
-            next.delete(id);
-            return next;
-          });
-        });
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeIds]);
+  const handleRefresh = useCallback(() => {
+    if (storeIds.length === 0) return;
+    const optimistic = new Map(storeData);
+    setStoreData(new Map());
+    loadAllStores(storeIds, optimistic);
+    onRefresh();
+  }, [storeIds, storeData, loadAllStores, onRefresh]);
 
   if (selectedStoreId) {
     return <StorePanel storeId={selectedStoreId} onBack={() => setSelectedStoreId(null)} />;
   }
 
   const rows = storeIds.map((id) => storeData.get(id)).filter(Boolean) as StoreListItem[];
-  const isFetching = fetchingIds.size > 0;
+  const isFetching = batchLoading || externalLoading || isPending;
 
   const staleCount = rows.filter(
     (r) => r.freshness === 'STALE' || r.freshness === 'VERY_STALE',
@@ -358,6 +377,8 @@ export function StoreView({ storeIds, loading, onRefresh }: StoreViewProps): Rea
     },
   ];
 
+  const skeletonRows = Array.from({ length: 5 }, (_, i) => i);
+
   return (
     <div className="web-view" data-testid="store-view">
       <div className="web-view-header">
@@ -372,8 +393,8 @@ export function StoreView({ storeIds, loading, onRefresh }: StoreViewProps): Rea
         <Button
           variant="secondary"
           size="sm"
-          onClick={onRefresh}
-          disabled={loading || isFetching}
+          onClick={handleRefresh}
+          disabled={isFetching}
           data-testid="refresh-stores-btn"
         >
           <RefreshCw size={15} aria-hidden="true" />
@@ -382,12 +403,8 @@ export function StoreView({ storeIds, loading, onRefresh }: StoreViewProps): Rea
       </div>
 
       <div className="web-stat-row" style={{ marginBottom: '16px' }}>
-        <StatCard label="Stores" value={loading ? '…' : storeIds.length} />
-        <StatCard
-          label="Loaded"
-          value={loading || isFetching ? '…' : rows.length}
-          valueColour="green"
-        />
+        <StatCard label="Stores" value={externalLoading || batchLoading ? '…' : storeIds.length} />
+        <StatCard label="Loaded" value={isFetching ? '…' : rows.length} valueColour="green" />
         <StatCard
           label="Stale / Very Stale"
           value={isFetching ? '…' : staleCount}
@@ -395,15 +412,15 @@ export function StoreView({ storeIds, loading, onRefresh }: StoreViewProps): Rea
         />
       </div>
 
-      {(loading || isFetching) && rows.length === 0 && (
-        <EmptyState
-          variant="loading"
-          heading="Loading store data"
-          body="Fetching inventory snapshots from the API…"
-        />
+      {(isFetching || batchLoading) && rows.length === 0 && (
+        <div className="web-skeleton-list">
+          {skeletonRows.map((i) => (
+            <Skeleton key={i} height={64} />
+          ))}
+        </div>
       )}
 
-      {!loading && storeIds.length === 0 && (
+      {!externalLoading && storeIds.length === 0 && (
         <EmptyState
           icon={<Package size={24} />}
           heading="No stores found"
@@ -415,7 +432,7 @@ export function StoreView({ storeIds, loading, onRefresh }: StoreViewProps): Rea
         <SummaryCard
           title="Registered Stores"
           titleIcon={<Store size={18} />}
-          headerAction={isFetching ? <Spinner size="sm" label="Loading stores…" /> : undefined}
+          headerAction={isFetching ? <Skeleton height={20} width={80} /> : undefined}
         >
           <DataTable
             columns={storeCols}
@@ -427,4 +444,10 @@ export function StoreView({ storeIds, loading, onRefresh }: StoreViewProps): Rea
       )}
     </div>
   );
+}
+
+interface StoreViewProps {
+  storeIds: string[];
+  loading: boolean;
+  onRefresh: () => void;
 }

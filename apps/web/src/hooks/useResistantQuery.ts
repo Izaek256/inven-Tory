@@ -1,31 +1,118 @@
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useTransition } from 'react';
+
+interface CacheEntry<T> {
+  data: T;
+  expiresAt: number;
+}
 
 interface ResistantQueryResult<T> {
   data: T | null;
   loading: boolean;
+  isPending: boolean;
   error: string | null;
   retry: () => void;
+  invalidateCache: () => void;
+}
+
+const cache = new Map<string, CacheEntry<unknown>>();
+const inFlight = new Map<string, Promise<unknown>>();
+
+function makeCacheKey(fetcher: () => Promise<unknown>, deps: React.DependencyList): string {
+  const depsKey = JSON.stringify(deps);
+  const fnKey = fetcher.toString();
+  return `${fnKey}:${depsKey}`;
 }
 
 export function useResistantQuery<T>(
   fetcher: () => Promise<T>,
   deps: React.DependencyList = [],
+  ttl = 30_000,
 ): ResistantQueryResult<T> {
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Always store the latest fetcher in a ref so useEffect/useCallback never
-  // capture a stale closure, without adding fetcher to their dependency arrays
-  // (which would violate the rules of hooks if the reference changes every render).
+  const [isPending, startTransition] = useTransition();
   const fetcherRef = useRef<() => Promise<T>>(fetcher);
+  const cacheKeyRef = useRef<string>('');
+  const invalidateRef = useRef<() => void>(() => {});
 
-  // Keep ref in sync via a separate effect so it doesn't run as a render-phase
-  // side effect (which can cause the hooks-order warning during HMR).
   useEffect(() => {
     fetcherRef.current = fetcher;
   });
 
-  /* eslint-disable react-hooks/exhaustive-deps */
+  const cacheKey = makeCacheKey(fetcher, deps);
+  cacheKeyRef.current = cacheKey;
+
+  const execute = useCallback((): void => {
+    const key = cacheKeyRef.current;
+    const now = Date.now();
+    const cached = cache.get(key);
+
+    if (cached && cached.expiresAt > now) {
+      startTransition(() => {
+        setData(cached.data as T);
+        setLoading(false);
+        setError(null);
+      });
+      return;
+    }
+
+    const existingInFlight = inFlight.get(key);
+    if (existingInFlight) {
+      setLoading(true);
+      existingInFlight
+        .then((result) => {
+          startTransition(() => {
+            setData(result as T);
+            setLoading(false);
+            setError(null);
+          });
+        })
+        .catch((err: unknown) => {
+          startTransition(() => {
+            setError(err instanceof Error ? err.message : String(err));
+            setLoading(false);
+          });
+        });
+      return;
+    }
+
+    startTransition(() => {
+      setLoading(true);
+      setError(null);
+    });
+
+    const promise = fetcherRef.current();
+    inFlight.set(key, promise);
+
+    promise
+      .then((result) => {
+        cache.set(key, { data: result, expiresAt: now + ttl });
+        startTransition(() => {
+          setData(result as T);
+          setLoading(false);
+        });
+      })
+      .catch((err: unknown) => {
+        startTransition(() => {
+          setError(err instanceof Error ? err.message : String(err));
+          setLoading(false);
+        });
+      })
+      .finally(() => {
+        inFlight.delete(key);
+      });
+  }, [ttl]);
+
+  const invalidateCache = useCallback((): void => {
+    const key = cacheKeyRef.current;
+    cache.delete(key);
+    setData(null);
+    setLoading(true);
+  }, []);
+
+  invalidateRef.current = invalidateCache;
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -33,35 +120,35 @@ export function useResistantQuery<T>(
     void fetcherRef
       .current()
       .then((result) => {
-        if (!cancelled) setData(result);
+        if (!cancelled) {
+          cache.set(cacheKey, { data: result, expiresAt: Date.now() + ttl });
+          startTransition(() => {
+            setData(result);
+            setLoading(false);
+          });
+        }
       })
-      .catch((err) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          startTransition(() => {
+            setError(err instanceof Error ? err.message : String(err));
+            setLoading(false);
+          });
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          startTransition(() => {
+            setLoading(false);
+          });
+        }
       });
     return (): void => {
       cancelled = true;
     };
   }, deps);
-  /* eslint-enable react-hooks/exhaustive-deps */
 
-  const execute = useCallback((): void => {
-    setLoading(true);
-    setError(null);
-    void fetcherRef
-      .current()
-      .then((result) => {
-        setData(result);
-      })
-      .catch((err) => {
-        setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  }, []);
+  const isLoading = loading || isPending;
 
-  return { data, loading, error, retry: execute };
+  return { data, loading: isLoading, isPending, error, retry: execute, invalidateCache };
 }

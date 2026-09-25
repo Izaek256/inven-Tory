@@ -3,10 +3,13 @@
  * Stores as stacked real names (store name + qty), not short badges.
  * Columns: Product (name+SKU/model subtitle) | Category | Stores (stacked) | Total Stock | Actions (eye)
  * No SKU/Brand/Status columns, no pencil/overflow, only eye.
+ *
+ * Features: server-side search with pagination, useTransition for non-urgent updates,
+ * skeleton loading, and request deduplication.
  */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { Button, EmptyState, Spinner } from '@invenTory/ui';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import { Button, EmptyState, Skeleton } from '@invenTory/ui';
 import {
   Eye,
   Package,
@@ -17,12 +20,12 @@ import {
   Plus,
   Store as StoreIcon,
 } from 'lucide-react';
-import { searchProducts } from '../services/dashboardService';
+import { searchProductsServer } from '../services/dashboardService';
 import type { ProductSearchResult, StoreQuantity } from '../types/dashboard';
 import { InventoryPanel } from '../components/InventoryPanel';
 
-const CATALOG_LIMIT = 10000;
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 50;
+const MAX_VISIBLE_ROWS = 100;
 
 export interface StoreColumn {
   store_id: string;
@@ -89,12 +92,14 @@ function StoreBreakdown({ quantities }: { quantities: StoreQuantity[] }): React.
 
 export function ProductsCatalogView({ topSearch }: { topSearch?: string }): React.ReactElement {
   const [query, setQuery] = useState('');
+  const [isPending, startTransition] = useTransition();
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [brandFilter, setBrandFilter] = useState('all');
   const [storeFilter, setStoreFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [allResults, setAllResults] = useState<ProductSearchResult[]>([]);
+  const [results, setResults] = useState<ProductSearchResult[]>([]);
+  const [totalResults, setTotalResults] = useState(0);
   const [storeColumns, setStoreColumns] = useState<StoreColumn[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<ProductSearchResult | null>(null);
   const [page, setPage] = useState(1);
@@ -102,28 +107,27 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
   const [isNarrow, setIsNarrow] = useState(
     typeof window !== 'undefined' ? window.innerWidth < 768 : false,
   );
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
+  const isLoading = loading || isPending;
+
+  const fetchResults = useCallback(async (searchQuery: string, pageNum: number) => {
+    const cancelled = { current: false };
     setLoading(true);
     setError(null);
-    searchProducts('', CATALOG_LIMIT, 'all-stores')
-      .then((data) => {
-        if (!cancelled) {
-          setAllResults(data.results);
-          setStoreColumns(deriveStoreColumns(data.results));
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return (): void => {
-      cancelled = true;
-    };
+    const data = await searchProductsServer(searchQuery, pageNum, PAGE_SIZE);
+    if (!cancelled.current) {
+      setResults(data.results);
+      setTotalResults(data.total);
+      setStoreColumns(deriveStoreColumns(data.results));
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchResults('', 1);
+    return () => {};
+  }, [fetchResults]);
 
   useEffect(() => {
     const handleResize = (): void => setIsNarrow(window.innerWidth < 768);
@@ -135,54 +139,54 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
     if (topSearch !== undefined) setQuery(topSearch);
   }, [topSearch]);
 
+  const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>): void => {
+    const val = e.target.value;
+    setQuery(val);
+    startTransition(() => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      if (val.trim()) {
+        debounceRef.current = setTimeout(() => {
+          fetchResults(val.trim(), 1);
+          setPage(1);
+        }, 300);
+      } else {
+        debounceRef.current = setTimeout(() => {
+          fetchResults('', 1);
+          setPage(1);
+        }, 300);
+      }
+    });
+  };
+
+  const handlePageChange = (newPage: number): void => {
+    setPage(newPage);
+    fetchResults(query.trim(), newPage);
+  };
+
   const categories = useMemo(
-    () => Array.from(new Set(allResults.map((r) => r.category))).sort(),
-    [allResults],
+    () => Array.from(new Set(results.map((r) => r.category))).sort(),
+    [results],
   );
   const brands = useMemo(
-    () => Array.from(new Set(allResults.map((r) => r.brand).filter(Boolean) as string[])).sort(),
-    [allResults],
+    () => Array.from(new Set(results.map((r) => r.brand).filter(Boolean) as string[])).sort(),
+    [results],
   );
 
-  const filteredResults = useMemo(() => {
-    let res = allResults;
-    if (query.trim()) {
-      const term = query.toLowerCase();
-      res = res.filter(
-        (r) =>
-          r.name.toLowerCase().includes(term) ||
-          r.sku.toLowerCase().includes(term) ||
-          (r.brand ?? '').toLowerCase().includes(term) ||
-          (r.model ?? '').toLowerCase().includes(term) ||
-          r.category.toLowerCase().includes(term),
-      );
-    }
-    if (categoryFilter !== 'all') res = res.filter((r) => r.category === categoryFilter);
-    if (brandFilter !== 'all') res = res.filter((r) => r.brand === brandFilter);
-    if (storeFilter !== 'all') {
-      res = res.filter((r) =>
-        r.store_quantities?.some((sq) => sq.store_id === storeFilter && sq.quantity > 0),
-      );
-    }
-    return res;
-  }, [allResults, query, categoryFilter, brandFilter, storeFilter]);
-
-  const total = allResults.length;
-  const inStock = allResults.filter(
+  const total = totalResults;
+  const inStock = results.filter(
     (r) => getStatus(r.total_quantity ?? 0, r.low_stock_threshold) === 'in',
   ).length;
-  const lowStock = allResults.filter(
+  const lowStock = results.filter(
     (r) => getStatus(r.total_quantity ?? 0, r.low_stock_threshold) === 'low',
   ).length;
-  const outOfStock = allResults.filter(
+  const outOfStock = results.filter(
     (r) => getStatus(r.total_quantity ?? 0, r.low_stock_threshold) === 'out',
   ).length;
   const pct = (n: number): number => (total ? (n / total) * 100 : 0);
 
-  const totalPages = Math.max(1, Math.ceil(filteredResults.length / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalResults / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
   const startIdx = (safePage - 1) * PAGE_SIZE;
-  const pageRows = filteredResults.slice(startIdx, startIdx + PAGE_SIZE);
 
   if (selectedProduct) {
     return (
@@ -193,6 +197,9 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
       />
     );
   }
+
+  const displayedResults = results.slice(0, MAX_VISIBLE_ROWS);
+  const skeletonRows = Array.from({ length: 8 }, (_, i) => i);
 
   return (
     <div className="web-catalog-view" data-testid="products-catalog-view">
@@ -299,10 +306,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
           <Search size={16} aria-hidden="true" />
           <input
             value={query}
-            onChange={(e): void => {
-              setQuery(e.target.value);
-              setPage(1);
-            }}
+            onChange={handleQueryChange}
             placeholder="Search products..."
             data-testid="catalog-search"
             aria-label="Search products"
@@ -384,9 +388,11 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
         </div>
       </div>
 
-      {loading && (
-        <div className="web-center-spinner" data-testid="catalog-loading">
-          <Spinner size="md" />
+      {isLoading && (
+        <div className="web-skeleton-list" data-testid="catalog-skeleton">
+          {skeletonRows.map((i) => (
+            <Skeleton key={i} height={120} />
+          ))}
         </div>
       )}
       {error && (
@@ -398,7 +404,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
         />
       )}
 
-      {!loading && !error && (
+      {!isLoading && !error && (
         <>
           {isNarrow || viewMode === 'grid' ? (
             <div
@@ -410,7 +416,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                   : undefined
               }
             >
-              {pageRows.map((r) => (
+              {displayedResults.map((r) => (
                 <div
                   className="web-product-card"
                   key={r.id}
@@ -464,7 +470,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                   </div>
                 </div>
               ))}
-              {pageRows.length === 0 && (
+              {displayedResults.length === 0 && (
                 <EmptyState
                   heading="No products found"
                   body="No products match the search criteria."
@@ -496,7 +502,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                   </tr>
                 </thead>
                 <tbody>
-                  {pageRows.map((r) => (
+                  {displayedResults.map((r) => (
                     <tr key={r.id} data-testid={`catalog-row-${r.id}`}>
                       <td>
                         <span
@@ -544,7 +550,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                       </td>
                     </tr>
                   ))}
-                  {pageRows.length === 0 && (
+                  {displayedResults.length === 0 && (
                     <tr>
                       <td colSpan={5} style={{ padding: 24 }}>
                         <EmptyState
@@ -562,15 +568,14 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
 
           <div className="prod-pagination" data-testid="prod-pagination">
             <span className="prod-pagination__info" data-testid="pagination-info">
-              Showing {filteredResults.length === 0 ? 0 : startIdx + 1}–
-              {Math.min(startIdx + PAGE_SIZE, filteredResults.length)} of {filteredResults.length}{' '}
-              products
+              Showing {totalResults === 0 ? 0 : startIdx + 1}–
+              {Math.min(startIdx + PAGE_SIZE, totalResults)} of {totalResults} products
             </span>
             <div className="prod-pagination__pages">
               <button
                 className="prod-page-btn"
                 disabled={safePage <= 1}
-                onClick={(): void => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => handlePageChange(safePage - 1)}
                 data-testid="page-prev"
                 type="button"
               >
@@ -582,7 +587,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
                   <button
                     key={n}
                     className={`prod-page-btn ${n === safePage ? 'active' : ''}`}
-                    onClick={(): void => setPage(n)}
+                    onClick={() => handlePageChange(n)}
                     data-testid={`page-${n}`}
                     type="button"
                   >
@@ -595,7 +600,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
               {totalPages > 7 && (
                 <button
                   className={`prod-page-btn ${totalPages === safePage ? 'active' : ''}`}
-                  onClick={(): void => setPage(totalPages)}
+                  onClick={() => handlePageChange(totalPages)}
                   data-testid={`page-${totalPages}`}
                   type="button"
                 >
@@ -605,7 +610,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
               <button
                 className="prod-page-btn"
                 disabled={safePage >= totalPages}
-                onClick={(): void => setPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => handlePageChange(safePage + 1)}
                 data-testid="page-next"
                 type="button"
               >

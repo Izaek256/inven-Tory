@@ -1,5 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, SearchInput, DataTable, EmptyState, type ColumnDef } from '@invenTory/ui';
+import {
+  Modal,
+  SearchInput,
+  DataTable,
+  EmptyState,
+  SkeletonSearch,
+  loadSearchHistory,
+  pushSearchHistory,
+  clearSearchHistory,
+  type ColumnDef,
+} from '@invenTory/ui';
 import { Product } from '../types/product';
 import { Store } from '../types/store';
 import { getProducts } from '../services/tauriProductService';
@@ -36,6 +46,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   const [query, setQuery] = useState('');
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(false);
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => loadSearchHistory());
   const [qtyMap, setQtyMap] = useState<Map<string, Map<string, number>>>(new Map());
   const qtyCacheRef = useRef<Map<string, Map<string, number>>>(new Map());
 
@@ -209,8 +220,19 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       accessor: (r: SearchResultRow) => r.total,
     },
   ];
+  const handleClose = (): void => {
+    if (query.trim()) setSearchHistory(pushSearchHistory(query));
+    setQuery('');
+    onClose();
+  };
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Global Product Search (All Stores)" size="xl">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Global Product Search (All Stores)"
+      size="xl"
+    >
       <div data-testid="global-search-modal">
         <div style={{ marginBottom: '16px' }}>
           <SearchInput
@@ -221,6 +243,45 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
             data-testid="global-search-input"
           />
         </div>
+
+        {!query && searchHistory.length > 0 && (
+          <div
+            data-testid="global-search-history"
+            style={{
+              display: 'flex',
+              gap: '8px',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              marginBottom: '14px',
+            }}
+          >
+            <span style={{ fontSize: '11px', color: 'var(--it-text-secondary)' }}>Recent:</span>
+            {searchHistory.slice(0, 5).map((term) => (
+              <button
+                key={term}
+                type="button"
+                className="btn btn--ghost btn--sm"
+                data-testid="global-search-history-chip"
+                onClick={() => setQuery(term)}
+                style={{ fontSize: '12px' }}
+              >
+                {term}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              data-testid="global-search-history-clear"
+              onClick={() => {
+                clearSearchHistory();
+                setSearchHistory([]);
+              }}
+              style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}
+            >
+              Clear
+            </button>
+          </div>
+        )}
 
         {stores.length > 0 && (
           <div
@@ -249,7 +310,9 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
         )}
 
         {loading ? (
-          <EmptyState heading="Searching…" body="Loading catalogue across all stores." />
+          <div data-testid="global-search-loading" role="status" aria-label="Loading catalogue">
+            <SkeletonSearch />
+          </div>
         ) : results.length === 0 ? (
           <EmptyState
             heading={query ? 'No products found' : 'Start typing to search'}

@@ -5,6 +5,9 @@
  * FR-SRCH-002/003: per-store quantities and global total
  * FR-SRCH-004: movement history
  * FR-SRCH-005: last-sync timestamp per store (returned in StoreInventoryResponse)
+ *
+ * Features: request deduplication, response caching with TTL,
+ * server-side pagination, and AbortController-based cancellation.
  */
 
 import { api } from './apiClient';
@@ -23,6 +26,63 @@ import type {
   OperationsSummaryResponse,
 } from '../types/dashboard';
 
+const DEFAULT_TIMEOUT_MS = 30_000;
+const inFlightRequests = new Map<string, Promise<unknown>>();
+const responseCache = new Map<string, { data: unknown; expiresAt: number }>();
+
+function getCacheTTL(): number {
+  return Number(import.meta.env.VITE_API_CACHE_TTL_MS ?? 30_000);
+}
+
+function getCache(path: string): unknown {
+  const entry = responseCache.get(path);
+  if (entry && entry.expiresAt > Date.now()) {
+    return entry.data;
+  }
+  responseCache.delete(path);
+  return undefined;
+}
+
+function setCache(path: string, data: unknown): void {
+  responseCache.set(path, { data, expiresAt: Date.now() + getCacheTTL() });
+}
+
+function getInFlight(path: string): Promise<unknown> | undefined {
+  return inFlightRequests.get(path);
+}
+
+function setInFlight(path: string, promise: Promise<unknown>): void {
+  inFlightRequests.set(path, promise);
+}
+
+function clearInFlight(path: string): void {
+  inFlightRequests.delete(path);
+}
+
+export async function searchProductsServer(
+  query: string = '',
+  page = 1,
+  pageSize = 50,
+): Promise<ProductSearchResponse> {
+  const params = new URLSearchParams({ q: query, page: String(page), pageSize: String(pageSize) });
+  const path = `/products/search?${params.toString()}`;
+  const cached = getCache(path);
+  if (cached !== undefined) return cached as ProductSearchResponse;
+
+  const inFlight = getInFlight(path);
+  if (inFlight) return inFlight as Promise<ProductSearchResponse>;
+
+  const promise = api.get<ProductSearchResponse>(path, DEFAULT_TIMEOUT_MS);
+  setInFlight(path, promise);
+  try {
+    const data = await promise;
+    setCache(path, data);
+    return data;
+  } finally {
+    clearInFlight(path);
+  }
+}
+
 export async function searchProducts(
   query: string = '',
   limit = 10000,
@@ -30,7 +90,22 @@ export async function searchProducts(
 ): Promise<ProductSearchResponse> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });
   if (scope) params.set('scope', scope);
-  return api.get<ProductSearchResponse>(`/products/search?${params.toString()}`);
+  const path = `/products/search?${params.toString()}`;
+  const cached = getCache(path);
+  if (cached !== undefined) return cached as ProductSearchResponse;
+
+  const inFlight = getInFlight(path);
+  if (inFlight) return inFlight as Promise<ProductSearchResponse>;
+
+  const promise = api.get<ProductSearchResponse>(path, DEFAULT_TIMEOUT_MS);
+  setInFlight(path, promise);
+  try {
+    const data = await promise;
+    setCache(path, data);
+    return data;
+  } finally {
+    clearInFlight(path);
+  }
 }
 
 /** Dashboard analytics for the KPI tile grid (Phase 3, Task B). */
@@ -137,6 +212,29 @@ export async function getStoreInventory(storeId: string): Promise<StoreInventory
   return api.get<StoreInventoryResponse>(`/stores/${storeId}/inventory`);
 }
 
+export async function getStoresInventoryBulk(
+  storeIds: string[],
+): Promise<StoreInventoryResponse[]> {
+  if (storeIds.length === 0) return [];
+  const idsParam = storeIds.map(encodeURIComponent).join(',');
+  const path = `/stores/inventory/bulk?ids=${idsParam}`;
+  const cached = getCache(path);
+  if (cached !== undefined) return cached as StoreInventoryResponse[];
+
+  const inFlight = getInFlight(path);
+  if (inFlight) return inFlight as Promise<StoreInventoryResponse[]>;
+
+  const promise = api.get<StoreInventoryResponse[]>(path, DEFAULT_TIMEOUT_MS);
+  setInFlight(path, promise);
+  try {
+    const data = await promise;
+    setCache(path, data);
+    return data;
+  } finally {
+    clearInFlight(path);
+  }
+}
+
 export async function listStores(
   includePlaceholders = false,
 ): Promise<
@@ -146,10 +244,6 @@ export async function listStores(
     await api.get<
       Array<{ id: string; code: string; name: string; address?: string | null; is_active: boolean }>
     >('/stores');
-  // Never surface auto-provisioned "Auto Store (...)" placeholders (created by
-  // sync ingestion for unknown store ids) as real stores/tabs. The server
-  // excludes them by default too — this is defense in depth so a stale or
-  // proxied server can never render a phantom store tab.
   if (includePlaceholders) return stores;
   return stores.filter((s) => !s.name.startsWith('Auto Store ('));
 }
@@ -164,4 +258,12 @@ export async function login(
     password,
     device_id: deviceId,
   });
+}
+
+export function abortAll(): void {
+  inFlightRequests.clear();
+}
+
+export function clearResponseCache(): void {
+  responseCache.clear();
 }

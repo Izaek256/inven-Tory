@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useTransition, useMemo } from 'react';
 import { usePersistentState } from './usePersistentState';
 import type { NavView } from '../config/navigation';
 
@@ -14,46 +14,80 @@ const DEFAULT_STATE: AppPersistentState = {
   activeStoreId: null,
 };
 
-export function useAppState(): {
-  currentView: NavView;
-  activeStoreId: string | null;
-  setCurrentView: (view: NavView | ((prev: NavView) => NavView)) => void;
-  setActiveStoreId: (storeId: string | null | ((prev: string | null) => string | null)) => void;
-  resetState: () => void;
-} {
+const cachedState: Record<string, AppPersistentState | null> = {};
+let stateVersion = 0;
+
+function _getCachedState(): AppPersistentState | null {
+  return cachedState[APP_STATE_KEY] ?? null;
+}
+
+function _setCachedState(state: AppPersistentState): void {
+  cachedState[APP_STATE_KEY] = state;
+  stateVersion++;
+}
+
+export function useAppState() {
   const [state, setState, resetState] = usePersistentState<AppPersistentState>(
     APP_STATE_KEY,
     DEFAULT_STATE,
   );
+  const [isPending, startTransition] = useTransition();
+
+  const memoizedState = useMemo(() => state, [state.currentView, state.activeStoreId]);
 
   const setCurrentView = useCallback(
     (view: NavView | ((prev: NavView) => NavView)): void => {
-      setState((prev) => ({
-        ...prev,
-        currentView: typeof view === 'function' ? view(prev.currentView) : view,
-      }));
+      startTransition(() => {
+        setState((prev) => {
+          const next = {
+            ...prev,
+            currentView: typeof view === 'function' ? view(prev.currentView) : view,
+          };
+          _setCachedState(next);
+          return next;
+        });
+      });
     },
     [setState],
   );
 
   const setActiveStoreId = useCallback(
     (storeId: string | null | ((prev: string | null) => string | null)): void => {
-      setState((prev) => ({
-        ...prev,
-        activeStoreId:
-          typeof storeId === 'function'
-            ? (storeId as (prev: string | null) => string | null)(prev.activeStoreId)
-            : storeId,
-      }));
+      startTransition(() => {
+        setState((prev) => {
+          const next = {
+            ...prev,
+            activeStoreId:
+              typeof storeId === 'function'
+                ? (storeId as (prev: string | null) => string | null)(prev.activeStoreId)
+                : storeId,
+          };
+          _setCachedState(next);
+          return next;
+        });
+      });
     },
     [setState],
   );
 
+  const resetStateMemo = useCallback(() => {
+    startTransition(() => {
+      resetState();
+      _setCachedState(DEFAULT_STATE);
+    });
+  }, [resetState]);
+
+  const getCachedState = useCallback((): AppPersistentState | null => {
+    return _getCachedState();
+  }, []);
+
   return {
-    currentView: state.currentView,
-    activeStoreId: state.activeStoreId,
+    currentView: memoizedState.currentView,
+    activeStoreId: memoizedState.activeStoreId,
     setCurrentView,
     setActiveStoreId,
-    resetState,
+    resetState: resetStateMemo,
+    isPending,
+    getCachedState,
   };
 }

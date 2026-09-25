@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { ArrowLeftRight, RefreshCw, AlertCircle, WifiOff } from 'lucide-react';
 import { getAccessToken } from '../services/tauriAuthService';
 import { getLocalTransactions } from '../services/tauriTransactionService';
-import { Button, Badge, DataTable, EmptyState, ColumnDef } from '@invenTory/ui';
+import { Button, Badge, DataTable, EmptyState, ColumnDef, SkeletonTable } from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 const TRANSACTIONS_CACHE_KEY = 'inven_tory_transactions_cache_v1';
@@ -326,7 +326,11 @@ export const TransactionsView: React.FC = () => {
           padding: '24px',
         }}
       >
-        {transactions.length === 0 && !loading ? (
+        {loading && transactions.length === 0 ? (
+          <div data-testid="transactions-loading" role="status" aria-label="Loading transactions">
+            <SkeletonTable rows={6} columns={5} />
+          </div>
+        ) : transactions.length === 0 && !loading ? (
           <EmptyState
             icon={<ArrowLeftRight size={24} />}
             heading="No transactions found"

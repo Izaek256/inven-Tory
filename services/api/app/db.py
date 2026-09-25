@@ -56,16 +56,12 @@ def build_engine(database_url: str | None = None) -> AsyncEngine:
     extra: dict = {}
     if url and "sqlite" not in str(url):
         extra["pool_reset_on_return"] = "rollback"
-        # NOTE: deliberately NOT using NullPool any more.
-        # pool_reset_on_return="rollback" is the PRIMARY defence against
-        # InFailedSQLTransactionError: every connection returned to the pool
-        # is guaranteed to have an explicit ROLLBACK issued so the next
-        # checkout gets a clean connection with no aborted-txn flag.
-        # NullPool would defeat this because connections are never "returned".
-        # Singleton engine is now enforced via function-attribute cache in
-        # get_engine(), so every session factory shares this one pool.
-        extra["pool_size"] = 10
+        extra["pool_size"] = 20
+        extra["min_size"] = 5
         extra["max_overflow"] = 20
+        extra["connect_args"] = {"statement_timeout": 30000}
+    else:
+        extra["connect_args"] = {"cache_size": -64000, "temp_store": 2}
 
     engine = create_async_engine(
         url,

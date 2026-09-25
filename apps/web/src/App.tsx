@@ -8,7 +8,7 @@
  *   - Main content: single dynamic dashboard (store tabs handle single vs multi) + products etc.
  */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, Suspense, lazy } from 'react';
 import { History, Search, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
 import {
   DashboardIcon,
@@ -17,19 +17,26 @@ import {
   StoresIcon,
   type NavIcon,
 } from './components/NavIcons';
-import { ThemeToggle } from '@invenTory/ui';
+import { ThemeToggle, Skeleton } from '@invenTory/ui';
 import { clearToken, getToken } from './services/apiClient';
 import { LoginView } from './views/LoginView';
-import { AnalyticsDashboardView } from './views/AnalyticsDashboardView';
-import { RecentActivityView } from './views/RecentActivityView';
-import { ProductsCatalogView } from './views/ProductsCatalogView';
-import { StoreView } from './views/StoreView';
 import { GlobalSearchModal } from './components/GlobalSearchModal';
 import { listStores } from './services/dashboardService';
 import './index.css';
 import './styles/dashboard-phase4.css';
 import './styles/dashboard-mockup.css';
 import './styles/artifact-theme.css';
+
+const AnalyticsDashboardView = lazy(() =>
+  import('./views/AnalyticsDashboardView').then((m) => ({ default: m.AnalyticsDashboardView })),
+);
+const RecentActivityView = lazy(() =>
+  import('./views/RecentActivityView').then((m) => ({ default: m.RecentActivityView })),
+);
+const ProductsCatalogView = lazy(() =>
+  import('./views/ProductsCatalogView').then((m) => ({ default: m.ProductsCatalogView })),
+);
+const StoreView = lazy(() => import('./views/StoreView').then((m) => ({ default: m.StoreView })));
 
 type NavView = 'dashboard' | 'stock-movements' | 'products' | 'stores' | 'recent-activity';
 
@@ -261,18 +268,39 @@ function App(): React.ReactElement {
   };
 
   const renderView = (): React.ReactElement => {
+    const skeleton = (
+      <div className="web-skeleton-list" style={{ padding: '24px' }}>
+        <Skeleton height={200} />
+        <Skeleton height={200} />
+      </div>
+    );
+
     switch (effectiveView) {
       case 'stock-movements':
-        return <RecentActivityView globalSearch={topSearch} />;
+        return (
+          <Suspense fallback={skeleton}>
+            <RecentActivityView globalSearch={topSearch} />
+          </Suspense>
+        );
       case 'products':
-        return <ProductsCatalogView topSearch={topSearch} />;
+        return (
+          <Suspense fallback={skeleton}>
+            <ProductsCatalogView topSearch={topSearch} />
+          </Suspense>
+        );
       case 'stores':
         return (
-          <StoreView storeIds={storeIds} loading={storeListLoading} onRefresh={handleRefresh} />
+          <Suspense fallback={skeleton}>
+            <StoreView storeIds={storeIds} loading={storeListLoading} onRefresh={handleRefresh} />
+          </Suspense>
         );
       case 'dashboard':
       default:
-        return <AnalyticsDashboardView me={me} storeMeta={storeMeta} topSearch={topSearch} />;
+        return (
+          <Suspense fallback={skeleton}>
+            <AnalyticsDashboardView me={me} storeMeta={storeMeta} topSearch={topSearch} />
+          </Suspense>
+        );
     }
   };
 

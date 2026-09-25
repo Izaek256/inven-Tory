@@ -23,6 +23,8 @@ export interface DataTableProps<T> {
   rows: T[];
   rowKey: (row: T) => string;
   emptySlot?: React.ReactNode;
+  /** Optional per-row class (used for e.g. optimistic-update flash effects). */
+  rowClassName?: (row: T) => string | undefined;
   'data-testid'?: string;
 }
 
@@ -31,6 +33,7 @@ export function DataTable<T>({
   rows,
   rowKey,
   emptySlot,
+  rowClassName,
   'data-testid': testId,
 }: DataTableProps<T>): React.ReactElement {
   const [sortKey, setSortKey] = useState<string | null>(null);

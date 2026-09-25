@@ -24,7 +24,8 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user, get_db, require_global_admin, require_permission
@@ -525,7 +526,8 @@ async def search_products(
     q: str = Query(
         default="", min_length=0, max_length=200, description="Search term (empty returns all)"
     ),
-    limit: int = Query(default=200, ge=1, le=10000, description="Maximum results to return"),
+    limit: int = Query(default=50, ge=1, le=100, description="Maximum results to return"),
+    offset: int = Query(default=0, ge=0, description="Pagination offset"),
     scope: str = Query(
         default="",
         description="Set to 'all-stores' to include per-store quantity breakdown "
@@ -536,41 +538,41 @@ async def search_products(
     _user: User = Depends(get_current_user),  # noqa: B008
 ) -> ProductSearchResponse:
     """
-    Substring search across product name, SKU, barcode, brand, model
-    and alternate_names.  Case-insensitive.  If q is empty, returns all
-    products (general catalogue mode).
+    Full-text search across product name, SKU, barcode, brand, model,
+    category, alternate_names using PostgreSQL tsvector.
+    Case-insensitive.  If q is empty, returns all products.
 
     Each result includes the total AVAILABLE stock quantity and the
     last balance update timestamp for that product.
 
     With ``?scope=all-stores`` each result additionally carries a
-    ``store_quantities`` array (one entry per store that holds AVAILABLE
-    stock for that product) plus the same ``total_quantity`` — this is the
-    cross-store distribution table format shared by the web dashboard and
-    the desktop global-search modal.  Read-only aggregation; no store is
-    ever modified by this endpoint.
+    ``store_quantities`` array.
 
     Requires INVENTORY_READ permission (all authenticated roles qualify).
     """
     if q.strip():
-        term = f"%{q.lower()}%"
+        search_query = func.to_tsquery("english", func.plainto_tsquery("english", q))
+        ts_vector = func.coalesce(
+            func.to_tsvector("english", Product.name), text("' '::tsvector")
+        ) + func.coalesce(func.to_tsvector("english", Product.sku), text("' '::tsvector"))
+        + func.coalesce(func.to_tsvector("english", Product.brand), text("' '::tsvector"))
+        + func.coalesce(func.to_tsvector("english", Product.model), text("' '::tsvector"))
+        + func.coalesce(func.to_tsvector("english", Product.category), text("' '::tsvector"))
+        + func.coalesce(func.to_tsvector("english", Product.alternate_names), text("' '::tsvector"))
+        + func.coalesce(func.to_tsvector("english", Product.barcode), text("' '::tsvector"))
         stmt = (
             select(Product)
-            .where(
-                or_(
-                    func.lower(Product.name).like(term),
-                    func.lower(Product.sku).like(term),
-                    func.lower(Product.brand).like(term),
-                    func.lower(Product.model).like(term),
-                    func.lower(Product.barcode).like(term),
-                    func.lower(Product.alternate_names).like(term),
-                )
-            )
+            .where(ts_vector.op("@@")(search_query))
             .order_by(Product.name)
             .limit(limit)
+            .offset(offset)
         )
+        count_stmt = select(func.count()).select_from(Product).where(ts_vector.op("@@")(search_query))
+        total: int = (await db.execute(count_stmt)).scalar_one()
     else:
-        stmt = select(Product).order_by(Product.name).limit(limit)
+        stmt = select(Product).order_by(Product.name).limit(limit).offset(offset)
+        count_stmt = select(func.count()).select_from(Product)
+        total: int = (await db.execute(count_stmt)).scalar_one()
 
     result = await db.execute(stmt)
     products: list[Product] = list(result.scalars().all())
@@ -653,7 +655,7 @@ async def search_products(
             )
             for p in products
         ],
-        total=len(products),
+        total=total,
         query=q,
     )
 

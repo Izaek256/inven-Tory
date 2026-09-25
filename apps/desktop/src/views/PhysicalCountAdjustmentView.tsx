@@ -86,6 +86,8 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
   const [countEntries, setCountEntries] = useState<CountEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const successTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Per-row submitting indicator (rowId → true while adjustStock is in flight)
   const [submittingIds, setSubmittingIds] = useState<Set<string>>(new Set());
@@ -98,6 +100,13 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   // Live qty cache for the currently selected store (productId → qty)
   const [storeQtyCache, setStoreQtyCache] = useState<Map<string, number>>(new Map());
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear the success banner timer on unmount
+  useEffect(() => {
+    return () => {
+      if (successTimerRef.current) window.clearTimeout(successTimerRef.current);
+    };
+  }, []);
 
   // ── Products + per-store qty for search panel ─────────────────────────────
 
@@ -325,6 +334,14 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
       };
 
       setCountEntries((prev) => [...prev, entry]);
+
+      setSuccessMessage(
+        variance === 0
+          ? `Count recorded for ${product.name} — no variance (system ${systemQty}, counted ${countedQty}).`
+          : `Adjusted ${product.name}: ${systemQty} → ${countedQty} (${variance > 0 ? '+' : ''}${variance} units).`,
+      );
+      if (successTimerRef.current) window.clearTimeout(successTimerRef.current);
+      successTimerRef.current = window.setTimeout(() => setSuccessMessage(null), 5000);
     },
     [activeStoreId, productMap, nameToId, storeQtyCache, sessionUserId, sessionDeviceId],
   );
@@ -337,6 +354,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     setCountEntries([]);
     setSearchResults([]);
     setError(null);
+    setSuccessMessage(null);
   };
 
   // ── Grid fields — Product + Counted Qty only ──────────────────────────────
@@ -449,6 +467,20 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
       {/* ── Step indicator removed — single step now ─────────────────────── */}
       <div data-testid="step-indicator" style={{ display: 'none' }} />
+
+      {/* ── Success banner ──────────────────────────────────────────────── */}
+      {successMessage && (
+        <div
+          className="it-toast it-toast--success"
+          role="status"
+          aria-live="polite"
+          style={{ marginBottom: '16px' }}
+          data-testid="count-success-banner"
+        >
+          <Check size={16} aria-hidden="true" />
+          <span>{successMessage}</span>
+        </div>
+      )}
 
       {/* ── Error banner ────────────────────────────────────────────────── */}
       {error && (

@@ -480,3 +480,90 @@ async def get_store_inventory(
         total_products=len(seen_product_ids),
         total_quantity=total_quantity,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/stores/inventory/bulk
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/inventory/bulk",
+    response_model=list[StoreInventoryResponse],
+    status_code=status.HTTP_200_OK,
+    summary="Bulk fetch inventory for multiple stores",
+)
+async def get_stores_inventory_bulk(
+    ids: str = Query(..., description="Comma-separated list of store IDs"),
+    db: AsyncSession = Depends(get_db),  # noqa: B008
+    _user: User = Depends(get_current_user),  # noqa: B008
+) -> list[StoreInventoryResponse]:
+    """
+    Return inventory snapshots for multiple stores in a single request.
+    Solves the N+1 problem when loading the store list view.
+
+    Query param: ?ids=store1,store2,store3
+    """
+    store_ids = [s.strip() for s in ids.split(',') if s.strip()]
+    if not store_ids:
+        return []
+
+    results: list[StoreInventoryResponse] = []
+    for store_id in store_ids:
+        store = await db.get(Store, store_id)
+        if store is None:
+            continue
+
+        last_sync_stmt = select(func.max(InventoryTransaction.server_accepted_at)).where(
+            InventoryTransaction.store_id == store_id,
+            InventoryTransaction.sync_status == "ACCEPTED",
+        )
+        last_sync_result = await db.execute(last_sync_stmt)
+        last_sync_at: datetime | None = last_sync_result.scalar()
+
+        freshness = compute_freshness(last_sync_at)
+
+        stmt = (
+            select(StockBalance, Product)
+            .join(Product, StockBalance.product_id == Product.id)
+            .where(StockBalance.store_id == store_id)
+            .order_by(Product.name, StockBalance.stock_bucket)
+        )
+        result = await db.execute(stmt)
+        rows = result.all()
+
+        product_rows: list[StoreProductRow] = []
+        total_quantity = 0
+        seen_product_ids: set[str] = set()
+
+        for balance, product in rows:
+            product_rows.append(
+                StoreProductRow(
+                    product_id=product.id,
+                    product_sku=product.sku,
+                    product_name=product.name,
+                    category=product.category,
+                    unit=product.unit or "pcs",
+                    stock_bucket=balance.stock_bucket,
+                    quantity=balance.quantity,
+                    balance_updated_at=balance.updated_at,
+                )
+            )
+            total_quantity += balance.quantity
+            seen_product_ids.add(product.id)
+
+        results.append(
+            StoreInventoryResponse(
+                store_id=store.id,
+                store_code=store.code,
+                store_name=store.name,
+                is_active=bool(store.is_active),
+                last_sync_at=last_sync_at,
+                freshness=freshness,
+                products=product_rows,
+                total_products=len(seen_product_ids),
+                total_quantity=total_quantity,
+            )
+        )
+
+    return results

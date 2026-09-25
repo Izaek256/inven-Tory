@@ -121,6 +121,8 @@ export interface SyncStatusResponse {
 /** Outcome of a single push attempt. */
 export type SyncOutcome = 'success' | 'partial' | 'error' | 'offline';
 
+export type SyncStatusIndicator = 'syncing' | 'synced' | 'error' | 'idle';
+
 /** State returned from triggerSync / getSyncStatus. */
 export interface ClientSyncState {
   lastSyncAt: string | null;
@@ -128,6 +130,7 @@ export interface ClientSyncState {
   isOnline: boolean;
   lastOutcome: SyncOutcome | null;
   lastError: string | null;
+  syncStatus?: SyncStatusIndicator;
 }
 
 // ---------------------------------------------------------------------------
@@ -144,4 +147,5 @@ export interface OutboxEventRow {
   next_attempt_at: string | null;
   created_at: string;
   last_error: string | null;
+  expires_at: string | null;
 }

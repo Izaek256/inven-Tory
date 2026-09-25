@@ -433,6 +433,8 @@ export const SaleStockView: React.FC = () => {
       {success && (
         <div
           className="it-toast it-toast--success"
+          role="status"
+          aria-live="polite"
           data-testid="sale-success-banner"
           style={{ marginBottom: '16px' }}
         >

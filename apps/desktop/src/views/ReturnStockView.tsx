@@ -261,6 +261,8 @@ export const ReturnStockView: React.FC = () => {
         {success && (
           <div
             className="it-toast it-toast--success"
+            role="status"
+            aria-live="polite"
             data-testid="success-banner"
             style={{ marginBottom: '16px' }}
           >

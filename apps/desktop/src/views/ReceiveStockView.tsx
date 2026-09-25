@@ -421,7 +421,12 @@ export const ReceiveStockView: React.FC = () => {
 
       {/* Toasts */}
       {success && (
-        <div className="it-toast it-toast--success" style={{ marginBottom: '16px' }}>
+        <div
+          className="it-toast it-toast--success"
+          role="status"
+          aria-live="polite"
+          style={{ marginBottom: '16px' }}
+        >
           <Check size={16} aria-hidden="true" />
           <span>Stock received successfully. Transaction recorded and balance updated.</span>
         </div>

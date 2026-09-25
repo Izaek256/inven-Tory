@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     sync_batch_size: int = 100
     sync_retry_max: int = 5
     sync_retry_backoff_base_seconds: int = 2
+    sync_coalescing_window_s: float = 0.5
+    sync_request_timeout_s: int = 30
+    compression_enabled: bool = True
+    cache_ttl_s: int = 30
+    max_batch_size: int = 1000
 
     # ── Performance / observability ────────────────────────────────────────────
     # Log any API request or SQL statement that takes longer than this many

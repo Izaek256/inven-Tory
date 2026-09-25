@@ -222,6 +222,8 @@ export const DamageQuarantineView: React.FC = () => {
       {success && (
         <div
           className="it-toast it-toast--success"
+          role="status"
+          aria-live="polite"
           style={{ marginBottom: '16px' }}
           data-testid="damage-success-banner"
         >

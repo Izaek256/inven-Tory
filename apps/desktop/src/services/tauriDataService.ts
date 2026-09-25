@@ -1,6 +1,88 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './tauriStoreService';
 
+export interface SearchResult {
+  product_id: string;
+  sku: string;
+  name: string;
+  brand: string | null;
+  score: number;
+}
+
+export interface FTS5IndexInfo {
+  exists: boolean;
+  table_name: string;
+  indexed_at: string | null;
+  row_count: number;
+}
+
+/**
+ * Initialize the local SQLite FTS5 index for desktop search.
+ * Creates the FTS5 virtual table if it does not already exist.
+ */
+export async function initFTS5Index(): Promise<boolean> {
+  if (!isTauriEnvironment()) return false;
+  try {
+    const result = await invoke<boolean>('init_fts5_index');
+    return result;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[DataService] Failed to init FTS5 index:', err);
+    return false;
+  }
+}
+
+/**
+ * Check whether the local SQLite FTS5 index exists and is up to date.
+ */
+export async function getFTS5IndexInfo(): Promise<FTS5IndexInfo> {
+  if (!isTauriEnvironment()) {
+    return { exists: false, table_name: '', indexed_at: null, row_count: 0 };
+  }
+  try {
+    return await invoke<FTS5IndexInfo>('get_fts5_index_info');
+  } catch {
+    return { exists: false, table_name: '', indexed_at: null, row_count: 0 };
+  }
+}
+
+/**
+ * Query the local SQLite FTS5 index directly (no network request).
+ * Returns ranked search results for the given query string.
+ */
+export async function searchLocal(
+  query: string,
+  storeId?: string | null,
+  limit?: number,
+): Promise<SearchResult[]> {
+  if (!isTauriEnvironment()) return [];
+  try {
+    const results = await invoke<SearchResult[]>('search_fts5_local', {
+      query,
+      storeId: storeId ?? null,
+      limit: limit ?? 50,
+    });
+    return Array.isArray(results) ? results : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Rebuild the local SQLite FTS5 index from the local product catalogue.
+ */
+export async function rebuildFTS5Index(): Promise<boolean> {
+  if (!isTauriEnvironment()) return false;
+  try {
+    const result = await invoke<boolean>('rebuild_fts5_index');
+    return result;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[DataService] Failed to rebuild FTS5 index:', err);
+    return false;
+  }
+}
+
 export interface DeleteAllDataResult {
   success: boolean;
   message: string;

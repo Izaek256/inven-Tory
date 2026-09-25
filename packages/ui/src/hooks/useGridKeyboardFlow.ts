@@ -50,6 +50,7 @@ export interface UseGridKeyboardFlowReturn {
   fieldRefs: React.MutableRefObject<Record<string, HTMLInputElement | HTMLSelectElement | null>>;
   registerFieldRef: (cellId: string, el: HTMLInputElement | HTMLSelectElement | null) => void;
   searchQuery: string;
+  setSearchQuery: (query: string) => void;
   barcodeBuffer: string;
   /**
    * Patch the display values of an already-committed row by its id.
@@ -410,6 +411,7 @@ export function useGridKeyboardFlow({
     fieldRefs,
     registerFieldRef,
     searchQuery,
+    setSearchQuery,
     barcodeBuffer,
     patchRowValues,
   };

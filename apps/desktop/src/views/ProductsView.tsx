@@ -20,6 +20,7 @@ import {
   SearchInput,
   Select,
   ColumnDef,
+  SkeletonTable,
 } from '@invenTory/ui';
 import { Package, Plus, Edit2, AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useActiveStore } from '../context/StoreContext';
@@ -40,6 +41,8 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [categories, setCategories] = useState<string[]>([]);
+  // Row id that should flash after an optimistic create/update
+  const [flashRowId, setFlashRowId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
 
   const PAGE_SIZE = 50;
@@ -209,7 +212,13 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   const handleCreateProduct = async (input: CreateProductInput): Promise<void> => {
     setActionError(null);
     try {
-      await createProduct(input);
+      const created = await createProduct(input);
+      // Optimistic insert: show the new row immediately instead of waiting
+      // for the full list refetch to resolve.
+      setProducts((prev) => [created, ...prev.filter((p) => p.id !== created.id)]);
+      setTotalProducts((prev) => prev + 1);
+      setFlashRowId(created.id);
+      window.setTimeout(() => setFlashRowId(null), 800);
       await Promise.all([fetchProductsList(), fetchCategories()]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -221,7 +230,11 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
   const handleUpdateProduct = async (input: UpdateProductInput): Promise<void> => {
     setActionError(null);
     try {
-      await updateProduct(input);
+      const updated = await updateProduct(input);
+      // Optimistic patch: reflect the edit in place while the refetch runs.
+      setProducts((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setFlashRowId(updated.id);
+      window.setTimeout(() => setFlashRowId(null), 800);
       await Promise.all([fetchProductsList(), fetchCategories()]);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -556,12 +569,9 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
         </div>
 
         {loading ? (
-          <EmptyState
-            variant="loading"
-            heading="Loading product catalogue"
-            body="Loading master product index..."
-            data-testid="loading-state"
-          />
+          <div data-testid="loading-state" role="status" aria-label="Loading product catalogue">
+            <SkeletonTable rows={8} columns={5} />
+          </div>
         ) : error ? (
           <EmptyState
             variant="error"

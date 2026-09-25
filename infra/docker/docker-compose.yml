@@ -7,6 +7,11 @@ services:
       POSTGRES_USER: invtory
       POSTGRES_PASSWORD: changeme
       POSTGRES_DB: invtory
+      PGCONNECT_TIMEOUT: 10
+      PGTASKS: 4
+      DB_POOL_SIZE: 20
+      DB_MAX_OVERFLOW: 40
+      POSTGRES_OPTIONS: "-c statement_timeout=30000 -c lock_timeout=10000 -c max_connections=100"
     ports:
       - "5432:5432"
     volumes:
@@ -16,6 +21,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   api:
     build:

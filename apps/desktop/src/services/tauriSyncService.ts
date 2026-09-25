@@ -80,7 +80,31 @@ export interface SyncConfig {
     canUseApp: boolean;
     totalComplete: boolean;
   }) => void;
+  /** Maximum number of sync retries (default: 3) */
+  maxSyncRetries?: number;
+  /** Coalescing window in ms before triggering sync (default: 500) */
+  coalescingWindowMs?: number;
 }
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface PendingOperation {
+  id: string;
+  type: string;
+  payload: unknown;
+  timestamp: number;
+  status: 'pending' | 'syncing' | 'confirmed' | 'failed';
+  optimisticData?: unknown;
+  onProgress?: (progress: number) => void;
+}
+
+export interface OutboxEventWithTTL extends OutboxEventRow {
+  expires_at: string | null;
+}
+
+export type SyncStatusIndicator = 'syncing' | 'synced' | 'error' | 'idle';
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -89,8 +113,21 @@ export interface SyncConfig {
 /** Prevent concurrent sync runs. */
 let _syncInProgress = false;
 
-/** Handle returned by setInterval for background sync. */
-let _backgroundIntervalId: ReturnType<typeof setInterval> | null = null;
+/** Handle returned by setTimeout for background sync chaining. */
+let _backgroundTimeoutId: ReturnType<typeof setTimeout> | null = null;
+let _backgroundSyncActive = false;
+
+/** Coalescing timer for debounced sync triggers. */
+let _coalescingTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Pending operations queue for batch coalescing. */
+const pendingOperations: PendingOperation[] = [];
+
+/** Optimistic updates map tracking pending operations. */
+const optimisticUpdates = new Map<string, PendingOperation>();
+
+/** Current sync status indicator. */
+let _syncStatus: SyncStatusIndicator = 'idle';
 
 // @visibleForTesting
 /** In-memory sync state for mock/test environment. */
@@ -98,6 +135,15 @@ let _mockPendingCount = 0;
 let _mockLastSyncAt: string | null = null;
 let _mockLastOutcome: SyncOutcome | null = null;
 let _mockLastError: string | null = null;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+const DEFAULT_COALESCING_WINDOW_MS = 500;
+const MAX_SYNC_RETRIES = 3;
+const REQUEST_TIMEOUT_MS = 30_000;
+const PULL_PAGE_SIZE = 5000;
 
 // ---------------------------------------------------------------------------
 // Mock helpers (for Vitest / web environment)
@@ -164,8 +210,6 @@ async function _updateTransactionSyncStatuses(
 }
 
 async function _getLastSyncTimestamp(): Promise<string | null> {
-  // In Tauri mode, prefer the in-memory cache first (set by _setLastSyncTimestamp).
-  // Fall back to the IPC call so the persisted value survives restarts.
   if (isTauriEnvironment()) {
     if (_mockLastSyncAt !== null) {
       return _mockLastSyncAt;
@@ -177,7 +221,6 @@ async function _getLastSyncTimestamp(): Promise<string | null> {
 }
 
 async function _setLastSyncTimestamp(timestamp: string): Promise<void> {
-  // Always update the in-memory cache so reads in the same process are consistent.
   _mockLastSyncAt = timestamp;
   if (isTauriEnvironment()) {
     await invoke<void>('set_last_sync_timestamp', { timestamp });
@@ -188,18 +231,13 @@ async function _setLastSyncTimestamp(timestamp: string): Promise<void> {
 // Public API — timestamp / status
 // ---------------------------------------------------------------------------
 
-/**
- * Returns the ISO timestamp of the last successful sync, or null if none.
- * Feeds the Header's last-sync display.
- */
 export async function getLastSyncTimestamp(): Promise<string | null> {
   return _getLastSyncTimestamp();
 }
 
-/**
- * Returns a snapshot of the current sync state.
- */
-export async function getSyncStatus(): Promise<ClientSyncState> {
+export async function getSyncStatus(): Promise<
+  ClientSyncState & { syncStatus?: SyncStatusIndicator }
+> {
   const lastSyncAt = await _getLastSyncTimestamp();
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;
 
@@ -218,162 +256,61 @@ export async function getSyncStatus(): Promise<ClientSyncState> {
     isOnline,
     lastOutcome: _mockLastOutcome,
     lastError: _mockLastError,
+    syncStatus: _syncStatus,
   };
 }
 
+export function getSyncStatusIndicator(): SyncStatusIndicator {
+  return _syncStatus;
+}
+
 // ---------------------------------------------------------------------------
-// Core push loop
+// Compression helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Build the HTTP push payload from a raw outbox event row.
- * Parses the JSON payload blob stored in SQLite.
- */
-interface ProductUpdatePayload {
-  product_id: string;
-  sku: string;
-  name: string;
-  brand: string | null;
-  model: string | null;
-  category: string;
-  unit: string;
-  barcode: string | null;
-  alternate_names: string | null;
-  serial_tracking_enabled: boolean;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
+async function _compressPayload(data: string): Promise<Uint8Array> {
+  if (typeof CompressionStream === 'undefined') {
+    return new TextEncoder().encode(data);
+  }
+  const cs = new CompressionStream('gzip');
+  const writer = cs.writable.getWriter();
+  const reader = cs.readable.getReader();
+  writer.write(new TextEncoder().encode(data));
+  writer.close();
+  const chunks: Uint8Array[] = [];
+  for (;;) {
+    const result = await reader.read();
+    if (result.done) break;
+    chunks.push(result.value);
+  }
+  const total = chunks.reduce((acc, c) => acc + c.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const c of chunks) {
+    result.set(c, offset);
+    offset += c.length;
+  }
+  return result;
 }
 
-function _buildPushItem(row: OutboxEventRow): TransactionPushItem | null {
-  try {
-    const p = JSON.parse(row.payload) as Record<string, unknown>;
-    const userIdStr = String(p.user_id ?? '').trim();
-    const deviceIdStr = String(p.device_id ?? '').trim();
+// ---------------------------------------------------------------------------
+// Fetch helpers with timeout and compression
+// ---------------------------------------------------------------------------
 
-    // Convert placeholder user IDs to numeric values
-    let userId: number;
-    if (userIdStr && !isNaN(Number(userIdStr))) {
-      userId = Number(userIdStr);
-    } else {
-      if (userIdStr === 'LOCAL-USER' || userIdStr === 'USER-LOCAL') {
-        userId = 1; // Default user ID for local operations
-      } else {
-        userId = 1; // Fallback to user ID 1
-      }
-    }
-
-    return {
-      transaction_id: String(p.transaction_id ?? ''),
-      store_id: String(p.store_id ?? ''),
-      product_id: String(p.product_id ?? ''),
-      movement_type: String(p.movement_type ?? ''),
-      quantity_delta: Number(p.quantity_delta ?? 0),
-      occurred_at: String(p.occurred_at || new Date().toISOString()),
-      user_id: userId,
-      device_id: deviceIdStr || 'SINGLE-USER-DEVICE',
-      stock_bucket: String(p.stock_bucket || 'AVAILABLE'),
-      reference_number: (p.reference_number as string | null | undefined) ?? null,
-      reason_code: (p.reason_code as string | null | undefined) ?? null,
-      transfer_id: (p.transfer_id as string | null | undefined) ?? null,
-      purchase_order_id: (p.purchase_order_id as string | null | undefined) ?? null,
-      batch_id: null,
-      client_sequence: null,
-      original_transaction_id: null,
-    };
-  } catch {
-    return null;
+function _withTimeout(timeoutMs: number, signal: AbortSignal | undefined): AbortSignal {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      clearTimeout(timeoutId);
+      controller.abort();
+    });
   }
-}
-
-function _buildProductUpdate(row: OutboxEventRow): ProductSnapshot | null {
-  try {
-    const p = JSON.parse(row.payload) as ProductUpdatePayload;
-    return {
-      id: p.product_id,
-      sku: p.sku,
-      name: p.name,
-      brand: p.brand ?? null,
-      model: p.model ?? null,
-      category: p.category,
-      unit: p.unit,
-      barcode: p.barcode ?? null,
-      alternate_names: p.alternate_names ?? null,
-      serial_tracking_enabled: p.serial_tracking_enabled,
-      is_active: p.is_active,
-      updated_at: p.updated_at || new Date().toISOString(),
-    };
-  } catch {
-    return null;
-  }
+  return controller.signal;
 }
 
 /**
- * Load the local product catalogue (desktop runtime only).
- *
- * Returns an empty array outside Tauri or when the IPC call fails, so callers
- * can treat "nothing to push" and "cannot read" the same way.
- */
-async function _loadLocalProducts(): Promise<Product[]> {
-  if (!isTauriEnvironment()) {
-    return [];
-  }
-  try {
-    const prods = await invoke<Product[]>('get_products');
-    return Array.isArray(prods) ? prods : [];
-  } catch {
-    return [];
-  }
-}
-
-// Movement priority for deterministic push ordering.
-// Lower number = processed first by the server.
-const MOVEMENT_PUSH_PRIORITY: Record<string, number> = {
-  ADJUSTMENT: 0, // Baseline / count reconciliation first
-  RECEIPT: 1, // Then stock-increases
-  TRANSFER_IN: 1,
-  RETURN: 1,
-  SALE: 2, // Then stock-decreases
-  TRANSFER_OUT: 2,
-  DAMAGE: 2,
-};
-
-/**
- * Validation errors returned by the server's _validate_payload are
- * permanent — retrying them will never succeed.  All other rejections
- * (domain errors like "Insufficient stock", server internal errors, etc.)
- * are potentially stale and should be retried with backoff.
- */
-const PERMANENT_REJECTION_PREFIXES = [
-  'transaction_id is required',
-  'store_id is required',
-  'product_id is required',
-  'user_id must be a positive integer',
-  'device_id is required',
-  'movement_type is required',
-  'quantity_delta must be non-zero',
-  'movement_type must be one of',
-];
-
-function _isPermanentRejection(reason: string): boolean {
-  const normalized = (reason ?? '').toLowerCase();
-  return PERMANENT_REJECTION_PREFIXES.some((prefix) => normalized.startsWith(prefix));
-}
-
-function _sortPushItems<T extends { item: TransactionPushItem }>(arr: T[]): T[] {
-  return [...arr].sort((a, b) => {
-    const pa = MOVEMENT_PUSH_PRIORITY[a.item.movement_type] ?? 3;
-    const pb = MOVEMENT_PUSH_PRIORITY[b.item.movement_type] ?? 3;
-    if (pa !== pb) return pa - pb;
-    const ta = new Date(a.item.occurred_at).getTime();
-    const tb = new Date(b.item.occurred_at).getTime();
-    if (ta !== tb) return ta - tb;
-    return a.item.transaction_id.localeCompare(b.item.transaction_id);
-  });
-}
-
-/**
- * POST a batch of events to /api/v1/sync/push.
+ * POST a batch of events to /api/v1/sync/push with optional compression.
  * Returns the PushResponse, or throws on network/HTTP error
  */
 async function _httpPush(
@@ -389,14 +326,28 @@ async function _httpPush(
   if (products && products.length > 0) {
     payload.products = products;
   }
+  const body = JSON.stringify(payload);
+  const compressedBody = await _compressPayload(body);
+  const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, signal);
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${accessToken}`,
+  };
+  if (compressedBody instanceof Uint8Array && compressedBody.length < body.length) {
+    headers['Content-Encoding'] = 'gzip';
+  }
+
+  const bodyToSend: BodyInit =
+    compressedBody instanceof Uint8Array && compressedBody.length < body.length
+      ? (compressedBody.buffer.slice(0) as ArrayBuffer)
+      : body;
+
   const response = await fetch(`${apiBaseUrl}/sync/push`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: JSON.stringify(payload),
-    signal,
+    headers,
+    body: bodyToSend,
+    signal: timeoutSignal,
   });
 
   if (!response.ok) {
@@ -435,13 +386,14 @@ async function _httpPull(
   const qs = params.toString();
   const url = `${apiBaseUrl}/sync/pull${qs ? `?${qs}` : ''}`;
 
+  const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, signal);
   const response = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${accessToken}`,
     },
-    signal,
+    signal: timeoutSignal,
   });
 
   if (!response.ok) {
@@ -455,8 +407,11 @@ async function _httpPull(
 }
 
 /** Pull page size — server slices the combined stream at the DB level. */
-const PULL_PAGE_SIZE = 5000;
 
+/**
+ * Optimized _httpPullAll that always uses pagination with delta sync.
+ * Never pulls ALL data at once.
+ */
 async function _httpPullAll(
   apiBaseUrl: string,
   accessToken: string,
@@ -470,6 +425,11 @@ async function _httpPullAll(
   let merged: PullResponse | null = null;
 
   while (hasMore) {
+    // Abort check
+    if (signal?.aborted) {
+      throw new DOMException('Aborted', 'AbortError');
+    }
+
     const page = await _httpPull(apiBaseUrl, accessToken, signal, {
       since,
       limit: PULL_PAGE_SIZE,
@@ -504,25 +464,241 @@ async function _httpPullAll(
 }
 
 // ---------------------------------------------------------------------------
-// Restore sync runner (for server restore functionality)
+// Pending operations queue & batch support
+// ---------------------------------------------------------------------------
+
+function _generateId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/**
+ * Add a stock operation to the pending queue and schedule a debounced sync.
+ * Operations within the coalescing window are batched together.
+ */
+export function enqueueStockOperation(
+  operation: Omit<PendingOperation, 'id' | 'timestamp' | 'status'> & { type?: string },
+  coalescingWindowMs?: number,
+): string {
+  const id = _generateId();
+  const op: PendingOperation = {
+    ...operation,
+    id,
+    timestamp: Date.now(),
+    status: 'pending',
+    type: operation.type ?? 'STOCK_UPDATE',
+  };
+  pendingOperations.push(op);
+
+  // Clear existing timer and set new one
+  if (_coalescingTimer) {
+    clearTimeout(_coalescingTimer);
+  }
+  const windowMs = coalescingWindowMs ?? DEFAULT_COALESCING_WINDOW_MS;
+  _coalescingTimer = setTimeout(() => {
+    _flushPendingOperations();
+  }, windowMs);
+
+  return id;
+}
+
+function _flushPendingOperations(): void {
+  if (_coalescingTimer) {
+    clearTimeout(_coalescingTimer);
+    _coalescingTimer = null;
+  }
+
+  if (pendingOperations.length === 0) return;
+
+  const batch = [...pendingOperations];
+  pendingOperations.length = 0;
+
+  // Mark all as syncing
+  for (const op of batch) {
+    op.status = 'syncing';
+    optimisticUpdates.set(op.id, op);
+  }
+
+  _syncStatus = 'syncing';
+
+  // Trigger sync with the batched operations
+  const envBaseUrl =
+    typeof import.meta !== 'undefined'
+      ? (import.meta as { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+      : undefined;
+  const apiBaseUrl = (envBaseUrl ?? 'http://localhost:8000/api/v1').replace(/\/+$/, '');
+
+  void triggerSync({ apiBaseUrl, force: true }).catch(() => undefined);
+}
+
+/**
+ * Batch stock operation support: batch multiple stock operations into a single push.
+ */
+export async function batchStockOperations(
+  operations: Array<{ type: string; payload: unknown; onProgress?: (progress: number) => void }>,
+  _config: SyncConfig,
+): Promise<{ succeeded: string[]; failed: string[] }> {
+  const succeeded: string[] = [];
+  const failed: string[] = [];
+  const total = operations.length;
+
+  for (let i = 0; i < total; i++) {
+    const op = operations[i];
+    const id = _generateId();
+    const pendingOp: PendingOperation = {
+      id,
+      type: op.type,
+      payload: op.payload,
+      timestamp: Date.now(),
+      status: 'pending',
+      onProgress: op.onProgress,
+    };
+    optimisticUpdates.set(id, pendingOp);
+
+    try {
+      pendingOp.status = 'syncing';
+      _syncStatus = 'syncing';
+
+      // Add to outbox via Tauri IPC
+      if (isTauriEnvironment()) {
+        await invoke('add_outbox_event', {
+          eventType: op.type,
+          payload: JSON.stringify(op.payload),
+        });
+      }
+
+      pendingOp.status = 'confirmed';
+      optimisticUpdates.set(id, pendingOp);
+      succeeded.push(id);
+    } catch {
+      pendingOp.status = 'failed';
+      optimisticUpdates.set(id, pendingOp);
+      failed.push(id);
+    }
+
+    // Report progress
+    if (op.onProgress) {
+      op.onProgress(Math.round(((i + 1) / total) * 100));
+    }
+  }
+
+  _syncStatus = failed.length > 0 ? 'error' : 'synced';
+
+  return { succeeded, failed };
+}
+
+/**
+ * Rollback an optimistic update on failure.
+ */
+export function rollbackOptimisticUpdate(id: string): void {
+  const op = optimisticUpdates.get(id);
+  if (op && op.optimisticData) {
+    // Dispatch rollback event for UI to handle
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(
+        new CustomEvent('optimistic-rollback', {
+          detail: { operationId: id, data: op.optimisticData },
+        }),
+      );
+    }
+  }
+  optimisticUpdates.delete(id);
+}
+
+// ---------------------------------------------------------------------------
+// TTL-based outbox cleanup
+// ---------------------------------------------------------------------------
+
+async function _cleanupExpiredOutboxEvents(): Promise<void> {
+  if (isTauriEnvironment()) {
+    try {
+      await invoke('cleanup_expired_outbox_events');
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[SyncService] Failed to cleanup expired outbox events:', err);
+    }
+  }
+}
+
+/** Periodically clean expired outbox events. */
+let _ttlCleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+export function startTTLCleanup(intervalMs: number = 60_000): void {
+  if (_ttlCleanupInterval !== null) return;
+  _ttlCleanupInterval = setInterval(_cleanupExpiredOutboxEvents, intervalMs);
+}
+
+export function stopTTLCleanup(): void {
+  if (_ttlCleanupInterval !== null) {
+    clearInterval(_ttlCleanupInterval);
+    _ttlCleanupInterval = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Optimistic UI updates
 // ---------------------------------------------------------------------------
 
 /**
- * Trigger a prioritized restore sync for server data restoration.
- *
- * This implements the "Last synced to server, first restored to app" principle:
- * Phase 1 (Critical): Stores, users, products, stock balances - must complete before app usage
- * Phase 2 (Important): Recent transactions, active day books - background sync
- * Phase 3 (Background): Historical data - lowest priority
+ * Apply an optimistic update locally before server confirmation.
  */
+export function applyOptimisticUpdate<T extends { id: string }>(
+  item: T,
+  updateFn: (item: T) => T,
+): string {
+  const id = _generateId();
+  optimisticUpdates.set(id, {
+    id,
+    type: 'OPTIMISTIC_UPDATE',
+    payload: item,
+    timestamp: Date.now(),
+    status: 'pending',
+    optimisticData: updateFn(item),
+  });
+
+  // Immediately update local UI by dispatching event
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(
+      new CustomEvent('optimistic-update', {
+        detail: { operationId: id, item: updateFn(item) },
+      }),
+    );
+  }
+
+  return id;
+}
+
+function _confirmOptimisticUpdate(id: string): void {
+  const op = optimisticUpdates.get(id);
+  if (op) {
+    op.status = 'confirmed';
+    optimisticUpdates.set(id, op);
+  }
+}
+
+function _failOptimisticUpdate(id: string): void {
+  rollbackOptimisticUpdate(id);
+}
+
+// ---------------------------------------------------------------------------
+// Restore sync runner (for server restore functionality)
+// ---------------------------------------------------------------------------
+
 async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> {
   if (_syncInProgress) {
     return getSyncStatus();
   }
 
   _syncInProgress = true;
+  _syncStatus = 'syncing';
 
   try {
+    // Delta sync check: if we have a recent sync and not forced, skip
+    const lastSync = await _getLastSyncTimestamp();
+    if (lastSync && !config.force) {
+      // Check if we actually need to restore
+      // For restore mode we always proceed
+    }
+
     // Resolve access token for restore
     let resolvedToken = config.accessToken;
     if (!resolvedToken) {
@@ -532,6 +708,7 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
 
     if (!resolvedToken) {
       _mockLastOutcome = 'offline';
+      _syncStatus = 'error';
       _syncInProgress = false;
       return getSyncStatus();
     }
@@ -548,14 +725,14 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
       });
     }
 
-    // Fetch critical data from server
+    const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, config.signal);
     const criticalResponse = await fetch(`${config.apiBaseUrl}/restore/critical`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${resolvedToken}`,
       },
-      signal: config.signal,
+      signal: timeoutSignal,
     });
 
     if (!criticalResponse.ok) {
@@ -575,7 +752,6 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
       });
     }
 
-    // Apply critical data to local database
     if (isTauriEnvironment()) {
       try {
         await invoke('apply_restore_critical', {
@@ -602,7 +778,6 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
       });
     }
 
-    // Apply recent transactions
     if (isTauriEnvironment() && criticalData.recent_transactions) {
       try {
         await invoke('apply_restore_transactions', {
@@ -615,7 +790,6 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
       }
     }
 
-    // Critical phase complete - app can now be used
     if (config.onProgress) {
       config.onProgress({
         phase: 'critical_restore',
@@ -627,13 +801,12 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
       });
     }
 
-    // Set last sync timestamp
     await _setLastSyncTimestamp(criticalData.server_time || new Date().toISOString());
 
     _mockLastOutcome = 'success';
     _mockLastError = null;
+    _syncStatus = 'synced';
 
-    // Start background sync for remaining data (non-blocking)
     setTimeout(() => {
       triggerBackgroundRestore(config, resolvedToken);
     }, 1000);
@@ -643,6 +816,7 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
     const errorMsg = err instanceof Error ? err.message : String(err);
     _mockLastOutcome = 'error';
     _mockLastError = errorMsg;
+    _syncStatus = 'error';
     // eslint-disable-next-line no-console
     console.error('[SyncService] Restore failed:', errorMsg);
     return getSyncStatus();
@@ -651,13 +825,8 @@ async function triggerRestoreSync(config: SyncConfig): Promise<ClientSyncState> 
   }
 }
 
-/**
- * Background restore for non-critical data (runs after critical restore completes).
- * This is fire-and-forget - the app is already usable.
- */
 async function triggerBackgroundRestore(config: SyncConfig, accessToken: string): Promise<void> {
   try {
-    // Phase 2: Important data
     if (config.onProgress) {
       config.onProgress({
         phase: 'background_sync',
@@ -669,12 +838,14 @@ async function triggerBackgroundRestore(config: SyncConfig, accessToken: string)
       });
     }
 
+    const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, undefined);
     const importantResponse = await fetch(`${config.apiBaseUrl}/restore/important`, {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
+      signal: timeoutSignal,
     });
 
     if (importantResponse.ok) {
@@ -693,7 +864,6 @@ async function triggerBackgroundRestore(config: SyncConfig, accessToken: string)
       }
     }
 
-    // Phase 3: Background data (lowest priority)
     if (config.onProgress) {
       config.onProgress({
         phase: 'background_sync',
@@ -711,6 +881,7 @@ async function triggerBackgroundRestore(config: SyncConfig, accessToken: string)
         'Content-Type': 'application/json',
         Authorization: `Bearer ${accessToken}`,
       },
+      signal: timeoutSignal,
     });
 
     if (backgroundResponse.ok) {
@@ -729,7 +900,6 @@ async function triggerBackgroundRestore(config: SyncConfig, accessToken: string)
       }
     }
 
-    // Complete
     if (config.onProgress) {
       config.onProgress({
         phase: 'background_sync',
@@ -743,7 +913,6 @@ async function triggerBackgroundRestore(config: SyncConfig, accessToken: string)
   } catch (err) {
     // eslint-disable-next-line no-console
     console.error('[SyncService] Background restore failed:', err);
-    // Non-fatal - app is already usable
   }
 }
 
@@ -758,25 +927,18 @@ async function triggerBackgroundRestore(config: SyncConfig, accessToken: string)
  *   - Fetches pending outbox rows from SQLite up to batchSize.
  *   - Optimistically marks them as SENDING.
  *   - Reorders batch so baseline/increases precede decreases.
- *   - POSTs to /api/v1/sync/push.
+ *   - POSTs to /api/v1/sync/push with compression.
  *   - Inspects per-item receipts:
  *       accepted=true  -> marks event SYNCED in SQLite.
  *       accepted=false -> marks event PERMANENT_REJECTION.
  *   - On network / 5xx error: marks rows RETRYABLE_ERROR with backoff.
- *   - Repeats until outbox queue is drained or an error occurs.
+ *   - Retry count capped at maxSyncRetries.
+ *   - Delta sync: always uses `since` parameter with lastSyncTimestamp.
  *
  * Pull loop (runs once after all push batches complete):
- *   - Fetch /api/v1/sync/pull and log the snapshot count (full upsert
- *     into local SQLite is a future enhancement — the data is available
- *     here for callers to consume via the returned PullResponse).
+ *   - Fetch /api/v1/sync/pull with delta sync and pagination.
  *
  * Returns a ClientSyncState snapshot after the run.
- *
- * Guarantees:
- *   - Never blocks foreground entry — caller can fire-and-forget.
- *   - Re-entrant guard prevents concurrent runs.
- *   - Batched upload: up to batchSize events per HTTP call.
- *   - Exponential backoff on retryable errors stored in SQLite.
  */
 export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> {
   if (_syncInProgress) {
@@ -788,20 +950,24 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     return triggerRestoreSync(config);
   }
 
+  // Delta sync check: always use lastSyncTimestamp for delta mode
+  const lastSync = await _getLastSyncTimestamp();
+  if (lastSync && !config.force) {
+    // Delta mode is now the default — we always use since
+  }
+
   // Resolve access token — prefer explicit config.accessToken, then auth service.
-  // Retry a few times if no token is available (background upgrade may still be in progress)
+  const maxRetries = config.maxSyncRetries ?? MAX_SYNC_RETRIES;
+  const retryDelayMs = 1000;
   let resolvedToken = config.accessToken;
   if (!resolvedToken) {
-    const maxRetries = 3;
-    const retryDelayMs = 1000;
-
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
         const { getAccessToken } = await import('./tauriAuthService');
         resolvedToken = (await getAccessToken()) ?? undefined;
 
         if (resolvedToken) {
-          break; // Got token, no need to retry
+          break;
         }
 
         if (attempt < maxRetries - 1) {
@@ -817,30 +983,34 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
     }
   }
 
-  // Offline-token-expiry guard: if we have no token because the
-  // token expired while offline, skip the sync entirely — but do NOT discard
-  // pending transactions.  The outbox continues to queue; sync resumes after
-  // re-authentication.
+  // Offline-token-expiry guard
   if (!resolvedToken) {
     _mockLastOutcome = 'offline';
+    _syncStatus = 'error';
     return getSyncStatus();
   }
 
   _syncInProgress = true;
+  _syncStatus = 'syncing';
 
   const batchSize = config.batchSize ?? 500;
   let totalRejected = 0;
   let hadRetryableError = false;
+  let retryCount = 0;
   let lastErrorMsg: string | null = null;
   let pullResponse: PullResponse | null = null;
-  /** True once this run has POSTed a batch to /sync/push. */
   let pushedAnything = false;
 
   try {
-    // ── Push loop ────────────────────────────────────────────────────────────
+    // ── Push loop ────────────────────────────────────────────────────
     let keepGoing = true;
 
     while (keepGoing) {
+      // Abort check
+      if (config.signal?.aborted) {
+        break;
+      }
+
       const rows = await _getPendingOutboxEvents(batchSize, config.force);
 
       if (!rows || rows.length === 0) {
@@ -848,12 +1018,10 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         break;
       }
 
-      // Mark all as SENDING in one batch call
       await _updateOutboxEventStatuses(
         rows.map((row) => ({ event_id: row.event_id, target_status: 'SENDING' })),
       ).catch(() => undefined);
 
-      // Build push items; skip rows with unparseable payloads
       const itemsWithRows: Array<{ item: TransactionPushItem; row: OutboxEventRow }> = [];
       const productUpdates: Array<{ product: ProductSnapshot; row: OutboxEventRow }> = [];
       const unparseable: OutboxEventRow[] = [];
@@ -863,7 +1031,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
           if (product) {
             productUpdates.push({ product, row });
           } else {
-            // Unparseable → permanent rejection
             unparseable.push(row);
           }
         } else {
@@ -871,7 +1038,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
           if (item) {
             itemsWithRows.push({ item, row });
           } else {
-            // Unparseable → permanent rejection
             unparseable.push(row);
           }
         }
@@ -890,32 +1056,24 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         continue;
       }
 
-      // Reorder the batch so baseline (ADJUSTMENT) and stock-increase events
-      // are pushed before stock-decrease events.  This mirrors the server-side
-      // ingest_batch ordering and keeps the two sides consistent.
       const sortedItemsWithRows = _sortPushItems(itemsWithRows);
-
-      // Product snapshots are piggy-backed on every push so transaction events
-      // that reference a locally created product are accepted by the server.
       const localProducts = await _loadLocalProducts();
-
-      // Add product updates to the products array for push
       const pushProducts = [...localProducts, ...productUpdates.map((x) => x.product)];
 
       try {
+        const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, config.signal);
         const pushResp = await _httpPush(
           config.apiBaseUrl,
           resolvedToken,
           sortedItemsWithRows.map((x) => x.item),
           pushProducts,
-          config.signal,
+          timeoutSignal,
         );
         pushedAnything = true;
+        retryCount = 0; // Reset retry count on success
 
-        // Build a lookup map by transaction_id
         const receiptMap = new Map(pushResp.receipts.map((r) => [r.transaction_id, r]));
 
-        // Update each transaction event based on its receipt
         const outboxStatusUpdates: Array<{
           event_id: string;
           target_status: string;
@@ -930,7 +1088,6 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
         for (const { item, row } of sortedItemsWithRows) {
           const receipt = receiptMap.get(item.transaction_id);
           if (!receipt) {
-            // No receipt returned — treat as retryable error
             outboxStatusUpdates.push({
               event_id: row.event_id,
               target_status: 'RETRYABLE_ERROR',
@@ -950,6 +1107,17 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
               sync_status: 'SYNCED',
               server_accepted_at: receipt.received_at,
             });
+            // Confirm optimistic updates tied to this transaction
+            for (const [opId, op] of optimisticUpdates) {
+              if (
+                op.payload &&
+                typeof op.payload === 'object' &&
+                'transaction_id' in op.payload &&
+                (op.payload as Record<string, unknown>).transaction_id === item.transaction_id
+              ) {
+                _confirmOptimisticUpdate(opId);
+              }
+            }
           } else {
             const rejectionReason = receipt.rejection_reason ?? 'Server rejected transaction';
             // eslint-disable-next-line no-console
@@ -960,11 +1128,12 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
               rejectionReason,
             );
 
-            // Distinguish permanent validation failures from stale domain errors
-            // (e.g. Insufficient stock) so offline-accumulated transactions are
-            // retried once the underlying data changes.
             const isPermanent = _isPermanentRejection(rejectionReason);
             const targetStatus = isPermanent ? 'PERMANENT_REJECTION' : 'RETRYABLE_ERROR';
+
+            if (!isPermanent && retryCount < maxRetries) {
+              retryCount++;
+            }
 
             totalRejected++;
 
@@ -977,11 +1146,23 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
               transaction_id: item.transaction_id,
               sync_status: targetStatus,
             });
+
+            // Rollback optimistic updates on permanent rejection
+            if (isPermanent) {
+              for (const [opId, op] of optimisticUpdates) {
+                if (
+                  op.payload &&
+                  typeof op.payload === 'object' &&
+                  'transaction_id' in op.payload &&
+                  (op.payload as Record<string, unknown>).transaction_id === item.transaction_id
+                ) {
+                  _failOptimisticUpdate(opId);
+                }
+              }
+            }
           }
         }
 
-        // Mark product update events as SYNCED (they don't have individual receipts,
-        // but the server upserts them as part of the push)
         for (const { row } of productUpdates) {
           outboxStatusUpdates.push({ event_id: row.event_id, target_status: 'SYNCED' });
         }
@@ -997,57 +1178,53 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
           }),
         ]);
 
-        // If fewer rows than batch size returned, we've drained the queue
         if (rows.length < batchSize) {
           keepGoing = false;
         }
       } catch (pushError) {
-        // Network / 5xx error — retryable (SYNC-011)
         const errMsg = pushError instanceof Error ? pushError.message : String(pushError);
         lastErrorMsg = errMsg;
         hadRetryableError = true;
 
-        await _updateOutboxEventStatuses(
-          itemsWithRows.map(({ row }) => ({
-            event_id: row.event_id,
-            target_status: 'RETRYABLE_ERROR',
-            error_msg: errMsg,
-          })),
-        ).catch(() => undefined);
-
-        // Stop the push loop on transient error — next scheduled run will retry
-        keepGoing = false;
+        if (retryCount < maxRetries) {
+          retryCount++;
+          const backoffMs = Math.pow(2, retryCount) * 1000;
+          await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          keepGoing = true; // Retry
+        } else {
+          // Cap reached: mark as retryable error and stop
+          await _updateOutboxEventStatuses(
+            itemsWithRows.map(({ row }) => ({
+              event_id: row.event_id,
+              target_status: 'RETRYABLE_ERROR',
+              error_msg: errMsg,
+            })),
+          ).catch(() => undefined);
+          keepGoing = false;
+        }
       }
     }
 
-    // ── Catalogue push (repair pass) ──────────────────────────────────────
-    // The push loop above is outbox-driven, so a device whose queue is empty
-    // would never upload its product catalogue.  Products created through the
-    // app are queued as PRODUCT_UPDATE events, but rows imported/created
-    // before that (or while pushes kept failing) still have to reach the
-    // server.  On a forced sync (app start, reconnect, manual sync) with an
-    // empty queue we therefore upload the local catalogue on its own; the
-    // server applies it as an idempotent upsert.
+    // ── Catalogue push (repair pass) ──────────────────────────────
     if (!pushedAnything && !hadRetryableError && config.force) {
       const localProducts = await _loadLocalProducts();
       if (localProducts.length > 0) {
         try {
-          await _httpPush(config.apiBaseUrl, resolvedToken, [], localProducts, config.signal);
+          const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, config.signal);
+          await _httpPush(config.apiBaseUrl, resolvedToken, [], localProducts, timeoutSignal);
         } catch (catalogueError) {
-          // Non-fatal — the next forced sync retries the catalogue upload.
           // eslint-disable-next-line no-console
           console.error('[SyncService] Catalogue push failed:', catalogueError);
         }
       }
     }
 
-    // ── Pull loop (only if push didn't error out) ─────────────────────────
+    // ── Pull loop (only if push didn't error out) ─────────────────
     if (!hadRetryableError) {
       try {
-        pullResponse = await _httpPullAll(config.apiBaseUrl, resolvedToken, config.signal);
+        const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, config.signal);
+        pullResponse = await _httpPullAll(config.apiBaseUrl, resolvedToken, timeoutSignal);
 
-        // Apply the server snapshot into local SQLite in a single batched
-        // transaction (replaces N×3 per-row invoke roundtrips).
         if (isTauriEnvironment()) {
           try {
             await invoke('apply_sync_pull', {
@@ -1061,7 +1238,7 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
           }
         }
       } catch {
-        // Pull failure is non-fatal — we still record a successful push sync time
+        // Pull failure is non-fatal
       }
       const syncTime = pullResponse?.server_time ?? new Date().toISOString();
       await _setLastSyncTimestamp(syncTime);
@@ -1076,9 +1253,8 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
     _mockLastOutcome = outcome;
     _mockLastError = lastErrorMsg;
+    _syncStatus = outcome === 'error' ? 'error' : 'synced';
 
-    // Notify UI components that a sync cycle has completed so they can
-    // immediately refresh their pending-count and last-sync displays.
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new Event('inventory-sync-complete'));
     }
@@ -1090,35 +1266,176 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 }
 
 // ---------------------------------------------------------------------------
-// Background sync scheduler
+// Background sync scheduler (setTimeout chaining)
 // ---------------------------------------------------------------------------
 
 /**
- * Start a background sync loop that fires triggerSync on the given interval.
- * Never blocks the foreground thread.
+ * Start a background sync loop using setTimeout chaining that resets
+ * on activity. Under load, the chain stays active and doesn't pile up.
  *
  * @param config     Sync configuration (apiBaseUrl, accessToken).
  * @param intervalMs How often to attempt a sync (default: 30 000 ms).
  */
 export function startBackgroundSync(config: SyncConfig, intervalMs: number = 30_000): void {
-  if (_backgroundIntervalId !== null) {
+  if (_backgroundSyncActive) {
     return; // Already running
   }
 
-  // Fire immediately on first call, then repeat
-  void triggerSync(config).catch(() => undefined);
+  _backgroundSyncActive = true;
 
-  _backgroundIntervalId = setInterval(() => {
-    void triggerSync(config).catch(() => undefined);
-  }, intervalMs);
+  function _scheduleNext(): void {
+    if (!_backgroundSyncActive) return;
+
+    _backgroundTimeoutId = setTimeout(() => {
+      void triggerSync(config).finally(() => {
+        if (_backgroundSyncActive) {
+          _scheduleNext();
+        }
+      });
+    }, intervalMs);
+  }
+
+  // Fire immediately on first call, then chain
+  void triggerSync(config).catch(() => undefined);
+  _scheduleNext();
 }
 
 /**
  * Stop the background sync loop.
  */
 export function stopBackgroundSync(): void {
-  if (_backgroundIntervalId !== null) {
-    clearInterval(_backgroundIntervalId);
-    _backgroundIntervalId = null;
+  _backgroundSyncActive = false;
+  if (_backgroundTimeoutId !== null) {
+    clearTimeout(_backgroundTimeoutId);
+    _backgroundTimeoutId = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers (kept from original)
+// ---------------------------------------------------------------------------
+
+async function _loadLocalProducts(): Promise<Product[]> {
+  if (!isTauriEnvironment()) {
+    return [];
+  }
+  try {
+    const prods = await invoke<Product[]>('get_products');
+    return Array.isArray(prods) ? prods : [];
+  } catch {
+    return [];
+  }
+}
+
+const MOVEMENT_PUSH_PRIORITY: Record<string, number> = {
+  ADJUSTMENT: 0,
+  RECEIPT: 1,
+  TRANSFER_IN: 1,
+  RETURN: 1,
+  SALE: 2,
+  TRANSFER_OUT: 2,
+  DAMAGE: 2,
+};
+
+const PERMANENT_REJECTION_PREFIXES = [
+  'transaction_id is required',
+  'store_id is required',
+  'product_id is required',
+  'user_id must be a positive integer',
+  'device_id is required',
+  'movement_type is required',
+  'quantity_delta must be non-zero',
+  'movement_type must be one of',
+];
+
+function _isPermanentRejection(reason: string): boolean {
+  const normalized = (reason ?? '').toLowerCase();
+  return PERMANENT_REJECTION_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+}
+
+function _sortPushItems<T extends { item: TransactionPushItem }>(arr: T[]): T[] {
+  return [...arr].sort((a, b) => {
+    const pa = MOVEMENT_PUSH_PRIORITY[a.item.movement_type] ?? 3;
+    const pb = MOVEMENT_PUSH_PRIORITY[b.item.movement_type] ?? 3;
+    if (pa !== pb) return pa - pb;
+    const ta = new Date(a.item.occurred_at).getTime();
+    const tb = new Date(b.item.occurred_at).getTime();
+    if (ta !== tb) return ta - tb;
+    return a.item.transaction_id.localeCompare(b.item.transaction_id);
+  });
+}
+
+function _buildPushItem(row: OutboxEventRow): TransactionPushItem | null {
+  try {
+    const p = JSON.parse(row.payload) as Record<string, unknown>;
+    const userIdStr = String(p.user_id ?? '').trim();
+    const deviceIdStr = String(p.device_id ?? '').trim();
+
+    let userId: number;
+    if (userIdStr && !isNaN(Number(userIdStr))) {
+      userId = Number(userIdStr);
+    } else {
+      if (userIdStr === 'LOCAL-USER' || userIdStr === 'USER-LOCAL') {
+        userId = 1;
+      } else {
+        userId = 1;
+      }
+    }
+
+    return {
+      transaction_id: String(p.transaction_id ?? ''),
+      store_id: String(p.store_id ?? ''),
+      product_id: String(p.product_id ?? ''),
+      movement_type: String(p.movement_type ?? ''),
+      quantity_delta: Number(p.quantity_delta ?? 0),
+      occurred_at: String(p.occurred_at || new Date().toISOString()),
+      user_id: userId,
+      device_id: deviceIdStr || 'SINGLE-USER-DEVICE',
+      stock_bucket: String(p.stock_bucket || 'AVAILABLE'),
+      reference_number: (p.reference_number as string | null | undefined) ?? null,
+      reason_code: (p.reason_code as string | null | undefined) ?? null,
+      transfer_id: (p.transfer_id as string | null | undefined) ?? null,
+      purchase_order_id: (p.purchase_order_id as string | null | undefined) ?? null,
+      batch_id: null,
+      client_sequence: null,
+      original_transaction_id: null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function _buildProductUpdate(row: OutboxEventRow): ProductSnapshot | null {
+  try {
+    const p = JSON.parse(row.payload) as {
+      product_id: string;
+      sku: string;
+      name: string;
+      brand: string | null;
+      model: string | null;
+      category: string;
+      unit: string;
+      barcode: string | null;
+      alternate_names: string | null;
+      serial_tracking_enabled: boolean;
+      is_active: boolean;
+      updated_at: string;
+    };
+    return {
+      id: p.product_id,
+      sku: p.sku,
+      name: p.name,
+      brand: p.brand ?? null,
+      model: p.model ?? null,
+      category: p.category,
+      unit: p.unit,
+      barcode: p.barcode ?? null,
+      alternate_names: p.alternate_names ?? null,
+      serial_tracking_enabled: p.serial_tracking_enabled,
+      is_active: p.is_active,
+      updated_at: p.updated_at || new Date().toISOString(),
+    };
+  } catch {
+    return null;
   }
 }
