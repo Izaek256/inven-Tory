@@ -5,7 +5,7 @@
  * line to the Count Sheet. No approval step, no wizard.
  */
 
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PhysicalCountAdjustmentView } from '../views/PhysicalCountAdjustmentView';

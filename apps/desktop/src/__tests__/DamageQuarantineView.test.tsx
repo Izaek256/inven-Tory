@@ -8,7 +8,7 @@
  *   - Regression check: confirm Sale screen (Issue 07) cannot sell DAMAGED/QUARANTINE stock.
  */
 
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DamageQuarantineView } from '../views/DamageQuarantineView';

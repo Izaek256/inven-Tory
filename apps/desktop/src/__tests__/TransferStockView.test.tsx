@@ -7,7 +7,7 @@
  *   - EXCEPTION and CANCELLED paths covered by tests.
  */
 
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TransferStockView } from '../views/TransferStockView';

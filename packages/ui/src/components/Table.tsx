@@ -1,6 +1,6 @@
 import React, { useState, useRef, useMemo, useCallback } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
-import { useVirtualizer, type Virtualizer as TanStackVirtualizer } from '@tanstack/react-virtual';
+import { useVirtualizer } from '@tanstack/react-virtual';
 
 export type SortDirection = 'asc' | 'desc' | null;
 

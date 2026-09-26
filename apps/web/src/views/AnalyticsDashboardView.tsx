@@ -36,17 +36,8 @@ import {
   getOperationsSummary,
   listStores,
 } from '../services/dashboardService';
-import { useQuery, useQueries } from '@tanstack/react-query';
-import type {
-  DashboardMetrics,
-  KPIDelta,
-  KPIDeltasResponse,
-  MostSoldExtendedResponse,
-  OperationsSummaryResponse,
-  RecentActivityResponse,
-  StockTrendResponse,
-  CategoryDistributionResponse,
-} from '../types/dashboard';
+import { useQueries } from '@tanstack/react-query';
+import type { DashboardMetrics, KPIDelta } from '../types/dashboard';
 import { DashboardTile } from '../components/DashboardTile';
 import { RecentActivityList } from '../components/RecentActivityList';
 import { StockTrendChart } from '../components/StockTrendChart';

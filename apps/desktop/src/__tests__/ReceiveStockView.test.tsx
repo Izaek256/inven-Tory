@@ -11,7 +11,7 @@
  *   - Pressing Enter on Receipt No. (last field) commits the row.
  */
 
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ReceiveStockView } from '../views/ReceiveStockView';
