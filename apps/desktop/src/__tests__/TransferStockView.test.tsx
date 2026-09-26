@@ -8,6 +8,7 @@
  */
 
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TransferStockView } from '../views/TransferStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
@@ -144,7 +145,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
   });
 
   it('renders transfer list with loaded transfers', async (): Promise<void> => {
-    render(<TransferStockView />);
+    renderWithProviders(<TransferStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('transfer-stock-view')).toBeInTheDocument();
@@ -160,7 +161,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
       .spyOn(tauriTransferService, 'createTransfer')
       .mockResolvedValue(MOCK_TRANSFER);
 
-    render(<TransferStockView />);
+    renderWithProviders(<TransferStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('tab-create')).toBeInTheDocument();
@@ -212,7 +213,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
       .spyOn(tauriTransferService, 'dispatchTransfer')
       .mockResolvedValue({ ...MOCK_TRANSFER, status: 'DISPATCHED' });
 
-    render(<TransferStockView />);
+    renderWithProviders(<TransferStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('btn-dispatch-TRF-TEST-001')).toBeInTheDocument();
@@ -232,7 +233,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
       .spyOn(tauriTransferService, 'receiveTransfer')
       .mockResolvedValue({ ...dispatchedTransfer, status: 'RECEIVED' });
 
-    render(<TransferStockView />);
+    renderWithProviders(<TransferStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('btn-receive-TRF-TEST-001')).toBeInTheDocument();
@@ -252,7 +253,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
       .spyOn(tauriTransferService, 'markTransferException')
       .mockResolvedValue({ ...dispatchedTransfer, status: 'EXCEPTION' });
 
-    render(<TransferStockView />);
+    renderWithProviders(<TransferStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('btn-exception-TRF-TEST-001')).toBeInTheDocument();
@@ -270,7 +271,7 @@ describe('TransferStockView — Issue 09 Acceptance Criteria', (): void => {
       .spyOn(tauriTransferService, 'cancelTransfer')
       .mockResolvedValue({ ...MOCK_TRANSFER, status: 'CANCELLED' });
 
-    render(<TransferStockView />);
+    renderWithProviders(<TransferStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('btn-cancel-TRF-TEST-001')).toBeInTheDocument();

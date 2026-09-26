@@ -56,16 +56,16 @@ def build_engine(database_url: str | None = None) -> AsyncEngine:
     extra: dict = {}
     if url and "sqlite" not in str(url):
         extra["pool_reset_on_return"] = "rollback"
-        # NOTE: deliberately NOT using NullPool any more.
-        # pool_reset_on_return="rollback" is the PRIMARY defence against
-        # InFailedSQLTransactionError: every connection returned to the pool
-        # is guaranteed to have an explicit ROLLBACK issued so the next
-        # checkout gets a clean connection with no aborted-txn flag.
-        # NullPool would defeat this because connections are never "returned".
-        # Singleton engine is now enforced via function-attribute cache in
-        # get_engine(), so every session factory shares this one pool.
-        extra["pool_size"] = 10
-        extra["max_overflow"] = 20
+        # asyncpg create_pool(min_size=5, max_size=20) maps to SQLAlchemy as
+        # pool_size=5 (maintained) + max_overflow=15 (burst) = 20 total max.
+        # NOTE: SQLAlchemy rejects a raw "min_size" kwarg — it would crash
+        # create_engine() on any real PostgreSQL URL.
+        extra["pool_size"] = 5
+        extra["max_overflow"] = 15
+        extra["connect_args"] = {
+            "server_settings": {"statement_timeout": "30s"},
+            "command_timeout": 30,
+        }
 
     engine = create_async_engine(
         url,
@@ -74,6 +74,17 @@ def build_engine(database_url: str | None = None) -> AsyncEngine:
         pool_pre_ping=True,
         **extra,
     )
+    if url and "sqlite" in str(url):
+        # PRAGMAs must run at connect time via an event — they are not valid
+        # sqlite3.connect() keyword arguments.
+        @event.listens_for(engine.sync_engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, _record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA cache_size=-64000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.close()
+
     _install_slow_query_logging(engine)
     return engine
 

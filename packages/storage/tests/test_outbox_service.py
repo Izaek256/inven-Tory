@@ -103,3 +103,106 @@ def test_transition_retryable_error_branch(tmp_path):
     with session_factory() as session:
         # Retryable error with future next_attempt_at is still counted in pending count
         assert OutboxService.get_pending_count(session) == 1
+
+
+# ---------------------------------------------------------------------------
+# P2 (optimization plan): outbox archival (7-day retention)
+# ---------------------------------------------------------------------------
+
+
+def _enqueue_with_age(session, event_id: str, status: str, days_old: int):
+    """Enqueue an outbox event and backdate its created_at."""
+    from datetime import UTC, datetime, timedelta
+
+    event = OutboxService.enqueue_event(
+        session=session,
+        event_id=event_id,
+        event_type="INVENTORY_TRANSACTION",
+        payload={"tx_id": event_id},
+        status=status,
+    )
+    event.created_at = datetime.now(UTC) - timedelta(days=days_old)
+    return event
+
+
+def test_archive_old_events_removes_only_stale_terminal_events(tmp_path):
+    """Terminal events past the cutoff are archived; the rest are kept."""
+    db_file = tmp_path / "test_outbox_archive.db"
+    engine = get_engine(f"sqlite:///{db_file}")
+    Base.metadata.create_all(engine)
+    session_factory = get_sessionmaker(engine)
+
+    with session_factory() as session:
+        # Past cutoff, terminal → must be archived.
+        _enqueue_with_age(session, "EVT-OLD-SYNCED", "SYNCED", days_old=8)
+        _enqueue_with_age(session, "EVT-OLD-ACCEPTED", "ACCEPTED", days_old=9)
+        _enqueue_with_age(session, "EVT-OLD-REJECTED", "PERMANENT_REJECTION", days_old=10)
+        # Past cutoff, still deliverable → must be kept (offline queue payload).
+        _enqueue_with_age(session, "EVT-OLD-PENDING", "PENDING", days_old=8)
+        _enqueue_with_age(session, "EVT-OLD-RETRYABLE", "RETRYABLE_ERROR", days_old=8)
+        # Recent terminal → must be kept (inside retention window).
+        _enqueue_with_age(session, "EVT-NEW-SYNCED", "SYNCED", days_old=1)
+        session.commit()
+
+    with session_factory() as session:
+        archived = OutboxService.archive_old_events(session, retention_days=7)
+        session.commit()
+        assert archived == 3
+
+    with session_factory() as session:
+        remaining = {e.event_id for e in OutboxService.get_pending_events(session, limit=50)}
+        # Deliverable events survive regardless of age.
+        assert "EVT-OLD-PENDING" in remaining
+        assert "EVT-OLD-RETRYABLE" in remaining
+
+        from sqlalchemy import select
+
+        from storage.models.outbox_event import OutboxEvent
+
+        all_ids = set(session.scalars(select(OutboxEvent.event_id)).all())
+        assert all_ids == {
+            "EVT-OLD-PENDING",
+            "EVT-OLD-RETRYABLE",
+            "EVT-NEW-SYNCED",
+        }
+
+
+def test_archive_old_events_is_idempotent(tmp_path):
+    """A second archival run finds nothing new to archive."""
+    db_file = tmp_path / "test_outbox_archive_idem.db"
+    engine = get_engine(f"sqlite:///{db_file}")
+    Base.metadata.create_all(engine)
+    session_factory = get_sessionmaker(engine)
+
+    with session_factory() as session:
+        _enqueue_with_age(session, "EVT-IDEM-1", "SYNCED", days_old=30)
+        session.commit()
+
+    with session_factory() as session:
+        assert OutboxService.archive_old_events(session, retention_days=7) == 1
+        session.commit()
+
+    with session_factory() as session:
+        assert OutboxService.archive_old_events(session, retention_days=7) == 0
+
+
+def test_archive_old_events_respects_custom_retention_window(tmp_path):
+    """retention_days widens/narrows the cutoff."""
+    db_file = tmp_path / "test_outbox_archive_window.db"
+    engine = get_engine(f"sqlite:///{db_file}")
+    Base.metadata.create_all(engine)
+    session_factory = get_sessionmaker(engine)
+
+    with session_factory() as session:
+        _enqueue_with_age(session, "EVT-WIN-8D", "SYNCED", days_old=8)
+        session.commit()
+
+    with session_factory() as session:
+        # 14-day window → 8-day-old event is inside it, kept.
+        assert OutboxService.archive_old_events(session, retention_days=14) == 0
+        session.commit()
+
+    with session_factory() as session:
+        # 7-day window → archived.
+        assert OutboxService.archive_old_events(session, retention_days=7) == 1
+        session.commit()

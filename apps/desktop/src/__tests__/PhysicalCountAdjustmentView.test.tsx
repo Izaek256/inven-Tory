@@ -6,6 +6,7 @@
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { PhysicalCountAdjustmentView } from '../views/PhysicalCountAdjustmentView';
 import * as tauriStoreService from '../services/tauriStoreService';
@@ -120,7 +121,7 @@ describe('PhysicalCountAdjustmentView — single-step immediate adjust', (): voi
       updated_at: new Date().toISOString(),
     });
 
-    render(<PhysicalCountAdjustmentView />);
+    renderWithProviders(<PhysicalCountAdjustmentView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('count-session-grid')).toBeInTheDocument();
@@ -167,7 +168,7 @@ describe('PhysicalCountAdjustmentView — single-step immediate adjust', (): voi
       quantity: 0,
       updated_at: new Date().toISOString(),
     });
-    render(<PhysicalCountAdjustmentView />);
+    renderWithProviders(<PhysicalCountAdjustmentView />);
 
     // Grid is present immediately
     expect(screen.getByTestId('physical-count-view')).toBeInTheDocument();

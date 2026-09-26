@@ -19,34 +19,88 @@
  *     are replaced by the real role from the session.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState, Suspense, lazy } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
-import { DashboardView } from './views/DashboardView';
-import { ProductsView } from './views/ProductsView';
-import { TransactionsView } from './views/TransactionsView';
-import { ReceiveStockView } from './views/ReceiveStockView';
-import { SaleStockView } from './views/SaleStockView';
-import { ReturnStockView } from './views/ReturnStockView';
-import { TransferStockView } from './views/TransferStockView';
-import { DamageQuarantineView } from './views/DamageQuarantineView';
-import { PhysicalCountAdjustmentView } from './views/PhysicalCountAdjustmentView';
-import { DayBooksView } from './views/DayBooksView';
-import { SettingsView } from './views/SettingsView';
-import { CreateProductView } from './views/CreateProductView';
 import { LoginView } from './views/LoginView';
 import { GenesisWizard } from './views/GenesisWizard';
-import { useGenesisState } from './hooks/useGenesisState';
 import { OfflineAuthBanner } from './components/OfflineAuthBanner';
 import { getStores } from './services/tauriStoreService';
 import { getSession, isAuthenticated, logout } from './services/tauriAuthService';
 import { startBackgroundSync, stopBackgroundSync, triggerSync } from './services/tauriSyncService';
 import { useAppState } from './hooks/useAppState';
+import { useGenesisState } from './hooks/useGenesisState';
 import { StoreProvider } from './context/StoreContext';
 import { Store as StoreIcon } from 'lucide-react';
 import { Store } from './types/store';
 import type { AuthSession } from './types/auth';
 import './index.css';
+
+const DashboardView = lazy(() =>
+  import('./views/DashboardView').then((m) => ({ default: m.DashboardView })),
+);
+const ProductsView = lazy(() =>
+  import('./views/ProductsView').then((m) => ({ default: m.ProductsView })),
+);
+const TransactionsView = lazy(() =>
+  import('./views/TransactionsView').then((m) => ({ default: m.TransactionsView })),
+);
+const ReceiveStockView = lazy(() =>
+  import('./views/ReceiveStockView').then((m) => ({ default: m.ReceiveStockView })),
+);
+const SaleStockView = lazy(() =>
+  import('./views/SaleStockView').then((m) => ({ default: m.SaleStockView })),
+);
+const ReturnStockView = lazy(() =>
+  import('./views/ReturnStockView').then((m) => ({ default: m.ReturnStockView })),
+);
+const TransferStockView = lazy(() =>
+  import('./views/TransferStockView').then((m) => ({ default: m.TransferStockView })),
+);
+const DamageQuarantineView = lazy(() =>
+  import('./views/DamageQuarantineView').then((m) => ({ default: m.DamageQuarantineView })),
+);
+const PhysicalCountAdjustmentView = lazy(() =>
+  import('./views/PhysicalCountAdjustmentView').then((m) => ({
+    default: m.PhysicalCountAdjustmentView,
+  })),
+);
+const DayBooksView = lazy(() =>
+  import('./views/DayBooksView').then((m) => ({ default: m.DayBooksView })),
+);
+const SettingsView = lazy(() =>
+  import('./views/SettingsView').then((m) => ({ default: m.SettingsView })),
+);
+const CreateProductView = lazy(() =>
+  import('./views/CreateProductView').then((m) => ({ default: m.CreateProductView })),
+);
+
+// Simple skeleton for lazy-loaded views
+function ViewSkeleton(): React.ReactElement {
+  return (
+    <div className="view-skeleton" style={{ padding: 24 }}>
+      <div className="skeleton-row" style={{ height: 32, marginBottom: 16, borderRadius: 8 }} />
+      <div
+        className="skeleton-row"
+        style={{ height: 16, marginBottom: 8, borderRadius: 4, width: '60%' }}
+      />
+      <div
+        className="skeleton-row"
+        style={{ height: 16, marginBottom: 8, borderRadius: 4, width: '40%' }}
+      />
+      <div style={{ marginTop: 24 }}>
+        {[1, 2, 3, 4].map((i) => (
+          <div
+            key={i}
+            className="skeleton-row"
+            style={{ height: 120, marginBottom: 16, borderRadius: 8 }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
 
 // The device ID is stored in Tauri's secure store. For single-user mode we
 // NO LONGER require a pre-registration step. If nothing is stored we generate
@@ -119,6 +173,18 @@ async function getOrCreateDeviceId(): Promise<string> {
   return generated;
 }
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+    },
+  },
+});
+
+// TODO(optimization-plan): First-run onboarding tour is DEFERRED (flagged
+// LATER, high effort, needs its own content/design pass) per the Optimization
+// & UX Implementation Prompt (feat/inventory-optimization). Do not implement
+// here without that design pass.
 export function App(): React.ReactElement {
   const [authState, setAuthState] = useState<
     'loading' | 'unauthenticated' | 'authenticated' | 'expired_offline'
@@ -129,6 +195,7 @@ export function App(): React.ReactElement {
 
   const { currentView, setCurrentView, activeStoreId, setActiveStoreId } = useAppState();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [liveMessage, setLiveMessage] = useState('');
 
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -434,6 +501,27 @@ export function App(): React.ReactElement {
     };
   }, []);
 
+  // Focus management on view transitions: move keyboard focus to the main
+  // content region (and announce it) whenever the active view changes, so
+  // keyboard/screen-reader users don't start from the top of the sidebar.
+  const previousViewRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (authState !== 'authenticated') return;
+    if (previousViewRef.current === null) {
+      previousViewRef.current = currentView;
+      return;
+    }
+    if (previousViewRef.current === currentView) return;
+    previousViewRef.current = currentView;
+
+    const el = document.getElementById('main-content');
+    if (el) el.focus({ preventScroll: true });
+    setLiveMessage(`${currentView} view loaded`);
+
+    const timer = window.setTimeout(() => setLiveMessage(''), 1500);
+    return (): void => window.clearTimeout(timer);
+  }, [currentView, authState]);
+
   const handleReauthSuccess = (): void => {
     const refresh = async (): Promise<void> => {
       const s = await getSession();
@@ -511,144 +599,204 @@ export function App(): React.ReactElement {
     switch (currentView) {
       case 'dashboard':
         return (
-          <DashboardView
-            stores={stores}
-            loading={loading}
-            error={error}
-            onRetry={fetchStores}
-            userRole={currentUserRole}
-          />
+          <Suspense fallback={<ViewSkeleton />}>
+            <DashboardView
+              stores={stores}
+              loading={loading}
+              error={error}
+              onRetry={fetchStores}
+              userRole={currentUserRole}
+            />
+          </Suspense>
         );
       case 'products':
-        return <ProductsView userRole={currentUserRole} />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <ProductsView userRole={currentUserRole} />
+          </Suspense>
+        );
       case 'receive_stock':
-        return <ReceiveStockView />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <ReceiveStockView />
+          </Suspense>
+        );
       case 'sale_stock':
-        return <SaleStockView />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <SaleStockView />
+          </Suspense>
+        );
       case 'return_stock':
-        return <ReturnStockView />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <ReturnStockView />
+          </Suspense>
+        );
       case 'transfer_stock':
-        return <TransferStockView />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <TransferStockView />
+          </Suspense>
+        );
       case 'damage_quarantine':
-        return <DamageQuarantineView />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <DamageQuarantineView />
+          </Suspense>
+        );
       case 'physical_count':
-        return <PhysicalCountAdjustmentView userRole={currentUserRole} />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <PhysicalCountAdjustmentView userRole={currentUserRole} />
+          </Suspense>
+        );
       case 'create_product':
         return (
-          <CreateProductView
-            importProgress={importProgress}
-            setImportProgress={setImportProgress}
-          />
+          <Suspense fallback={<ViewSkeleton />}>
+            <CreateProductView
+              importProgress={importProgress}
+              setImportProgress={setImportProgress}
+            />
+          </Suspense>
         );
       case 'day_books':
-        return <DayBooksView stores={stores} />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <DayBooksView stores={stores} />
+          </Suspense>
+        );
       case 'transactions':
-        return <TransactionsView />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <TransactionsView />
+          </Suspense>
+        );
       case 'settings':
-        return <SettingsView currentUser={session} onLogout={handleLogout} />;
+        return (
+          <Suspense fallback={<ViewSkeleton />}>
+            <SettingsView currentUser={session} onLogout={handleLogout} />
+          </Suspense>
+        );
       default:
         return (
-          <DashboardView
-            stores={stores}
-            loading={loading}
-            error={error}
-            onRetry={fetchStores}
-            userRole={currentUserRole}
-          />
+          <Suspense fallback={<ViewSkeleton />}>
+            <DashboardView
+              stores={stores}
+              loading={loading}
+              error={error}
+              onRetry={fetchStores}
+              userRole={currentUserRole}
+            />
+          </Suspense>
         );
     }
   };
 
   return (
-    <div className="app-container" data-testid="app-container">
-      {showGenesis && genesis.state && !genesis.state.ready && (
-        <GenesisWizard
-          state={genesis.state}
-          onComplete={handleGenesisComplete}
-          onCancel={() => setShowGenesis(false)}
-          onCancelRestore={handleCancelRestore}
-          running={genesis.runningGenesis}
-          error={genesis.error}
-          onRun={async (params) => {
-            const result = await genesis.runGenesis(params);
-            if (result.success) {
-              handleGenesisComplete(result.result?.username ?? '', result.result?.store_code ?? '');
-            }
-            return result;
-          }}
-          onValidateRestore={async (params) => {
-            return await genesis.validateRestore(params);
-          }}
-          onStartRestore={async (params) => {
-            return await genesis.startRestore(params);
-          }}
-          onGetRestoreProgress={async () => {
-            return await genesis.getRestoreProgress();
-          }}
-          onRestoreStarted={handleRestoreStarted}
-          restoreProgress={restoreProgress}
-        />
-      )}
-      {!showGenesis && (
-        <>
-          {switchingStore.active && (
-            <div className="store-switch-overlay" data-testid="store-switch-overlay">
-              <div className="store-switch-modal">
-                <div className="store-switch-spinner-container">
-                  <div className="store-switch-spinner-ring" />
-                  <div className="store-switch-spinner-core">
-                    <StoreIcon size={22} />
+    <QueryClientProvider client={queryClient}>
+      <div className="app-container" data-testid="app-container">
+        <a href="#main-content" className="skip-link">
+          Skip to main content
+        </a>
+        {showGenesis && genesis.state && !genesis.state.ready && (
+          <GenesisWizard
+            state={genesis.state}
+            onComplete={handleGenesisComplete}
+            onCancel={() => setShowGenesis(false)}
+            onCancelRestore={handleCancelRestore}
+            running={genesis.runningGenesis}
+            error={genesis.error}
+            onRun={async (params) => {
+              const result = await genesis.runGenesis(params);
+              if (result.success) {
+                handleGenesisComplete(
+                  result.result?.username ?? '',
+                  result.result?.store_code ?? '',
+                );
+              }
+              return result;
+            }}
+            onValidateRestore={async (params) => {
+              return await genesis.validateRestore(params);
+            }}
+            onStartRestore={async (params) => {
+              return await genesis.startRestore(params);
+            }}
+            onGetRestoreProgress={async () => {
+              return await genesis.getRestoreProgress();
+            }}
+            onRestoreStarted={handleRestoreStarted}
+            restoreProgress={restoreProgress}
+          />
+        )}
+        {!showGenesis && (
+          <>
+            {switchingStore.active && (
+              <div className="store-switch-overlay" data-testid="store-switch-overlay">
+                <div className="store-switch-modal">
+                  <div className="store-switch-spinner-container">
+                    <div className="store-switch-spinner-ring" />
+                    <div className="store-switch-spinner-core">
+                      <StoreIcon size={22} />
+                    </div>
                   </div>
+                  <h3 className="store-switch-title">Switching Store</h3>
+                  <p className="store-switch-target">
+                    {switchingStore.storeName}{' '}
+                    {switchingStore.storeCode && (
+                      <span className="store-switch-badge">{switchingStore.storeCode}</span>
+                    )}
+                  </p>
+                  <p className="store-switch-subtitle">
+                    Refreshing inventory ledger and localized data...
+                  </p>
                 </div>
-                <h3 className="store-switch-title">Switching Store</h3>
-                <p className="store-switch-target">
-                  {switchingStore.storeName}{' '}
-                  {switchingStore.storeCode && (
-                    <span className="store-switch-badge">{switchingStore.storeCode}</span>
-                  )}
-                </p>
-                <p className="store-switch-subtitle">
-                  Refreshing inventory ledger and localized data...
-                </p>
               </div>
-            </div>
-          )}
-          {authState !== 'loading' && authState !== 'unauthenticated' && (
-            <Sidebar
-              currentView={currentView}
-              onNavigate={setCurrentView}
-              collapsed={sidebarCollapsed}
-              onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
-            />
-          )}
-          <div className="app-body">
-            {authState !== 'unauthenticated' && authState !== 'loading' && (
-              <Header
-                stores={stores}
-                activeStoreId={activeStoreId}
-                onSelectStore={handleSelectStoreAndReload}
-                interactiveTimeMs={interactiveTimeMs}
-                currentUser={session}
-                onLogout={handleLogout}
-                restoreProgress={restoreProgress}
+            )}
+            {authState !== 'loading' && authState !== 'unauthenticated' && (
+              <Sidebar
+                currentView={currentView}
+                onNavigate={setCurrentView}
+                collapsed={sidebarCollapsed}
+                onToggleCollapse={() => setSidebarCollapsed((c) => !c)}
               />
             )}
-            <main className="app-content">
-              {authState === 'expired_offline' && session && (
-                <OfflineAuthBanner
-                  username={session.username}
-                  deviceId={deviceId}
-                  onReauthSuccess={handleReauthSuccess}
+            <div className="app-body">
+              {authState !== 'unauthenticated' && authState !== 'loading' && (
+                <Header
+                  stores={stores}
+                  activeStoreId={activeStoreId}
+                  onSelectStore={handleSelectStoreAndReload}
+                  interactiveTimeMs={interactiveTimeMs}
+                  currentUser={session}
+                  onLogout={handleLogout}
+                  restoreProgress={restoreProgress}
                 />
               )}
-              <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={setActiveStoreId}>
-                {renderView()}
-              </StoreProvider>
-            </main>
-          </div>
-        </>
-      )}
-    </div>
+              <main className="app-content" id="main-content" tabIndex={-1}>
+                {authState === 'expired_offline' && session && (
+                  <OfflineAuthBanner
+                    username={session.username}
+                    deviceId={deviceId}
+                    onReauthSuccess={handleReauthSuccess}
+                  />
+                )}
+                <StoreProvider activeStoreId={activeStoreId} setActiveStoreId={setActiveStoreId}>
+                  <div key={currentView} className="it-view-enter">
+                    {renderView()}
+                  </div>
+                </StoreProvider>
+              </main>
+            </div>
+          </>
+        )}
+        {/* ARIA live region for screen reader announcements */}
+        <div className="it-aria-live" aria-live="polite" aria-atomic="true" role="status">
+          {liveMessage}
+        </div>
+      </div>
+    </QueryClientProvider>
   );
 }
 

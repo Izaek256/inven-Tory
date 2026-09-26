@@ -5,6 +5,7 @@ Routers and middleware are registered here. Business logic
 lives in services; domain rules live in packages/domain.
 """
 
+import gzip
 import logging
 import time
 import traceback
@@ -15,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import text
+from starlette.middleware.gzip import GZipMiddleware
 
 from app.api.v1 import (
     admin,
@@ -99,6 +101,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+if settings.compression_enabled:
+    # Response-side gzip. Registered FIRST so it sits innermost of the user
+    # middleware stack — it must see the router's complete (non-streamed)
+    # response body, otherwise minimum_size is bypassed by the streamed
+    # chunks that BaseHTTPMiddleware (logging/decompression) re-emits.
+    # Clients (fetch, httpx) decode Content-Encoding: gzip transparently.
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -107,12 +117,35 @@ app.add_middleware(
     allow_headers=[
         "Authorization",
         "Content-Type",
+        "Content-Encoding",
         "X-Device-Id",
         "Accept",
         "Origin",
         "X-Requested-With",
     ],
 )
+
+
+@app.middleware("http")
+async def _decompress_gzip_request(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
+    """
+    Transparently gunzip request bodies marked ``Content-Encoding: gzip``.
+
+    The desktop sync client compresses push payloads before sending them
+    (tauriSyncService ``_compressPayload``); Starlette/FastAPI do not
+    decode request bodies themselves, so without this middleware every
+    compressed push would fail JSON parsing. Runs before any route reads
+    the body and caches the decoded bytes on the request object.
+    """
+    if request.headers.get("content-encoding", "").lower() == "gzip":
+        compressed = await request.body()
+        try:
+            request._body = gzip.decompress(compressed)
+        except (OSError, EOFError):
+            return JSONResponse(status_code=400, content={"detail": "Invalid gzip request body"})
+    return await call_next(request)
 
 
 @app.middleware("http")

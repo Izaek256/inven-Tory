@@ -29,6 +29,10 @@ RUN pip install --no-cache-dir -e /app/packages/domain && \
 COPY services/api/ /app/services/api/
 COPY packages/domain/ /app/packages/domain/
 
+ENV PGOPTIONS="-c statement_timeout=30000 -c lock_timeout=10000"
+ENV DATABASE_POOL_SIZE=20
+ENV DATABASE_MAX_OVERFLOW=40
+
 USER appuser
 
 WORKDIR /app/services/api

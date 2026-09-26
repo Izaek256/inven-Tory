@@ -1,5 +1,15 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, SearchInput, DataTable, EmptyState, type ColumnDef } from '@invenTory/ui';
+import React, { useMemo, useState } from 'react';
+import {
+  Modal,
+  SearchInput,
+  DataTable,
+  EmptyState,
+  SkeletonSearch,
+  loadSearchHistory,
+  pushSearchHistory,
+  clearSearchHistory,
+  type ColumnDef,
+} from '@invenTory/ui';
 import { Product } from '../types/product';
 import { Store } from '../types/store';
 import { getProducts } from '../services/tauriProductService';
@@ -28,48 +38,21 @@ interface SearchResultRow {
  * never changes the active store — it is a read-only lookup layered on top of
  * whatever store context is currently active.
  */
+import { useQuery } from '@tanstack/react-query';
+
 export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   isOpen,
   onClose,
   stores,
 }) => {
   const [query, setQuery] = useState('');
-  const [products, setProducts] = useState<Product[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [qtyMap, setQtyMap] = useState<Map<string, Map<string, number>>>(new Map());
-  const qtyCacheRef = useRef<Map<string, Map<string, number>>>(new Map());
+  const [searchHistory, setSearchHistory] = useState<string[]>(() => loadSearchHistory());
 
-  // Load the full catalogue when the modal opens (local/offline data source).
-  useEffect(() => {
-    if (!isOpen) return;
-    let cancelled = false;
-    setLoading(true);
-    // Clear the cache when modal opens to ensure fresh data after stock movements
-    qtyCacheRef.current.clear();
-    getProducts()
-      .then((list) => {
-        if (!cancelled) setProducts(list);
-      })
-      .catch(() => {
-        if (!cancelled) setProducts([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return (): void => {
-      cancelled = true;
-    };
-  }, [isOpen]);
+  const { data, isPending: isLoading } = useQuery({
+    queryKey: ['globalSearchAll', stores.map((s) => s.id)],
+    queryFn: async () => {
+      const list = await getProducts().catch(() => []);
 
-  // Fetch per-store quantities for the catalogue; one indexed balance query
-  // per store, run concurrently and cached per store across runs. (The old
-  // sequential per-(store, product) single-cell loop issued stores×products
-  // round-trips and blocked the modal on all of them.)
-  useEffect(() => {
-    if (!isOpen || products.length === 0 || stores.length === 0) return;
-    let cancelled = false;
-    const load = async (): Promise<void> => {
-      // Always fetch fresh balances when modal opens to reflect latest stock movements
       const fetched = await Promise.all(
         stores.map((store) =>
           getStockBalancesForStore(store.id)
@@ -77,25 +60,29 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
             .then((balances) => ({ storeId: store.id, balances })),
         ),
       );
+
+      const storeBalances = new Map<string, Map<string, number>>();
       for (const { storeId, balances } of fetched) {
-        qtyCacheRef.current.set(storeId, balances);
+        storeBalances.set(storeId, balances);
       }
-      if (cancelled) return;
-      const next = new Map<string, Map<string, number>>();
-      for (const p of products) {
+
+      const nextQty = new Map<string, Map<string, number>>();
+      for (const p of list) {
         const row = new Map<string, number>();
         for (const s of stores) {
-          row.set(s.id, qtyCacheRef.current.get(s.id)?.get(p.id) ?? 0);
+          row.set(s.id, storeBalances.get(s.id)?.get(p.id) ?? 0);
         }
-        next.set(p.id, row);
+        nextQty.set(p.id, row);
       }
-      if (!cancelled) setQtyMap(next);
-    };
-    void load();
-    return (): void => {
-      cancelled = true;
-    };
-  }, [isOpen, products, stores]);
+
+      return { products: list, qtyMap: nextQty };
+    },
+    enabled: isOpen && stores.length > 0,
+    staleTime: 60_000,
+  });
+
+  const products = data?.products ?? [];
+  const qtyMap = data?.qtyMap ?? new Map();
 
   // Name/SKU/brand/model/category matching — across ALL stores.
   const results = useMemo<SearchResultRow[]>(() => {
@@ -209,8 +196,19 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       accessor: (r: SearchResultRow) => r.total,
     },
   ];
+  const handleClose = (): void => {
+    if (query.trim()) setSearchHistory(pushSearchHistory(query));
+    setQuery('');
+    onClose();
+  };
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Global Product Search (All Stores)" size="xl">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="Global Product Search (All Stores)"
+      size="xl"
+    >
       <div data-testid="global-search-modal">
         <div style={{ marginBottom: '16px' }}>
           <SearchInput
@@ -221,6 +219,45 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
             data-testid="global-search-input"
           />
         </div>
+
+        {!query && searchHistory.length > 0 && (
+          <div
+            data-testid="global-search-history"
+            style={{
+              display: 'flex',
+              gap: '8px',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              marginBottom: '14px',
+            }}
+          >
+            <span style={{ fontSize: '11px', color: 'var(--it-text-secondary)' }}>Recent:</span>
+            {searchHistory.slice(0, 5).map((term) => (
+              <button
+                key={term}
+                type="button"
+                className="btn btn--ghost btn--sm"
+                data-testid="global-search-history-chip"
+                onClick={() => setQuery(term)}
+                style={{ fontSize: '12px' }}
+              >
+                {term}
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn btn--ghost btn--sm"
+              data-testid="global-search-history-clear"
+              onClick={() => {
+                clearSearchHistory();
+                setSearchHistory([]);
+              }}
+              style={{ fontSize: '12px', color: 'var(--it-text-secondary)' }}
+            >
+              Clear
+            </button>
+          </div>
+        )}
 
         {stores.length > 0 && (
           <div
@@ -248,8 +285,10 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
           </div>
         )}
 
-        {loading ? (
-          <EmptyState heading="Searching…" body="Loading catalogue across all stores." />
+        {isLoading ? (
+          <div data-testid="global-search-loading" role="status" aria-label="Loading catalogue">
+            <SkeletonSearch />
+          </div>
         ) : results.length === 0 ? (
           <EmptyState
             heading={query ? 'No products found' : 'Start typing to search'}

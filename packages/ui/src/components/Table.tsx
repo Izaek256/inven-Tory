@@ -1,7 +1,38 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useMemo, useCallback } from 'react';
 import { ChevronUp, ChevronDown } from 'lucide-react';
+import { useVirtualizer, type Virtualizer as TanStackVirtualizer } from '@tanstack/react-virtual';
 
 export type SortDirection = 'asc' | 'desc' | null;
+
+// Memoized row component for DataTable to prevent unnecessary re-renders
+interface DataTableRowProps<T> {
+  row: T;
+  columns: ColumnDef<T>[];
+  rowClassName?: string;
+}
+
+function DataTableRow<T>({ row, columns, rowClassName }: DataTableRowProps<T>): React.ReactElement {
+  return (
+    <tr className={['it-tr', rowClassName].filter(Boolean).join(' ')}>
+      {columns.map((col) => (
+        <td
+          key={col.key}
+          className={[
+            'it-td',
+            col.numeric && !col.align ? 'it-td--numeric' : '',
+            col.align ? `it-td--align-${col.align}` : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
+          {col.render ? col.render(row) : String(col.accessor?.(row) ?? '')}
+        </td>
+      ))}
+    </tr>
+  );
+}
+
+const MemoizedDataTableRow = React.memo(DataTableRow);
 
 export interface ColumnDef<T> {
   key: string;
@@ -23,6 +54,8 @@ export interface DataTableProps<T> {
   rows: T[];
   rowKey: (row: T) => string;
   emptySlot?: React.ReactNode;
+  /** Optional per-row class (used for e.g. optimistic-update flash effects). */
+  rowClassName?: (row: T) => string | undefined;
   'data-testid'?: string;
 }
 
@@ -31,6 +64,7 @@ export function DataTable<T>({
   rows,
   rowKey,
   emptySlot,
+  rowClassName,
   'data-testid': testId,
 }: DataTableProps<T>): React.ReactElement {
   const [sortKey, setSortKey] = useState<string | null>(null);
@@ -126,24 +160,177 @@ export function DataTable<T>({
               </tr>
             ) : (
               sortedRows.map((row) => (
-                <tr key={rowKey(row)} className="it-tr">
-                  {columns.map((col) => (
-                    <td
-                      key={col.key}
-                      className={[
-                        'it-td',
-                        col.numeric && !col.align ? 'it-td--numeric' : '',
-                        col.align ? `it-td--align-${col.align}` : '',
-                      ]
-                        .filter(Boolean)
-                        .join(' ')}
-                    >
-                      {col.render ? col.render(row) : String(col.accessor?.(row) ?? '')}
-                    </td>
-                  ))}
-                </tr>
+                <MemoizedDataTableRow
+                  key={rowKey(row)}
+                  row={row}
+                  columns={columns}
+                  rowClassName={rowClassName?.(row) ?? ''}
+                />
               ))
             )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// -----------------------------------------------------------------------------
+// VirtualizedDataTable — uses @tanstack/react-virtual for large row sets
+// -----------------------------------------------------------------------------
+export interface VirtualizedDataTableProps<T> extends Omit<DataTableProps<T>, 'rowClassName'> {
+  /** Estimated height of each row in pixels (used for initial layout). */
+  estimatedRowHeight?: number;
+  /** Height of the virtualized container (default: 500px). */
+  containerHeight?: number;
+  /** Overscan count (rows rendered outside viewport). Default: 5. */
+  overscan?: number;
+  /** Optional per-row class for highlighting (e.g. optimistic updates). */
+  rowClassName?: (row: T) => string | undefined;
+}
+
+export function VirtualizedDataTable<T>({
+  columns,
+  rows,
+  rowKey,
+  emptySlot,
+  estimatedRowHeight = 44,
+  containerHeight = 500,
+  overscan = 5,
+  rowClassName,
+  'data-testid': testId,
+}: VirtualizedDataTableProps<T>): React.ReactElement {
+  const parentRef = useRef<HTMLDivElement>(null);
+
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => estimatedRowHeight,
+    overscan,
+  });
+
+  const sortedRows = useMemo<T[]>(() => {
+    // VirtualizedDataTable doesn't support client-side sorting — data should be
+    // pre-sorted by the caller (typically server-side). This is intentional for
+    // large datasets where client-side sorting isn't practical.
+    return rows;
+  }, [rows]);
+
+  const getRowClassName = useCallback(
+    (index: number) => {
+      const row = sortedRows[index];
+      const base = 'it-tr';
+      const custom = rowClassName?.(row) ?? '';
+      return [base, custom].filter(Boolean).join(' ');
+    },
+    [sortedRows, rowClassName],
+  );
+
+  if (rows.length === 0) {
+    return (
+      <div className="it-table-wrap" data-testid={testId}>
+        <div className="it-table-scroll" style={{ height: containerHeight }}>
+          <table className="it-table">
+            <thead>
+              <tr>
+                {columns.map((col) => (
+                  <th
+                    key={col.key}
+                    className="it-th"
+                    style={
+                      col.width || col.minWidth
+                        ? { width: col.width, minWidth: col.minWidth }
+                        : undefined
+                    }
+                  >
+                    <span className="it-th__inner">{col.header}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td
+                  colSpan={columns.length}
+                  className="it-td it-td--empty"
+                  style={{ height: containerHeight }}
+                >
+                  {emptySlot ?? <span className="it-table__empty-text">No data</span>}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="it-table-wrap" data-testid={testId}>
+      <div
+        ref={parentRef}
+        className="it-table-scroll it-table-scroll--virtualized"
+        style={{ height: containerHeight, position: 'relative' }}
+      >
+        <table className="it-table">
+          <thead>
+            <tr style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+              {columns.map((col) => (
+                <th
+                  key={col.key}
+                  className={[
+                    'it-th',
+                    col.numeric && !col.align ? 'it-th--numeric' : '',
+                    col.align ? `it-th--align-${col.align}` : '',
+                    col.headerWrap ? 'it-th--wrap' : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' ')}
+                  style={
+                    col.width || col.minWidth
+                      ? { width: col.width, minWidth: col.minWidth }
+                      : undefined
+                  }
+                >
+                  <span className="it-th__inner">{col.header}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody
+            style={{ height: virtualizer.getTotalSize(), width: '100%', position: 'relative' }}
+          >
+            {virtualizer.getVirtualItems().map((virtualRow) => (
+              <tr
+                key={rowKey(sortedRows[virtualRow.index])}
+                className={getRowClassName(virtualRow.index)}
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: virtualRow.size,
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                {columns.map((col) => (
+                  <td
+                    key={col.key}
+                    className={[
+                      'it-td',
+                      col.numeric && !col.align ? 'it-td--numeric' : '',
+                      col.align ? `it-td--align-${col.align}` : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
+                    {col.render
+                      ? col.render(sortedRows[virtualRow.index])
+                      : String(col.accessor?.(sortedRows[virtualRow.index]) ?? '')}
+                  </td>
+                ))}
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
@@ -160,6 +347,7 @@ const CSS = `
   background: var(--it-card);
 }
 .it-table-scroll { overflow-x: auto; width: 100%; }
+.it-table-scroll--virtualized { overflow-y: auto; overflow-x: auto; }
 .it-table {
   width: 100%;
   border-collapse: collapse;

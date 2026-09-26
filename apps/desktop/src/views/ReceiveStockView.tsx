@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Check, AlertCircle, ArrowDownCircle } from 'lucide-react';
+import { AlertCircle, ArrowDownCircle } from 'lucide-react';
 import { searchProductsFts5, getProductsByStore } from '../services/tauriProductService';
 import {
   receiveStock,
@@ -8,7 +8,7 @@ import {
 } from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { CreateTransactionInput } from '../types/transaction';
-import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem } from '@invenTory/ui';
+import { LinearGridEntry, GridFieldDef, GridRow, SearchResultItem, useToast } from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 // ─── Entry log ─────────────────────────────────────────────────────────────────
@@ -60,8 +60,8 @@ const FIELDS: GridFieldDef[] = [
 
 export const ReceiveStockView: React.FC = () => {
   const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<boolean>(false);
   const [entryLog, setEntryLog] = useState<EntryLogItem[]>([]);
 
   // Right-panel state
@@ -263,8 +263,6 @@ export const ReceiveStockView: React.FC = () => {
   const handleCommitRow = useCallback(
     async (row: GridRow, _rowIndex: number): Promise<void> => {
       setError(null);
-      setSuccess(false);
-
       if (!activeStoreId) {
         setError('Please select a store from the header');
         return;
@@ -300,24 +298,32 @@ export const ReceiveStockView: React.FC = () => {
         device_id: sessionDeviceId,
       };
 
+      // P1 optimistic commit: mark the row committed immediately, then
+      // confirm with the real transaction id or roll back on rejection.
+      const entryId = row.id;
+      const optimisticEntry: EntryLogItem = {
+        id: entryId,
+        productName: product.name,
+        sku: product.sku,
+        quantity: qty,
+        supplier: input.supplier ?? null,
+        referenceNumber: input.reference_number ?? null,
+        timestamp: new Date().toLocaleTimeString(),
+      };
+
+      setCommittedTxnIds((prev) => new Map(prev).set(row.id, `pending-${row.id}`));
+      setEntryLog((prev) => [optimisticEntry, ...prev]);
+
       try {
         const result = await receiveStock(input);
-        setSuccess(true);
 
-        setCommittedTxnIds((prev) => new Map(prev).set(row.id, result.transaction_id));
-
-        setEntryLog((prev) => [
-          {
-            id: row.id,
-            productName: product.name,
-            sku: product.sku,
-            quantity: qty,
-            supplier: input.supplier ?? null,
-            referenceNumber: input.reference_number ?? null,
-            timestamp: new Date().toLocaleTimeString(),
-          },
-          ...prev,
-        ]);
+        // Confirm: swap the pending marker for the server transaction id.
+        setCommittedTxnIds((prev) => {
+          const next = new Map(prev);
+          next.set(row.id, result.transaction_id);
+          return next;
+        });
+        toast('success', 'Recorded! Transaction saved.');
 
         // Optimistically update qty in allProducts panel
         setAllProducts((prev) =>
@@ -331,8 +337,16 @@ export const ReceiveStockView: React.FC = () => {
           ),
         );
       } catch (err) {
+        // Roll back the optimistic commit so the row can be retried.
+        setCommittedTxnIds((prev) => {
+          const next = new Map(prev);
+          next.delete(row.id);
+          return next;
+        });
+        setEntryLog((prev) => prev.filter((item) => item.id !== entryId));
         setError(String(err instanceof Error ? err.message : err));
-        setSuccess(false);
+        // Rethrow so LinearGridEntry rolls back its optimistic row commit.
+        throw err;
       }
     },
     [activeStoreId, productMap, nameToId, sessionUserId, sessionDeviceId, setCommittedTxnIds],
@@ -349,8 +363,6 @@ export const ReceiveStockView: React.FC = () => {
       }
 
       setError(null);
-      setSuccess(false);
-
       try {
         const qty = Number(newValues.quantity ?? 1);
         await updateTransaction({
@@ -359,7 +371,7 @@ export const ReceiveStockView: React.FC = () => {
           reference_number: String(newValues.reference_number ?? '').trim() || null,
           reason_code: String(newValues.supplier ?? '').trim() || null,
         });
-        setSuccess(true);
+        toast('success', 'Recorded! Transaction saved.');
 
         setEntryLog((prev) =>
           prev.map((item) =>
@@ -420,12 +432,6 @@ export const ReceiveStockView: React.FC = () => {
       </div>
 
       {/* Toasts */}
-      {success && (
-        <div className="it-toast it-toast--success" style={{ marginBottom: '16px' }}>
-          <Check size={16} aria-hidden="true" />
-          <span>Stock received successfully. Transaction recorded and balance updated.</span>
-        </div>
-      )}
 
       {error && (
         <div

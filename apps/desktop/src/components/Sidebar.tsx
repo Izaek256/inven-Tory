@@ -31,6 +31,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 }) => {
   const [moreOpen, setMoreOpen] = useState(false);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
+  const sidebarRef = React.useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     const isMoreView = MORE_NAV_ITEMS.some((item) => item.id === currentView);
@@ -40,6 +41,62 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const handleMoreClick = (view: NavView): void => {
     onNavigate(view);
     setMoreOpen(false);
+  };
+
+  /**
+   * P0 keyboard navigation:
+   *  - ArrowDown / ArrowUp move focus between nav items
+   *  - Enter activates the focused button (native button behaviour)
+   *  - Escape collapses the sidebar (when collapsible)
+   * Moves are ordered by DOM position across every rendered nav button,
+   * so group boundaries and the "More" section behave as one list.
+   */
+  const handleNavKeyDown = (e: React.KeyboardEvent<HTMLElement>): void => {
+    const root = sidebarRef.current;
+    if (!root) return;
+    const navButtons = Array.from(
+      root.querySelectorAll<HTMLButtonElement>('button.nav-item, button.more-toggle'),
+    );
+    if (navButtons.length === 0) return;
+    const active = document.activeElement as HTMLElement | null;
+    const idx = navButtons.findIndex((b) => b === active);
+
+    switch (e.key) {
+      case 'ArrowDown': {
+        e.preventDefault();
+        const next = idx === -1 ? navButtons[0] : navButtons[(idx + 1) % navButtons.length];
+        next?.focus();
+        break;
+      }
+      case 'ArrowUp': {
+        e.preventDefault();
+        const prev =
+          idx === -1
+            ? navButtons[navButtons.length - 1]
+            : navButtons[(idx - 1 + navButtons.length) % navButtons.length];
+        prev?.focus();
+        break;
+      }
+      case 'Home': {
+        e.preventDefault();
+        navButtons[0]?.focus();
+        break;
+      }
+      case 'End': {
+        e.preventDefault();
+        navButtons[navButtons.length - 1]?.focus();
+        break;
+      }
+      case 'Escape': {
+        if (onToggleCollapse && !collapsed) {
+          e.preventDefault();
+          onToggleCollapse();
+        }
+        break;
+      }
+      default:
+        break;
+    }
   };
 
   const renderNavItem = (item: {
@@ -70,8 +127,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   return (
     <aside
+      ref={sidebarRef}
       className={`app-sidebar ${collapsed ? 'app-sidebar--collapsed' : ''}`}
       data-testid="app-sidebar"
+      onKeyDown={handleNavKeyDown}
     >
       <div className="rail-brand" data-testid="rail-brand">
         <div className="rail-brand-mark" aria-hidden="true">

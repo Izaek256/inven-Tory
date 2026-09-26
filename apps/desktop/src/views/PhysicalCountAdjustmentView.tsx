@@ -1,10 +1,17 @@
 import React, { useEffect, useCallback, useState, useRef } from 'react';
-import { ClipboardList, Check, AlertCircle, Trash2, RotateCcw } from 'lucide-react';
+import { ClipboardList, AlertCircle, Trash2, RotateCcw, Check } from 'lucide-react';
 import { searchProductsFts5, getProductsByStore } from '../services/tauriProductService';
 import { getStockBalance, adjustStock } from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { AdjustStockInput } from '../types/transaction';
-import { Button, LinearGridEntry, GridFieldDef, SearchResultItem, DataTable } from '@invenTory/ui';
+import {
+  Button,
+  LinearGridEntry,
+  GridFieldDef,
+  SearchResultItem,
+  DataTable,
+  useToast,
+} from '@invenTory/ui';
 import type { ColumnDef } from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
@@ -59,6 +66,7 @@ function VarianceCell({ delta }: { delta: number }): React.ReactElement {
 
 export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewProps> = () => {
   const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
   const [sessionUserId, setSessionUserId] = useState('');
   const [sessionDeviceId, setSessionDeviceId] = useState('');
 
@@ -86,7 +94,6 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
   const [countEntries, setCountEntries] = useState<CountEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
-
   // Per-row submitting indicator (rowId → true while adjustStock is in flight)
   const [submittingIds, setSubmittingIds] = useState<Set<string>>(new Set());
 
@@ -98,6 +105,11 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   // Live qty cache for the currently selected store (productId → qty)
   const [storeQtyCache, setStoreQtyCache] = useState<Map<string, number>>(new Map());
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear the success banner timer on unmount
+  useEffect(() => {
+    return () => {};
+  }, []);
 
   // ── Products + per-store qty for search panel ─────────────────────────────
 
@@ -325,6 +337,13 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
       };
 
       setCountEntries((prev) => [...prev, entry]);
+
+      toast(
+        'success',
+        variance === 0
+          ? `Count recorded for ${product.name} - no variance.`
+          : `Adjusted ${product.name}.`,
+      );
     },
     [activeStoreId, productMap, nameToId, storeQtyCache, sessionUserId, sessionDeviceId],
   );
@@ -449,6 +468,8 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
 
       {/* ── Step indicator removed — single step now ─────────────────────── */}
       <div data-testid="step-indicator" style={{ display: 'none' }} />
+
+      {/* ── Success banner ──────────────────────────────────────────────── */}
 
       {/* ── Error banner ────────────────────────────────────────────────── */}
       {error && (

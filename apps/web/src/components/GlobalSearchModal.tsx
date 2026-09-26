@@ -16,10 +16,14 @@
  *
  * Responsive: the breakdown table scrolls horizontally inside the modal on
  * narrow viewports instead of squeezing columns.
+ *
+ * Features: caching (60s TTL), request deduplication, skeleton loading,
+ * useTransition for search query updates, and request timeout.
  */
-import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, SearchInput, DataTable, EmptyState, type ColumnDef } from '@invenTory/ui';
-import { searchProducts } from '../services/dashboardService';
+import React, { useEffect, useMemo, useState, useTransition } from 'react';
+import { Modal, SearchInput, DataTable, EmptyState, Skeleton, type ColumnDef } from '@invenTory/ui';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { searchProductsServer } from '../services/dashboardService';
 import type { ProductSearchResult } from '../types/dashboard';
 
 export interface GlobalSearchStore {
@@ -49,42 +53,30 @@ export function GlobalSearchModal({
   initialQuery = '',
 }: GlobalSearchModalProps): React.ReactElement {
   const [query, setQuery] = useState(initialQuery);
-  const [products, setProducts] = useState<ProductSearchResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [isPendingTransition, startTransition] = useTransition();
 
-  // Sync the header query every time the modal opens.
-  useEffect(() => {
-    if (isOpen) setQuery(initialQuery);
-  }, [isOpen, initialQuery]);
-
-  // Load the full catalogue when the modal opens (single all-stores request
-  // carrying the per-store breakdown — the web equivalent of desktop's
-  // getProducts() + per-cell getStockBalance() loop).
   useEffect(() => {
     if (!isOpen) return;
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    searchProducts('', 200, 'all-stores')
-      .then((data) => {
-        if (!cancelled) setProducts(data.results ?? []);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setProducts([]);
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return (): void => {
-      cancelled = true;
-    };
-  }, [isOpen]);
+    setQuery(initialQuery);
+  }, [isOpen, initialQuery]);
 
-  // Name/SKU/brand/model/category matching — across ALL stores (desktop parity).
+  const {
+    data,
+    isPending: isQueryPending,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['globalSearch', query],
+    queryFn: () => searchProductsServer(query, 1, 200),
+    enabled: isOpen,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  });
+
+  const products = data?.results ?? [];
+  const error =
+    queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+  const isLoading = isQueryPending || isPendingTransition;
+
   const results = useMemo<SearchResultRow[]>(() => {
     const term = query.toLowerCase().trim();
     const filtered = products.filter(
@@ -156,8 +148,6 @@ export function GlobalSearchModal({
       ),
       accessor: (r: SearchResultRow) => r.product.name,
     },
-    // One dedicated column per store so the full cross-store breakdown is
-    // visible at a glance (desktop parity).
     ...storeColumns,
     {
       key: 'total',
@@ -181,6 +171,8 @@ export function GlobalSearchModal({
     },
   ];
 
+  const skeletonRows = Array.from({ length: 5 }, (_, i) => i);
+
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="Global Product Search (All Stores)" size="xl">
       <div data-testid="global-search-modal">
@@ -189,18 +181,23 @@ export function GlobalSearchModal({
             autoFocus
             placeholder="Search all stores by name, SKU, brand, model or category..."
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              startTransition(() => {
+                setQuery(e.target.value);
+              });
+            }}
             data-testid="global-search-input"
           />
         </div>
 
-        {loading ? (
-          <EmptyState
-            heading="Searching…"
-            body="Loading catalogue across all stores."
-            data-testid="global-search-loading"
-          />
-        ) : error ? (
+        {isLoading && (
+          <div className="web-skeleton-list">
+            {skeletonRows.map((i) => (
+              <Skeleton key={i} height={48} />
+            ))}
+          </div>
+        )}
+        {error ? (
           <EmptyState
             variant="error"
             heading="Search unavailable"
@@ -217,8 +214,6 @@ export function GlobalSearchModal({
             }
           />
         ) : (
-          // Responsive: horizontal scroll on narrow viewports keeps every
-          // per-store column readable instead of crushing the table.
           <div
             style={{ overflowX: 'auto', maxWidth: '100%' }}
             data-testid="global-search-results-scroll"

@@ -1,5 +1,91 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './tauriStoreService';
+import { invalidateStockBalanceCache } from './tauriTransactionService';
+
+/** Default retention period for local business caches (days). */
+export const LOCAL_CACHE_RETENTION_DAYS = 30;
+
+export interface SearchResult {
+  product_id: string;
+  sku: string;
+  name: string;
+  brand: string | null;
+  score: number;
+}
+
+export interface FTS5IndexInfo {
+  exists: boolean;
+  table_name: string;
+  indexed_at: string | null;
+  row_count: number;
+}
+
+/**
+ * Initialize the local SQLite FTS5 index for desktop search.
+ * Creates the FTS5 virtual table if it does not already exist.
+ */
+export async function initFTS5Index(): Promise<boolean> {
+  if (!isTauriEnvironment()) return false;
+  try {
+    const result = await invoke<boolean>('init_fts5_index');
+    return result;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[DataService] Failed to init FTS5 index:', err);
+    return false;
+  }
+}
+
+/**
+ * Check whether the local SQLite FTS5 index exists and is up to date.
+ */
+export async function getFTS5IndexInfo(): Promise<FTS5IndexInfo> {
+  if (!isTauriEnvironment()) {
+    return { exists: false, table_name: '', indexed_at: null, row_count: 0 };
+  }
+  try {
+    return await invoke<FTS5IndexInfo>('get_fts5_index_info');
+  } catch {
+    return { exists: false, table_name: '', indexed_at: null, row_count: 0 };
+  }
+}
+
+/**
+ * Query the local SQLite FTS5 index directly (no network request).
+ * Returns ranked search results for the given query string.
+ */
+export async function searchLocal(
+  query: string,
+  storeId?: string | null,
+  limit?: number,
+): Promise<SearchResult[]> {
+  if (!isTauriEnvironment()) return [];
+  try {
+    const results = await invoke<SearchResult[]>('search_fts5_local', {
+      query,
+      storeId: storeId ?? null,
+      limit: limit ?? 50,
+    });
+    return Array.isArray(results) ? results : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Rebuild the local SQLite FTS5 index from the local product catalogue.
+ */
+export async function rebuildFTS5Index(): Promise<boolean> {
+  if (!isTauriEnvironment()) return false;
+  try {
+    const result = await invoke<boolean>('rebuild_fts5_index');
+    return result;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[DataService] Failed to rebuild FTS5 index:', err);
+    return false;
+  }
+}
 
 export interface DeleteAllDataResult {
   success: boolean;
@@ -68,6 +154,9 @@ const BUSINESS_CACHE_PREFIXES = ['inven_tory_daybooks_', 'inven_tory_daybook_det
  * caches). Safe to call in any environment; ignores storage errors.
  */
 export function clearLocalBusinessCaches(): void {
+  // In-memory stock balance cache lives outside localStorage — clear it too
+  // so wiped databases don't keep serving stale quantities.
+  invalidateStockBalanceCache();
   try {
     if (typeof localStorage === 'undefined') return;
     for (const key of BUSINESS_CACHE_EXACT_KEYS) {
@@ -83,6 +172,92 @@ export function clearLocalBusinessCaches(): void {
     staleKeys.forEach((k) => localStorage.removeItem(k));
   } catch {
     // ignore quota / private-mode errors — reload still resets React state
+  }
+}
+
+/**
+ * Purge local business caches that are older than the retention period.
+ * Returns the number of entries purged.
+ */
+export function purgeExpiredLocalCaches(
+  retentionDays: number = LOCAL_CACHE_RETENTION_DAYS,
+): number {
+  if (typeof localStorage === 'undefined') return 0;
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  let purged = 0;
+  try {
+    // Check exact keys
+    for (const key of BUSINESS_CACHE_EXACT_KEYS) {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.cachedAt && parsed.cachedAt < cutoff) {
+            localStorage.removeItem(key);
+            purged++;
+          }
+        } catch {
+          // If not JSON or no cachedAt, keep it (legacy format)
+        }
+      }
+    }
+    // Check prefixed keys
+    const staleKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && BUSINESS_CACHE_PREFIXES.some((p) => k.startsWith(p))) {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.cachedAt && parsed.cachedAt < cutoff) {
+              staleKeys.push(k);
+            }
+          }
+        } catch {
+          // If not JSON or no cachedAt, keep it (legacy format)
+        }
+      }
+    }
+    staleKeys.forEach((k) => {
+      localStorage.removeItem(k);
+      purged++;
+    });
+  } catch {
+    // ignore quota / private-mode errors
+  }
+  return purged;
+}
+
+/**
+ * Wrapper to store business data with a cachedAt timestamp.
+ * Call this instead of localStorage.setItem directly for business caches.
+ */
+export function setBusinessCacheItem<T>(key: string, value: T): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ value, cachedAt: Date.now() }));
+  } catch {
+    // ignore quota / private-mode errors
+  }
+}
+
+/**
+ * Retrieve business data from cache, returning null if not found or expired.
+ */
+export function getBusinessCacheItem<T>(key: string, maxAgeMs?: number): T | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed.cachedAt && maxAgeMs && Date.now() - parsed.cachedAt > maxAgeMs) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return parsed.value as T;
+  } catch {
+    return null;
   }
 }
 

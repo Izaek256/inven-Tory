@@ -25,7 +25,7 @@ import {
   Calendar,
   AlertTriangle,
 } from 'lucide-react';
-import { EmptyState, Spinner } from '@invenTory/ui';
+import { EmptyState, Skeleton, SkeletonCard } from '@invenTory/ui';
 import {
   getCategoryDistribution,
   getDashboardMetrics,
@@ -36,7 +36,7 @@ import {
   getOperationsSummary,
   listStores,
 } from '../services/dashboardService';
-import { useResistantQuery } from '../hooks/useResistantQuery';
+import { useQuery, useQueries } from '@tanstack/react-query';
 import type {
   DashboardMetrics,
   KPIDelta,
@@ -118,41 +118,72 @@ export function AnalyticsDashboardView({
 
   const dateRangeParams = useMemo(() => computeDateRange(dateRange.days), [dateRange.days]);
 
-  const metricsQuery = useResistantQuery<DashboardMetrics>(
-    () => getDashboardMetrics(activeStoreId),
-    [activeStoreId],
-  );
-  const stockTrendQuery = useResistantQuery<StockTrendResponse>(
-    () => getStockTrend(dateRangeParams.start, dateRangeParams.end, activeStoreId),
-    [dateRangeParams, activeStoreId],
-  );
-  const categoryDistQuery = useResistantQuery<CategoryDistributionResponse>(
-    () => getCategoryDistribution(activeStoreId),
-    [activeStoreId],
-  );
-  const mostSoldQuery = useResistantQuery<MostSoldExtendedResponse>(
-    () =>
-      getMostSoldExtended(
-        dateRangeParams.start,
-        dateRangeParams.end,
-        MOST_SOLD_LIMIT,
-        activeStoreId,
-      ),
-    [dateRangeParams, activeStoreId],
-  );
-  const recentActivityQuery = useResistantQuery<RecentActivityResponse>(
-    () => getRecentActivity(RECENT_ACTIVITY_LIMIT, activeStoreId),
-    [activeStoreId],
-  );
-  const kpiDeltasQuery = useResistantQuery<KPIDeltasResponse>(
-    () => getKPIDeltas(dateRangeParams.start, dateRangeParams.end, activeStoreId),
-    [dateRangeParams, activeStoreId],
-  );
-  const storesQuery = useResistantQuery<StoreListEntry[]>(listStores, []);
-  const opsSummaryQuery = useResistantQuery<OperationsSummaryResponse>(
-    () => getOperationsSummary(dateRangeParams.start, dateRangeParams.end, activeStoreId),
-    [dateRangeParams, activeStoreId],
-  );
+  // Coordinate all dashboard queries using useQueries for batched fetching (P2)
+  // This ensures all queries are dispatched together and we can track combined loading state
+  const queries = useQueries({
+    queries: [
+      {
+        queryKey: ['dashboardMetrics', activeStoreId],
+        queryFn: () => getDashboardMetrics(activeStoreId),
+      },
+      {
+        queryKey: ['stockTrend', dateRangeParams.start, dateRangeParams.end, activeStoreId],
+        queryFn: () => getStockTrend(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+      },
+      {
+        queryKey: ['categoryDistribution', activeStoreId],
+        queryFn: () => getCategoryDistribution(activeStoreId),
+      },
+      {
+        queryKey: [
+          'mostSoldExtended',
+          dateRangeParams.start,
+          dateRangeParams.end,
+          MOST_SOLD_LIMIT,
+          activeStoreId,
+        ],
+        queryFn: () =>
+          getMostSoldExtended(
+            dateRangeParams.start,
+            dateRangeParams.end,
+            MOST_SOLD_LIMIT,
+            activeStoreId,
+          ),
+      },
+      {
+        queryKey: ['recentActivity', RECENT_ACTIVITY_LIMIT, activeStoreId],
+        queryFn: () => getRecentActivity(RECENT_ACTIVITY_LIMIT, activeStoreId),
+      },
+      {
+        queryKey: ['kpiDeltas', dateRangeParams.start, dateRangeParams.end, activeStoreId],
+        queryFn: () => getKPIDeltas(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+      },
+      {
+        queryKey: ['listStores'],
+        queryFn: () => listStores(),
+      },
+      {
+        queryKey: ['operationsSummary', dateRangeParams.start, dateRangeParams.end, activeStoreId],
+        queryFn: () =>
+          getOperationsSummary(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+      },
+    ],
+  });
+
+  const [
+    metricsQuery,
+    stockTrendQuery,
+    categoryDistQuery,
+    mostSoldQuery,
+    recentActivityQuery,
+    kpiDeltasQuery,
+    storesQuery,
+    opsSummaryQuery,
+  ] = queries;
+
+  // Combined loading state — true if ANY critical query is pending
+  const isAnyPending = queries.some((q) => q.isPending);
+  const isInitialLoad = isAnyPending && !metricsQuery.data;
 
   const metrics = metricsQuery.data;
   const stockTrend = stockTrendQuery.data?.data ?? [];
@@ -198,7 +229,7 @@ export function AnalyticsDashboardView({
   const unitsSoldDelta = getDelta('Units Sold');
   const unitsSoldValue = unitsSoldDelta ? unitsSoldDelta.current_value : null;
   const lowStockCount = m.low_stock.length;
-  const lowStockLoading = metricsQuery.loading && !metrics;
+  const lowStockLoading = metricsQuery.isPending && !metrics;
 
   // Filter recent activity when store tab active (client-side)
   const recentActivity = useMemo(() => {
@@ -221,23 +252,33 @@ export function AnalyticsDashboardView({
   const displayName = me?.full_name || me?.username || 'Isaac';
   const greeting = getGreeting();
 
-  const loading = metricsQuery.loading;
+  const loading = isInitialLoad;
 
   const pageError =
     [
-      metricsQuery.error,
-      stockTrendQuery.error,
-      categoryDistQuery.error,
-      mostSoldQuery.error,
-      recentActivityQuery.error,
-      kpiDeltasQuery.error,
+      metricsQuery.error?.message,
+      stockTrendQuery.error?.message,
+      categoryDistQuery.error?.message,
+      mostSoldQuery.error?.message,
+      recentActivityQuery.error?.message,
+      kpiDeltasQuery.error?.message,
     ].filter(Boolean)[0] ?? null;
 
   if (loading && !metrics) {
     return (
       <div className="web-analytics-view" data-testid="analytics-dashboard">
-        <div className="web-center-spinner" data-testid="analytics-loading">
-          <Spinner size="md" />
+        <div
+          style={{
+            padding: '24px',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '24px',
+          }}
+        >
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
         </div>
       </div>
     );
@@ -306,7 +347,7 @@ export function AnalyticsDashboardView({
                 aria-controls="dashboard-store-panel"
                 className={`store-tab ${active ? 'store-tab--active' : ''}`}
                 data-testid={`store-tab-${s.id}`}
-                onClick={() => setActiveStoreId(active ? null : s.id)}
+                onClick={() => setActiveStoreId((prev) => (prev === s.id ? null : s.id))}
               >
                 <span
                   className="store-tab__code"
@@ -407,10 +448,10 @@ export function AnalyticsDashboardView({
             icon={Store}
             accent="var(--it-purple)"
             animDelay={80}
-            loading={loading || storesQuery.loading}
+            loading={loading || storesQuery.isPending}
             footer={
               <span>
-                {storesQuery.error
+                {storesQuery.error?.message
                   ? 'Store list unavailable'
                   : inactiveStoreCount > 0
                     ? `${inactiveStoreCount} inactive`
@@ -504,10 +545,10 @@ export function AnalyticsDashboardView({
             <EmptyState
               variant="error"
               heading="Failed to load stock trend"
-              body={stockTrendQuery.error}
+              body={stockTrendQuery.error?.message}
             />
-          ) : stockTrendQuery.loading ? (
-            <Spinner size="sm" />
+          ) : stockTrendQuery.isPending ? (
+            <Skeleton height={210} />
           ) : (
             <StockTrendChart data={stockTrend} height={210} testId="stock-trend-chart-canvas" />
           )}
@@ -528,10 +569,10 @@ export function AnalyticsDashboardView({
             <EmptyState
               variant="error"
               heading="Failed to load categories"
-              body={categoryDistQuery.error}
+              body={categoryDistQuery.error?.message}
             />
-          ) : categoryDistQuery.loading ? (
-            <Spinner size="sm" />
+          ) : categoryDistQuery.isPending ? (
+            <Skeleton height={210} />
           ) : (
             <CategoryDonutChart
               data={categoryDist}
@@ -557,7 +598,7 @@ export function AnalyticsDashboardView({
             <EmptyState
               variant="error"
               heading="Failed to load most-sold"
-              body={mostSoldQuery.error}
+              body={mostSoldQuery.error?.message}
             />
           ) : mostSoldExtended.length > 0 ? (
             <table className="dash-table" data-testid="most-sold-table-content">
@@ -688,7 +729,7 @@ export function AnalyticsDashboardView({
           <EmptyState
             variant="error"
             heading="Failed to load activity"
-            body={recentActivityQuery.error}
+            body={recentActivityQuery.error?.message}
           />
         ) : recentActivity.length > 0 ? (
           <RecentActivityList items={recentActivity} />

@@ -13,10 +13,13 @@ class Base(DeclarativeBase):
 
 
 def set_sqlite_pragmas(dbapi_connection: Any, connection_record: Any) -> None:
-    """Enforce WAL mode and foreign key constraints on SQLite connections."""
+    """Enforce WAL, foreign keys, and performance PRAGMAs on SQLite connections."""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA cache_size=-64000")
+    cursor.execute("PRAGMA temp_store=MEMORY")
+    cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 
 

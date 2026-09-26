@@ -12,6 +12,7 @@
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ReceiveStockView } from '../views/ReceiveStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
@@ -128,7 +129,7 @@ function makeReceiptTx(overrides: Partial<InventoryTransaction> = {}): Inventory
 // ─── Helpers ───────────────────────────────────────────────────────────────────
 
 async function setupAndCommitRow(qty: number = 1): Promise<void> {
-  render(<ReceiveStockView />);
+  renderWithProviders(<ReceiveStockView />);
 
   await waitFor(() => {
     expect(screen.getByTestId('receive-grid')).toBeInTheDocument();
@@ -203,12 +204,12 @@ describe('ReceiveStockView — grid UI and transaction flow', (): void => {
   // ─── Render checks ────────────────────────────────────────────────────────
 
   it('renders the receive-stock-view container', async (): Promise<void> => {
-    render(<ReceiveStockView />);
+    renderWithProviders(<ReceiveStockView />);
     expect(screen.getByTestId('receive-stock-view')).toBeInTheDocument();
   });
 
   it('renders the grid with 9 numbered rows', async (): Promise<void> => {
-    render(<ReceiveStockView />);
+    renderWithProviders(<ReceiveStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('receive-grid')).toBeInTheDocument();
     });
@@ -218,7 +219,7 @@ describe('ReceiveStockView — grid UI and transaction flow', (): void => {
   });
 
   it('right panel is visible on mount and shows all products', async (): Promise<void> => {
-    render(<ReceiveStockView />);
+    renderWithProviders(<ReceiveStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
@@ -235,7 +236,7 @@ describe('ReceiveStockView — grid UI and transaction flow', (): void => {
     await setupAndCommitRow(1);
 
     await waitFor(() => {
-      expect(screen.getByText(/Stock received successfully/)).toBeInTheDocument();
+      expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
     });
 
     expect(tauriTransactionService.receiveStock).toHaveBeenCalledOnce();
@@ -254,7 +255,7 @@ describe('ReceiveStockView — grid UI and transaction flow', (): void => {
     await setupAndCommitRow(1);
 
     await waitFor(() => {
-      expect(screen.getByText(/Stock received successfully/)).toBeInTheDocument();
+      expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
     });
 
     const productCell = screen.getByTestId('cell-0-product');
@@ -289,13 +290,13 @@ describe('ReceiveStockView — grid UI and transaction flow', (): void => {
       expect(screen.getByTestId('receive-error-banner')).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/Stock received successfully/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Recorded! Transaction saved.')).not.toBeInTheDocument();
   });
 
   // ─── Arrow key model ──────────────────────────────────────────────────────
 
   it('Arrow Down in product field increases panel highlight, does not move row focus', async (): Promise<void> => {
-    render(<ReceiveStockView />);
+    renderWithProviders(<ReceiveStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
@@ -320,7 +321,7 @@ describe('ReceiveStockView — grid UI and transaction flow', (): void => {
   // ─── Backspace navigation ────────────────────────────────────────────────
 
   it('Backspace on empty Qty returns focus to Product field', async (): Promise<void> => {
-    render(<ReceiveStockView />);
+    renderWithProviders(<ReceiveStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('receive-grid')).toBeInTheDocument();
     });

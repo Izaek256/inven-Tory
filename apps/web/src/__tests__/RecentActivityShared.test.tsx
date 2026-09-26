@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { AnalyticsDashboardView } from '../views/AnalyticsDashboardView';
 import { RecentActivityView } from '../views/RecentActivityView';
@@ -98,27 +98,31 @@ describe('Recent Activity - shared row component (dashboard preview + dedicated 
     });
     const { unmount } = render(<AnalyticsDashboardView />);
     const preview = await screen.findByTestId('recent-activity-preview');
-    const row0 = preview.querySelector('[data-testid="activity-item-txn-1"]');
-    expect(row0?.querySelector('[data-testid="activity-action"]')?.textContent).toContain(
-      'stock sold',
-    );
-    expect(row0?.querySelector('[data-testid="activity-store"]')?.textContent).toContain(
-      'ALGA-MAIN-STORE',
-    );
-    // transfer_completed must be fully humanized (both underscores -> spaces)
-    const row1 = preview.querySelector('[data-testid="activity-item-txn-2"]');
-    expect(row1?.querySelector('[data-testid="activity-action"]')?.textContent).toContain(
-      'transfer completed',
-    );
-    expect(row1?.querySelector('[data-testid="activity-store"]')?.textContent).toContain(
-      'WEST-DEPOT',
-    );
+    await waitFor(() => {
+      const row0 = preview.querySelector('[data-testid="activity-item-txn-1"]');
+      expect(row0?.querySelector('[data-testid="activity-action"]')?.textContent).toContain(
+        'stock sold',
+      );
+      expect(row0?.querySelector('[data-testid="activity-store"]')?.textContent).toContain(
+        'ALGA-MAIN-STORE',
+      );
+      // transfer_completed must be fully humanized (both underscores -> spaces)
+      const row1 = preview.querySelector('[data-testid="activity-item-txn-2"]');
+      expect(row1?.querySelector('[data-testid="activity-action"]')?.textContent).toContain(
+        'transfer completed',
+      );
+      expect(row1?.querySelector('[data-testid="activity-store"]')?.textContent).toContain(
+        'WEST-DEPOT',
+      );
+    });
     unmount();
 
     render(<RecentActivityView />);
     const feed = await screen.findByTestId('activity-feed');
     expect(feed).toBeInTheDocument();
-    expect(feed.querySelector('[data-testid="activity-item-txn-1"]')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(feed.querySelector('[data-testid="activity-item-txn-1"]')).toBeInTheDocument();
+    });
   });
 
   it('RecentActivityList renders the same markup standalone', () => {

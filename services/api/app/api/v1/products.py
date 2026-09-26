@@ -525,7 +525,8 @@ async def search_products(
     q: str = Query(
         default="", min_length=0, max_length=200, description="Search term (empty returns all)"
     ),
-    limit: int = Query(default=200, ge=1, le=10000, description="Maximum results to return"),
+    limit: int = Query(default=100, ge=1, le=1000, description="Maximum results to return"),
+    offset: int = Query(default=0, ge=0, description="Pagination offset"),
     scope: str = Query(
         default="",
         description="Set to 'all-stores' to include per-store quantity breakdown "
@@ -553,24 +554,41 @@ async def search_products(
     Requires INVENTORY_READ permission (all authenticated roles qualify).
     """
     if q.strip():
-        term = f"%{q.lower()}%"
-        stmt = (
-            select(Product)
-            .where(
-                or_(
-                    func.lower(Product.name).like(term),
-                    func.lower(Product.sku).like(term),
-                    func.lower(Product.brand).like(term),
-                    func.lower(Product.model).like(term),
-                    func.lower(Product.barcode).like(term),
-                    func.lower(Product.alternate_names).like(term),
-                )
+        if db.bind.dialect.name == "postgresql":
+            ts_query = func.websearch_to_tsquery("english", q)
+            where_clause = Product.ts_vector.bool_op("@@")(ts_query)
+            stmt = (
+                select(Product)
+                .where(where_clause)
+                .order_by(func.ts_rank(Product.ts_vector, ts_query).desc(), Product.name)
+                .limit(limit)
+                .offset(offset)
             )
-            .order_by(Product.name)
-            .limit(limit)
-        )
+            count_stmt = select(func.count()).select_from(Product).where(where_clause)
+            total: int = (await db.execute(count_stmt)).scalar_one()
+        else:
+            term = f"%{q.lower()}%"
+            where_clause = or_(
+                func.lower(Product.name).like(term),
+                func.lower(Product.sku).like(term),
+                func.lower(Product.brand).like(term),
+                func.lower(Product.model).like(term),
+                func.lower(Product.barcode).like(term),
+                func.lower(Product.alternate_names).like(term),
+            )
+            stmt = (
+                select(Product)
+                .where(where_clause)
+                .order_by(Product.name)
+                .limit(limit)
+                .offset(offset)
+            )
+            count_stmt = select(func.count()).select_from(Product).where(where_clause)
+            total = (await db.execute(count_stmt)).scalar_one()
     else:
-        stmt = select(Product).order_by(Product.name).limit(limit)
+        stmt = select(Product).order_by(Product.name).limit(limit).offset(offset)
+        count_stmt = select(func.count()).select_from(Product)
+        total = (await db.execute(count_stmt)).scalar_one()
 
     result = await db.execute(stmt)
     products: list[Product] = list(result.scalars().all())
@@ -653,7 +671,7 @@ async def search_products(
             )
             for p in products
         ],
-        total=len(products),
+        total=total,
         query=q,
     )
 

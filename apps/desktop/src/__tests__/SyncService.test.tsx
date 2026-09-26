@@ -234,9 +234,19 @@ describe('tauriSyncService', () => {
 
     const { invoke } = await import('@tauri-apps/api/core');
     // First call: get_pending_outbox_events → rows; subsequent calls → []
-    vi.mocked(invoke)
-      .mockResolvedValueOnce([row1, row2]) // get_pending_outbox_events (first batch)
-      .mockResolvedValue(undefined); // all subsequent IPC calls succeed silently
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === 'get_last_sync_timestamp') return null;
+      if (cmd === 'get_pending_outbox_events') {
+        // Return rows on first call, then empty to stop loop
+        const result =
+          vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_pending_outbox_events')
+            .length === 1
+            ? [row1, row2]
+            : [];
+        return result;
+      }
+      return undefined;
+    });
 
     const pushBody = makePushResponse([tx1, tx2]);
     const fetchMock = stubFetch(pushBody, PULL_OK);
@@ -265,7 +275,18 @@ describe('tauriSyncService', () => {
     const txBad = txIdOf(rowBad);
 
     const { invoke } = await import('@tauri-apps/api/core');
-    vi.mocked(invoke).mockResolvedValueOnce([rowGood, rowBad]).mockResolvedValue(undefined);
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === 'get_last_sync_timestamp') return null;
+      if (cmd === 'get_pending_outbox_events') {
+        const result =
+          vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_pending_outbox_events')
+            .length === 1
+            ? [rowGood, rowBad]
+            : [];
+        return result;
+      }
+      return undefined;
+    });
 
     const partialPushBody = {
       receipts: [
@@ -307,7 +328,18 @@ describe('tauriSyncService', () => {
     const row = makeOutboxRow({ quantityDelta: 5 });
 
     const { invoke } = await import('@tauri-apps/api/core');
-    vi.mocked(invoke).mockResolvedValueOnce([row]).mockResolvedValue(undefined);
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === 'get_last_sync_timestamp') return null;
+      if (cmd === 'get_pending_outbox_events') {
+        const result =
+          vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_pending_outbox_events')
+            .length === 1
+            ? [row]
+            : [];
+        return result;
+      }
+      return undefined;
+    });
 
     // Server returns 503
     globalThis.fetch = vi.fn().mockResolvedValueOnce({
@@ -325,6 +357,73 @@ describe('tauriSyncService', () => {
     expect(state.lastSyncAt).toBeNull();
   });
 
+  // ── P2 (optimization plan): retry cap + exponential backoff ─────────────
+
+  it('caps sync retries with exponential backoff, then marks RETRYABLE_ERROR', async () => {
+    vi.useFakeTimers();
+    // Real CompressionStream resolves via macrotasks that fake timers can't
+    // reach — disable it so the pre-push path stays on the microtask queue.
+    // @ts-ignore - explicitly disable for this test
+    const originalCompressionStream = globalThis.CompressionStream;
+    // @ts-ignore
+    globalThis.CompressionStream = undefined;
+
+    try {
+      const { isTauriEnvironment } = await import('../services/tauriStoreService');
+      vi.mocked(isTauriEnvironment).mockReturnValue(true);
+
+      const row = makeOutboxRow({ quantityDelta: 5 });
+
+      const { invoke } = await import('@tauri-apps/api/core');
+      const invokeMock = vi.mocked(invoke);
+      invokeMock.mockImplementation(async (cmd) => {
+        if (cmd === 'get_last_sync_timestamp') return null;
+        // The event stays pending until the cap marks it — every retry
+        // iteration re-reads it from the outbox.
+        if (cmd === 'get_pending_outbox_events') return [row];
+        return undefined;
+      });
+
+      // Every push attempt fails (network down).
+      const fetchMock = vi.fn().mockRejectedValue(new Error('network down'));
+      globalThis.fetch = fetchMock as never;
+
+      const syncPromise = triggerSync(makeSyncConfig());
+
+      // Flush microtasks until a condition (fake timers can't flush the
+      // non-timer awaits in triggerSync's push path on their own).
+      const flushUntil = async (pred: () => boolean, maxTicks = 500): Promise<void> => {
+        for (let i = 0; i < maxTicks && !pred(); i++) {
+          await Promise.resolve();
+        }
+      };
+
+      // Attempt 1 fails → backoff 2^1 s pending; then 2^2 s, 2^3 s.
+      await flushUntil(() => fetchMock.mock.calls.length >= 1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await flushUntil(() => fetchMock.mock.calls.length >= 2);
+      await vi.advanceTimersByTimeAsync(4_000);
+      await flushUntil(() => fetchMock.mock.calls.length >= 3);
+      await vi.advanceTimersByTimeAsync(8_000);
+      await flushUntil(() => fetchMock.mock.calls.length >= 4);
+
+      const state = await syncPromise;
+
+      // Initial attempt + 3 retries = 4 pushes, then the cap stops the loop.
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(state.lastOutcome).toBe('error');
+
+      // The cap path must mark the outbox event RETRYABLE_ERROR.
+      const statusUpdates = invokeMock.mock.calls
+        .filter((c) => c[0] === 'update_outbox_event_statuses')
+        .flatMap((c) => (c[1] as { updates: Array<{ target_status: string }> }).updates);
+      expect(statusUpdates.some((u) => u.target_status === 'RETRYABLE_ERROR')).toBe(true);
+    } finally {
+      globalThis.CompressionStream = originalCompressionStream;
+      vi.useRealTimers();
+    }
+  });
+
   // ── AT-004: client retries → both attempts succeed ─────────────────────
 
   it('AT-004 (client-side): re-sending same event succeeds on both attempts', async () => {
@@ -337,9 +436,18 @@ describe('tauriSyncService', () => {
     const { invoke } = await import('@tauri-apps/api/core');
 
     // First sync
-    vi.mocked(invoke)
-      .mockResolvedValueOnce([row]) // get_pending_outbox_events
-      .mockResolvedValue(undefined);
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === 'get_last_sync_timestamp') return null;
+      if (cmd === 'get_pending_outbox_events') {
+        const result =
+          vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_pending_outbox_events')
+            .length === 1
+            ? [row]
+            : [];
+        return result;
+      }
+      return undefined;
+    });
 
     const acceptedBody = makePushResponse([txId], true);
     stubFetch(acceptedBody, PULL_OK);
@@ -349,9 +457,19 @@ describe('tauriSyncService', () => {
 
     // Reset state and simulate retry
     resetMockSyncState();
-    vi.mocked(invoke)
-      .mockResolvedValueOnce([row]) // same row again (re-queued by client)
-      .mockResolvedValue(undefined);
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === 'get_last_sync_timestamp') return null;
+      if (cmd === 'get_pending_outbox_events') {
+        const invokeCalls = vi
+          .mocked(invoke)
+          .mock.calls.filter((c) => c[0] === 'get_pending_outbox_events').length;
+        // The invoke mock tracks total calls across the test, so if we're on the second sync pass
+        // we might have 2 or 3 calls. A simple approach is just to return [row] for the next one,
+        // then [] for the ones after.
+        return invokeCalls <= 2 ? [row] : []; // previous sync was 1 call, so <=2 means this sync's first call
+      }
+      return undefined;
+    });
     stubFetch(acceptedBody, PULL_OK); // server returns accepted=true again (idempotent)
 
     const state2 = await triggerSync(makeSyncConfig());
@@ -367,26 +485,30 @@ describe('tauriSyncService', () => {
     const { invoke } = await import('@tauri-apps/api/core');
     // 1) get_pending_outbox_events → empty queue (nothing queued)
     // 2) get_products → the locally imported catalogue
-    vi.mocked(invoke)
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([
-        {
-          id: 'PROD-IMPORTED-1',
-          sku: 'IMPORTED-1',
-          name: 'Imported Widget',
-          brand: null,
-          model: null,
-          category: 'General',
-          unit: 'pcs',
-          barcode: null,
-          alternate_names: null,
-          serial_tracking_enabled: false,
-          is_active: true,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        },
-      ])
-      .mockResolvedValue(undefined);
+    vi.mocked(invoke).mockImplementation(async (cmd) => {
+      if (cmd === 'get_last_sync_timestamp') return null;
+      if (cmd === 'get_pending_outbox_events') return [];
+      if (cmd === 'get_products') {
+        return [
+          {
+            id: 'PROD-IMPORTED-1',
+            sku: 'IMPORTED-1',
+            name: 'Imported Widget',
+            brand: null,
+            model: null,
+            category: 'General',
+            unit: 'pcs',
+            barcode: null,
+            alternate_names: null,
+            serial_tracking_enabled: false,
+            is_active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ];
+      }
+      return undefined;
+    });
 
     const fetchMock = stubFetch(
       {
@@ -398,7 +520,16 @@ describe('tauriSyncService', () => {
       PULL_OK,
     );
 
-    await triggerSync(makeSyncConfig({ force: true }));
+    // Temporarily disable CompressionStream so the payload isn't gzipped, allowing us to inspect the JSON body
+    const originalCompressionStream = globalThis.CompressionStream;
+    // @ts-ignore - we are explicitly removing it for this test
+    globalThis.CompressionStream = undefined;
+
+    try {
+      await triggerSync(makeSyncConfig({ force: true }));
+    } finally {
+      globalThis.CompressionStream = originalCompressionStream;
+    }
 
     // Catalogue push first, pull second.
     expect(fetchMock.mock.calls[0][0]).toContain('/sync/push');
@@ -411,6 +542,68 @@ describe('tauriSyncService', () => {
     expect(pushBody.products.map((p) => p.id)).toContain('PROD-IMPORTED-1');
 
     expect(fetchMock.mock.calls[1][0]).toContain('/sync/pull');
+  });
+
+  it('triggerSync (background) pushes only dirty products, not the full catalogue', async () => {
+    const { isTauriEnvironment } = await import('../services/tauriStoreService');
+    vi.mocked(isTauriEnvironment).mockReturnValue(true);
+
+    const row = makeOutboxRow({ movementType: 'SALE', quantityDelta: -2 });
+    const txId = txIdOf(row);
+
+    const { invoke } = await import('@tauri-apps/api/core');
+    const invokeMock = vi.mocked(invoke);
+    invokeMock.mockImplementation(async (cmd) => {
+      if (cmd === 'get_last_sync_timestamp') return null;
+      if (cmd === 'get_pending_outbox_events') return [row];
+      if (cmd === 'get_products') {
+        // The full local catalogue — must NOT be loaded or pushed on a
+        // regular (non-forced) sync (P2: dirty products only).
+        return [
+          {
+            id: 'PROD-IMPORTED-1',
+            sku: 'IMPORTED-1',
+            name: 'Imported Widget',
+            brand: null,
+            model: null,
+            category: 'General',
+            unit: 'pcs',
+            barcode: null,
+            alternate_names: null,
+            serial_tracking_enabled: false,
+            is_active: true,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const fetchMock = stubFetch(makePushResponse([txId]), PULL_OK);
+
+    const originalCompressionStream = globalThis.CompressionStream;
+    // @ts-ignore - disable gzip so we can inspect the JSON body
+    globalThis.CompressionStream = undefined;
+    try {
+      await triggerSync(makeSyncConfig()); // NOT forced
+    } finally {
+      globalThis.CompressionStream = originalCompressionStream;
+    }
+
+    // The full catalogue is never even read from the local DB.
+    expect(invokeMock).not.toHaveBeenCalledWith('get_products');
+
+    expect(fetchMock.mock.calls[0][0]).toContain('/sync/push');
+    const pushInit = fetchMock.mock.calls[0][1] as RequestInit;
+    const pushBody = JSON.parse(String(pushInit.body)) as {
+      events: unknown[];
+      products?: Array<{ id: string }>;
+    };
+    expect(pushBody.events).toHaveLength(1);
+    // No catalogue on a regular sync — at most the dirty product updates
+    // (this row is a transaction, so there are none).
+    expect(pushBody.products ?? []).toHaveLength(0);
   });
 
   it('triggerSync (background, not forced) stays quiet when the outbox is empty', async () => {
@@ -451,24 +644,68 @@ describe('tauriSyncService', () => {
     // We can't easily spy on an ES module export, so we test the behaviour
     // indirectly: startBackgroundSync calls triggerSync internally.
     // Instead, verify that setInterval is called with correct interval.
-    const setIntervalSpy = vi.spyOn(globalThis, 'setInterval');
-    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
 
     // Stub fetch to avoid real network calls during background sync
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('no fetch in timer test'));
 
     startBackgroundSync(makeSyncConfig(), 10_000);
 
-    // setInterval must have been called
-    expect(setIntervalSpy).toHaveBeenCalledWith(expect.any(Function), 10_000);
+    // setTimeout must have been called
+    expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 10_000);
 
     stopBackgroundSync();
 
-    // clearInterval must have been called after stop
-    expect(clearIntervalSpy).toHaveBeenCalled();
+    // clearTimeout must have been called after stop
+    expect(clearTimeoutSpy).toHaveBeenCalled();
 
     // Restore
     vi.useRealTimers();
     void originalTrigger;
+  });
+
+  // ── Outbox TTL cleanup (P2: archive events older than 7 days) ──────────
+
+  it('startTTLCleanup invokes cleanup_expired_outbox_events on its interval and stops', async () => {
+    vi.useFakeTimers();
+    const { invoke } = await import('@tauri-apps/api/core');
+    const invokeMock = vi.mocked(invoke);
+    const { isTauriEnvironment } = await import('../services/tauriStoreService');
+    vi.mocked(isTauriEnvironment).mockReturnValue(true);
+    invokeMock.mockClear();
+
+    const { startTTLCleanup, stopTTLCleanup } = await import('../services/tauriSyncService');
+    startTTLCleanup(5_000);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(invokeMock).toHaveBeenCalledWith('cleanup_expired_outbox_events');
+
+    stopTTLCleanup();
+    invokeMock.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(invokeMock).not.toHaveBeenCalledWith('cleanup_expired_outbox_events');
+
+    vi.useRealTimers();
+    vi.mocked(isTauriEnvironment).mockReturnValue(false);
+  });
+
+  it('startBackgroundSync also starts the outbox TTL cleanup interval', async () => {
+    vi.useFakeTimers();
+    const { invoke } = await import('@tauri-apps/api/core');
+    const invokeMock = vi.mocked(invoke);
+    const { isTauriEnvironment } = await import('../services/tauriStoreService');
+    vi.mocked(isTauriEnvironment).mockReturnValue(true);
+    invokeMock.mockClear();
+
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('no fetch in ttl test')) as never;
+
+    startBackgroundSync(makeSyncConfig(), 10_000);
+    // Default TTL cleanup interval is 60s.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(invokeMock).toHaveBeenCalledWith('cleanup_expired_outbox_events');
+
+    stopBackgroundSync();
+    vi.useRealTimers();
+    vi.mocked(isTauriEnvironment).mockReturnValue(false);
   });
 });

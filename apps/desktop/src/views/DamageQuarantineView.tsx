@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Package, ShieldAlert, X, Check, AlertCircle, ArrowRightLeft } from 'lucide-react';
+import { Package, ShieldAlert, X, AlertCircle, ArrowRightLeft } from 'lucide-react';
 
 import { searchProducts } from '../services/tauriProductService';
 import { moveStockBucket, getStockBalanceForBucket } from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { MoveStockBucketInput, StockBucket } from '../types/transaction';
-import { Button, TextInput, NumericInput, Select } from '@invenTory/ui';
+import { Button, TextInput, NumericInput, Select, useToast } from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 export const DamageQuarantineView: React.FC = () => {
   const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
   const [productQuery, setProductQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -22,8 +23,6 @@ export const DamageQuarantineView: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [reasonError, setReasonError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<boolean>(false);
-
   const [fromBucketQty, setFromBucketQty] = useState<number | null>(null);
   const [toBucketQty, setToBucketQty] = useState<number | null>(null);
 
@@ -132,8 +131,6 @@ export const DamageQuarantineView: React.FC = () => {
     e.preventDefault();
     setError(null);
     setReasonError(null);
-    setSuccess(false);
-
     if (!activeStoreId) {
       setError('Please select a store from the header');
       return;
@@ -176,7 +173,7 @@ export const DamageQuarantineView: React.FC = () => {
       };
 
       await moveStockBucket(input);
-      setSuccess(true);
+      toast('success', 'Recorded! Transaction saved.');
 
       if (activeStoreId && selectedProduct) {
         await loadBucketBalances(activeStoreId, selectedProduct, fromBucket, toBucket);
@@ -216,20 +213,6 @@ export const DamageQuarantineView: React.FC = () => {
         >
           <AlertCircle size={16} aria-hidden="true" />
           <span>{error}</span>
-        </div>
-      )}
-
-      {success && (
-        <div
-          className="it-toast it-toast--success"
-          style={{ marginBottom: '16px' }}
-          data-testid="damage-success-banner"
-        >
-          <Check size={16} aria-hidden="true" />
-          <span>
-            Stock movement recorded successfully! {quantity} unit(s) moved from {fromBucket} to{' '}
-            {toBucket}.
-          </span>
         </div>
       )}
 
