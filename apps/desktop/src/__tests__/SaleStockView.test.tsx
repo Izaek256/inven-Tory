@@ -16,6 +16,7 @@
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SaleStockView } from '../views/SaleStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
@@ -138,7 +139,7 @@ function makeSaleTx(overrides: Partial<InventoryTransaction> = {}): InventoryTra
  *  3. Pressing Enter on the Receipt No. field to commit the row
  */
 async function setupAndCommitRow(qty: number = 1): Promise<void> {
-  render(<SaleStockView />);
+  renderWithProviders(<SaleStockView />);
 
   // Wait for the live-search-panel to populate (allProducts loaded)
   await waitFor(() => {
@@ -227,12 +228,12 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
   // ─── Render checks ────────────────────────────────────────────────────────
 
   it('renders the sale-stock-view container', async (): Promise<void> => {
-    render(<SaleStockView />);
+    renderWithProviders(<SaleStockView />);
     expect(screen.getByTestId('sale-stock-view')).toBeInTheDocument();
   });
 
   it('renders the grid with 9 numbered rows', async (): Promise<void> => {
-    render(<SaleStockView />);
+    renderWithProviders(<SaleStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('sale-grid')).toBeInTheDocument();
     });
@@ -243,7 +244,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
   });
 
   it('right panel is visible on mount and shows all products (not empty)', async (): Promise<void> => {
-    render(<SaleStockView />);
+    renderWithProviders(<SaleStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
@@ -254,7 +255,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
   });
 
   it('live panel filters as the user types in the product field', async (): Promise<void> => {
-    render(<SaleStockView />);
+    renderWithProviders(<SaleStockView />);
 
     await waitFor(() => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
@@ -287,7 +288,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
     await setupAndCommitRow(1);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sale-success-banner')).toBeInTheDocument();
+      expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
     });
 
     expect(tauriTransactionService.sellStock).toHaveBeenCalledOnce();
@@ -306,7 +307,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
     await setupAndCommitRow(1);
 
     await waitFor(() => {
-      expect(screen.getByTestId('sale-success-banner')).toBeInTheDocument();
+      expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
     });
 
     // The committed row's product input should be disabled
@@ -344,13 +345,60 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
       expect(screen.getByTestId('sale-error-banner')).toBeInTheDocument();
     });
 
-    expect(screen.queryByTestId('sale-success-banner')).not.toBeInTheDocument();
+    expect(screen.queryByText('Recorded! Transaction saved.')).not.toBeInTheDocument();
+  });
+
+  // ─── P1: optimistic UI + rollback ─────────────────────────────────────────
+
+  it('optimistic UI: row commits before the server responds, then confirms', async (): Promise<void> => {
+    let resolveSell!: (value: ReturnType<typeof makeSaleTx>) => void;
+    const pending = new Promise<ReturnType<typeof makeSaleTx>>((resolve) => {
+      resolveSell = resolve;
+    });
+    vi.spyOn(tauriTransactionService, 'sellStock').mockReturnValueOnce(pending);
+
+    await setupAndCommitRow(1);
+
+    // Optimistic: the row is already committed while the request is in flight.
+    await waitFor(() => {
+      expect(screen.getByTestId('cell-0-product')).toBeDisabled();
+    });
+    // No success confirmation yet — the server has not answered.
+    expect(screen.queryByText('Recorded! Transaction saved.')).not.toBeInTheDocument();
+
+    // Server confirms → success toast appears, row stays committed.
+    await act(async () => {
+      resolveSell(makeSaleTx());
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('cell-0-product')).toBeDisabled();
+  });
+
+  it('optimistic UI: rolls back the committed row when the server rejects', async (): Promise<void> => {
+    vi.spyOn(tauriTransactionService, 'sellStock').mockRejectedValueOnce(
+      new Error('Insufficient stock. Available quantity: 6. Cannot sell 10 units.'),
+    );
+
+    await setupAndCommitRow(10);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sale-error-banner')).toBeInTheDocument();
+    });
+
+    // Rollback: the row must be editable again so the operator can retry.
+    await waitFor(() => {
+      expect(screen.getByTestId('cell-0-product')).not.toBeDisabled();
+    });
+    expect(screen.queryByText('Recorded! Transaction saved.')).not.toBeInTheDocument();
+    expect(screen.getByTestId('cell-0-quantity')).not.toBeDisabled();
   });
 
   // ─── Arrow key model ───────────────────────────────────────────────────────
 
   it('Arrow Down in product field increases panel highlight, does not move row focus', async (): Promise<void> => {
-    render(<SaleStockView />);
+    renderWithProviders(<SaleStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();
     });
@@ -378,7 +426,7 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
   // ─── Keyboard flow: Backspace on empty field ───────────────────────────────
 
   it('Backspace on empty Qty returns focus to Product field', async (): Promise<void> => {
-    render(<SaleStockView />);
+    renderWithProviders(<SaleStockView />);
     await waitFor(() => {
       expect(screen.getByTestId('sale-grid')).toBeInTheDocument();
     });

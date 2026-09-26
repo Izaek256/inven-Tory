@@ -142,4 +142,36 @@ describe('StoreView', () => {
     });
     expect(screen.getByTestId('store-last-sync')).toHaveTextContent(/last sync/i);
   });
+
+  // ─── P1: per-store fallback runs in parallel with a concurrency cap ───────
+
+  it('fallback fetches per-store inventories in parallel with a concurrency cap', async () => {
+    const storeIds = Array.from({ length: 10 }, (_, i) => `store-${i}`);
+    let inFlight = 0;
+    let maxInFlight = 0;
+
+    vi.mocked(svc.getStoreInventory).mockImplementation(async (id: string) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { ...FRESH_STORE, store_id: id, store_name: id };
+    });
+
+    renderStoreView(storeIds);
+
+    // All 10 stores load via the parallel fallback (bulk is not mocked → throws).
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('view-store-store-9')).toBeInTheDocument();
+      },
+      { timeout: 3000 },
+    );
+
+    expect(svc.getStoreInventory).toHaveBeenCalledTimes(10);
+    // P1: no unbounded fan-out — at most 4 requests in flight at once.
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    // It must actually parallelise (not serialise one-by-one).
+    expect(maxInFlight).toBeGreaterThan(1);
+  });
 });

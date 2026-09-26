@@ -189,8 +189,17 @@ def _is_inventory_transactions_pkey_collision(exc: Exception) -> bool:
     as the authoritative accepted signal instead of surfacing a retryable
     "Unexpected error", otherwise the desktop keeps re-pushing an acknowledged
     event forever (outbox stuck in RETRYABLE_ERROR).
+
+    Matches both the named PostgreSQL constraint (``inventory_transactions_pkey``)
+    and SQLite's ``UNIQUE constraint failed: inventory_transactions.transaction_id``
+    wording (SQLite is the desktop/test backend).
     """
-    return isinstance(exc, IntegrityError) and "inventory_transactions_pkey" in str(exc)
+    if not isinstance(exc, IntegrityError):
+        return False
+    msg = str(exc)
+    if "inventory_transactions_pkey" in msg:
+        return True
+    return "UNIQUE constraint failed" in msg and "inventory_transactions" in msg
 
 
 async def _ensure_accepted_receipt(
@@ -329,12 +338,148 @@ async def _stale_domain_rejection_should_retry(
     return False
 
 
+# ---------------------------------------------------------------------------
+# Batch prefetch (P2 optimization plan: batch ingest_batch lookups instead of
+# paying the same SELECTs once per item / per session)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ReceiptSnapshot:
+    """Detached view of a sync_receipts row, loaded during batch prefetch."""
+
+    transaction_id: str
+    accepted: bool
+    rejection_reason: str | None
+    received_at: datetime | None
+    processed_at: datetime | None
+
+    def to_orm(self) -> SyncReceipt:
+        return SyncReceipt(
+            transaction_id=self.transaction_id,
+            accepted=self.accepted,
+            rejection_reason=self.rejection_reason,
+            received_at=self.received_at,
+            processed_at=self.processed_at,
+        )
+
+
+@dataclass
+class IngestPrefetch:
+    """
+    Batch-loaded lookup data shared by every item of one ``ingest_batch`` call.
+
+    Idempotency (ledger / receipt) and master-data (store / product / device)
+    lookups are resolved ONCE for the whole payload set with ``IN (...)``
+    queries instead of being re-run per item.  The cache answers *positive*
+    questions ("this row/entity exists") from memory; a cache miss for
+    master data falls through to the original per-item SELECT, because an
+    earlier item of the same batch may have auto-provisioned the entity.
+
+    ``stock_balances`` are deliberately NOT prefetched: each item must read
+    the balance committed by the previous item in the same batch (ordering
+    semantics), so that read stays per-item.
+
+    The cache is updated after every item via :meth:`record`, so later items
+    see entities/receipts created earlier in the batch (e.g. the same
+    transaction_id pushed twice in one payload list).
+    """
+
+    ledger_tx_ids: set[str]
+    receipt_by_tx: dict[str, ReceiptSnapshot]
+    store_ids: set[str]
+    product_ids: set[str]
+    device_ids: set[str]
+
+    @classmethod
+    async def load(
+        cls,
+        payloads: list[TransactionPayload],
+        db: AsyncSession,
+    ) -> IngestPrefetch:
+        tx_ids = {p.transaction_id for p in payloads}
+        store_ids = {p.store_id for p in payloads if p.store_id}
+        product_ids = {p.product_id for p in payloads if p.product_id}
+        device_ids = {p.device_id for p in payloads if p.device_id}
+
+        ledger_tx_ids: set[str] = set()
+        if tx_ids:
+            with db.no_autoflush:
+                res = await db.execute(
+                    select(InventoryTransaction.transaction_id).where(
+                        InventoryTransaction.transaction_id.in_(tx_ids)
+                    )
+                )
+                ledger_tx_ids = set(res.scalars().all())
+
+        receipt_by_tx: dict[str, ReceiptSnapshot] = {}
+        if tx_ids:
+            with db.no_autoflush:
+                res = await db.execute(
+                    select(
+                        SyncReceipt.transaction_id,
+                        SyncReceipt.accepted,
+                        SyncReceipt.rejection_reason,
+                        SyncReceipt.received_at,
+                        SyncReceipt.processed_at,
+                    ).where(SyncReceipt.transaction_id.in_(tx_ids))
+                )
+                for row in res.all():
+                    receipt_by_tx[row[0]] = ReceiptSnapshot(
+                        transaction_id=row[0],
+                        accepted=row[1],
+                        rejection_reason=row[2],
+                        received_at=row[3],
+                        processed_at=row[4],
+                    )
+
+        return cls(
+            ledger_tx_ids=ledger_tx_ids,
+            receipt_by_tx=receipt_by_tx,
+            store_ids=await _prefetch_ids(Store.id, store_ids, db),
+            product_ids=await _prefetch_ids(Product.id, product_ids, db),
+            device_ids=await _prefetch_ids(Device.id, device_ids, db),
+        )
+
+    def record(self, payload: TransactionPayload, receipt: SyncReceipt) -> None:
+        """Fold the outcome of a processed item back into the cache."""
+        if receipt.accepted:
+            self.ledger_tx_ids.add(payload.transaction_id)
+        self.receipt_by_tx[payload.transaction_id] = ReceiptSnapshot(
+            transaction_id=payload.transaction_id,
+            accepted=bool(receipt.accepted),
+            rejection_reason=receipt.rejection_reason,
+            received_at=getattr(receipt, "received_at", None),
+            processed_at=getattr(receipt, "processed_at", None),
+        )
+        if payload.store_id:
+            self.store_ids.add(payload.store_id)
+        if payload.product_id:
+            self.product_ids.add(payload.product_id)
+        if payload.device_id:
+            self.device_ids.add(payload.device_id)
+
+
+async def _prefetch_ids(column, values: set[str], db: AsyncSession) -> set[str]:
+    """One ``SELECT ... WHERE col IN (...)`` for a set of entity ids."""
+    if not values:
+        return set()
+    with db.no_autoflush:
+        res = await db.execute(select(column).where(column.in_(values)))
+        return set(res.scalars().all())
+
+
 async def ingest_transaction(
     payload: TransactionPayload,
     db: AsyncSession,
+    prefetch: IngestPrefetch | None = None,
 ) -> SyncReceipt:
     """
     Idempotently ingest a single transaction into the central ledger.
+
+    ``prefetch`` is optional batch-loaded lookup data (see
+    :class:`IngestPrefetch`); when given, the idempotency and master-data
+    SELECTs are answered from the cache instead of hitting the DB per item.
 
     Algorithm (SYNC-003 / SYNC-004):
     1. Check whether the ledger *already contains* the transaction_id.
@@ -355,7 +500,7 @@ async def ingest_transaction(
     The caller is responsible for committing (or rolling back) the session.
     """
     try:
-        return await _ingest_transaction_impl(payload, db)
+        return await _ingest_transaction_impl(payload, db, prefetch)
     except Exception:
         # Rollback on any error to ensure the connection is in a clean state
         await db.rollback()
@@ -365,13 +510,14 @@ async def ingest_transaction(
 async def _ingest_transaction_impl(
     payload: TransactionPayload,
     db: AsyncSession,
+    prefetch: IngestPrefetch | None = None,
 ) -> SyncReceipt:
     """
     Internal implementation of ingest_transaction without error handling.
     """
 
     async def _rb() -> None:
-        """Defensive rollback — never raises nothing, always safe to call."""
+        """Defensive rollback -- never raises nothing, always safe to call."""
         try:
             await db.rollback()
         except Exception:  # noqa: BLE001, S110
@@ -383,8 +529,11 @@ async def _ingest_transaction_impl(
     ledger_row: InventoryTransaction | None = None
     _step1a_error: str | None = None
     try:
-        with db.no_autoflush:
-            ledger_row = await db.get(InventoryTransaction, payload.transaction_id)
+        if prefetch is not None and payload.transaction_id not in prefetch.ledger_tx_ids:
+            ledger_row = None
+        else:
+            with db.no_autoflush:
+                ledger_row = await db.get(InventoryTransaction, payload.transaction_id)
     except Exception as _s1ae:  # noqa: BLE001
         _step1a_error = f"{type(_s1ae).__name__}: {_s1ae!s}"
         await _rb()
@@ -419,11 +568,25 @@ async def _ingest_transaction_impl(
                 raise
 
         existing_receipt: SyncReceipt | None = None
-        try:
-            existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
-        except Exception as _e:
-            await _rb()
-            raise
+        if prefetch is not None:
+            snap = prefetch.receipt_by_tx.get(payload.transaction_id)
+            if snap is None:
+                existing_receipt = None
+            elif snap.accepted:
+                return snap.to_orm()
+            else:
+                try:
+                    with db.no_autoflush:
+                        existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+                except Exception as _e:
+                    await _rb()
+                    raise
+        else:
+            try:
+                existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+            except Exception as _e:
+                await _rb()
+                raise
         if existing_receipt is not None and existing_receipt.accepted:
             return existing_receipt
         # Stale receipt row that doesn't match the ledger (shouldn't happen,
@@ -452,11 +615,25 @@ async def _ingest_transaction_impl(
 
     # 1b. Receipt-only idempotency check.
     existing_receipt = None
-    try:
-        existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
-    except Exception as _e:
-        await _rb()
-        raise
+    if prefetch is not None:
+        snap = prefetch.receipt_by_tx.get(payload.transaction_id)
+        if snap is None:
+            existing_receipt = None
+        elif snap.accepted:
+            return snap.to_orm()
+        else:
+            try:
+                with db.no_autoflush:
+                    existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+            except Exception as _e:
+                await _rb()
+                raise
+    else:
+        try:
+            existing_receipt = await db.get(SyncReceipt, payload.transaction_id)
+        except Exception as _e:
+            await _rb()
+            raise
     if existing_receipt is not None:
         if existing_receipt.accepted:
             # Accepted receipt but no corresponding ledger row (edge case):
@@ -519,14 +696,17 @@ async def _ingest_transaction_impl(
 
     # 2b. Auto-provision missing store or product in central database if needed
     store_exists = None
-    try:
-        with db.no_autoflush:
-            store_exists = await db.scalar(
-                select(Store.id).where(Store.id == payload.store_id).limit(1)
-            )
-    except Exception:
-        await _rb()
-        raise
+    if prefetch is not None and payload.store_id in prefetch.store_ids:
+        store_exists = payload.store_id
+    else:
+        try:
+            with db.no_autoflush:
+                store_exists = await db.scalar(
+                    select(Store.id).where(Store.id == payload.store_id).limit(1)
+                )
+        except Exception:
+            await _rb()
+            raise
     if not store_exists:
         # Derive code from suffix after STORE- prefix to stay consistent with
         # manual store creation (id STORE-{CODE}, code {CODE}).
@@ -589,14 +769,17 @@ async def _ingest_transaction_impl(
                 raise
 
     existing_prod = None
-    try:
-        with db.no_autoflush:
-            existing_prod = await db.scalar(
-                select(Product).where(Product.id == payload.product_id).limit(1)
-            )
-    except Exception:
-        await _rb()
-        raise
+    if prefetch is not None and payload.product_id in prefetch.product_ids:
+        existing_prod = payload.product_id
+    else:
+        try:
+            with db.no_autoflush:
+                existing_prod = await db.scalar(
+                    select(Product).where(Product.id == payload.product_id).limit(1)
+                )
+        except Exception:
+            await _rb()
+            raise
     if existing_prod is None:
         # Auto-provision a placeholder product so the FK constraint is satisfied.
         # Use a recognizable sentinel prefix so the pull endpoint can identify and
@@ -629,14 +812,17 @@ async def _ingest_transaction_impl(
             raise
 
     device_exists = None
-    try:
-        with db.no_autoflush:
-            device_exists = await db.scalar(
-                select(Device.id).where(Device.id == payload.device_id).limit(1)
-            )
-    except Exception:
-        await _rb()
-        raise
+    if prefetch is not None and payload.device_id in prefetch.device_ids:
+        device_exists = payload.device_id
+    else:
+        try:
+            with db.no_autoflush:
+                device_exists = await db.scalar(
+                    select(Device.id).where(Device.id == payload.device_id).limit(1)
+                )
+        except Exception:
+            await _rb()
+            raise
     if not device_exists:
         auto_device = Device(
             id=payload.device_id,
@@ -794,6 +980,15 @@ async def ingest_batch(
 
     receipts_by_index: dict[int, SyncReceipt] = {}
 
+    # Batch prefetch: resolve idempotency + master-data lookups once for the
+    # whole batch instead of once per item / per session.
+    prefetch = await IngestPrefetch.load(payloads, db)
+
+    async def _finish(original_idx: int, payload: TransactionPayload, receipt: SyncReceipt) -> None:
+        """Record receipt and fold its outcome back into the prefetch cache."""
+        receipts_by_index[original_idx] = receipt
+        prefetch.record(payload, receipt)
+
     async def _rb_sess(s: AsyncSession) -> None:
         try:
             await s.rollback()
@@ -804,7 +999,7 @@ async def ingest_batch(
         for original_idx, payload in ordered:
             try:
                 async with session_factory() as item_session:
-                    receipt = await ingest_transaction(payload, item_session)
+                    receipt = await ingest_transaction(payload, item_session, prefetch)
                     await item_session.commit()
             except Exception as exc:  # noqa: BLE001
                 if _is_inventory_transactions_pkey_collision(exc):
@@ -822,7 +1017,7 @@ async def ingest_batch(
                             receipt_error,
                         )
                         receipt = _make_accepted_receipt(payload.transaction_id)
-                    receipts_by_index[original_idx] = receipt
+                    await _finish(original_idx, payload, receipt)
                     continue
                 rejection_text = f"Unexpected error: {exc!s}"
                 try:
@@ -856,13 +1051,16 @@ async def ingest_batch(
                         receipt_error,
                     )
                     receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
-            receipts_by_index[original_idx] = receipt
+                await _finish(original_idx, payload, receipt)
+            else:
+                # Success path — no exception raised
+                await _finish(original_idx, payload, receipt)
     else:
         for original_idx, payload in ordered:
             try:
                 async with db.begin_nested():
-                    receipt = await ingest_transaction(payload, db)
-                receipts_by_index[original_idx] = receipt
+                    receipt = await ingest_transaction(payload, db, prefetch)
+                await _finish(original_idx, payload, receipt)
             except Exception as exc:  # noqa: BLE001
                 if _is_inventory_transactions_pkey_collision(exc):
                     # Already durably in the ledger (earlier/concurrent
@@ -879,7 +1077,7 @@ async def ingest_batch(
                         )
                         await _rb_sess(db)
                         receipt = _make_accepted_receipt(payload.transaction_id)
-                    receipts_by_index[original_idx] = receipt
+                    await _finish(original_idx, payload, receipt)
                     continue
                 now = _now_utc()
                 rejection_text = f"Unexpected error: {exc!s}"
@@ -900,7 +1098,7 @@ async def ingest_batch(
                     db.add(receipt)
                 try:
                     await db.flush()
-                    receipts_by_index[original_idx] = receipt
+                    await _finish(original_idx, payload, receipt)
                 except Exception as receipt_error:  # noqa: BLE001
                     logger.warning(
                         "Failed to save rejection receipt for tx_id=%s: %s",
@@ -909,7 +1107,7 @@ async def ingest_batch(
                     )
                     await _rb_sess(db)
                     receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
-                    receipts_by_index[original_idx] = receipt
+                    await _finish(original_idx, payload, receipt)
 
     return [receipts_by_index[i] for i in range(len(payloads))]
 

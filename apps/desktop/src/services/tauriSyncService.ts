@@ -38,6 +38,7 @@
 
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './tauriStoreService';
+import { invalidateStockBalanceCache } from './tauriTransactionService';
 import { Product } from '../types/product';
 import {
   ClientSyncState,
@@ -1013,7 +1014,10 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
 
       const rows = await _getPendingOutboxEvents(batchSize, config.force);
 
-      if (!rows || rows.length === 0) {
+      const isFirstIteration = !pushedAnything;
+      const shouldPushCatalogue = Boolean(config.force && isFirstIteration);
+
+      if ((!rows || rows.length === 0) && !shouldPushCatalogue) {
         keepGoing = false;
         break;
       }
@@ -1053,12 +1057,20 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
       }
 
       if (itemsWithRows.length === 0 && productUpdates.length === 0) {
-        continue;
+        if (!shouldPushCatalogue) {
+          continue;
+        }
       }
 
       const sortedItemsWithRows = _sortPushItems(itemsWithRows);
-      const localProducts = await _loadLocalProducts();
-      const pushProducts = [...localProducts, ...productUpdates.map((x) => x.product)];
+      // P2 (optimization plan): only push the full catalogue on a forced
+      // first-iteration sync; regular syncs push just the dirty
+      // PRODUCT_UPDATE events from the outbox instead of the whole
+      // catalogue on every cycle.
+      const dirtyProductSnapshots = productUpdates.map((x) => x.product);
+      const pushProducts = shouldPushCatalogue
+        ? [...(await _loadLocalProducts()), ...dirtyProductSnapshots]
+        : dirtyProductSnapshots;
 
       try {
         const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, config.signal);
@@ -1232,6 +1244,8 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
               stores: pullResponse.stores,
               stock_balances: pullResponse.stock_balances ?? [],
             });
+            // Server-side balance changes landed locally — drop the cache.
+            invalidateStockBalanceCache();
           } catch (err) {
             // eslint-disable-next-line no-console
             console.error('[SyncService] Failed to apply sync pull snapshot:', err);
@@ -1282,6 +1296,9 @@ export function startBackgroundSync(config: SyncConfig, intervalMs: number = 30_
   }
 
   _backgroundSyncActive = true;
+  // P2 (optimization plan): archive terminal outbox events older than the
+  // retention window while the sync engine runs.
+  startTTLCleanup();
 
   function _scheduleNext(): void {
     if (!_backgroundSyncActive) return;
@@ -1305,6 +1322,7 @@ export function startBackgroundSync(config: SyncConfig, intervalMs: number = 30_
  */
 export function stopBackgroundSync(): void {
   _backgroundSyncActive = false;
+  stopTTLCleanup();
   if (_backgroundTimeoutId !== null) {
     clearTimeout(_backgroundTimeoutId);
     _backgroundTimeoutId = null;

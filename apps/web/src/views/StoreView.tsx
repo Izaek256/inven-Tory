@@ -246,34 +246,52 @@ export function StoreView({
         }
         setStoreData(newMap);
       } catch {
-        // Fall back to per-store fetching on batch failure
-        for (const id of storeIdsToLoad) {
-          getStoreInventory(id)
-            .then((d) => {
-              const item: StoreListItem = {
-                storeId: d.store_id,
-                storeCode: d.store_code,
-                storeName: d.store_name,
-                freshness: d.freshness,
-                lastSyncAt: d.last_sync_at,
-                totalQuantity: d.total_quantity,
-                totalProducts: d.total_products,
-              };
-              setStoreData((prev) => new Map(prev).set(id, item));
-            })
-            .catch(() => {
-              const placeholder: StoreListItem = {
-                storeId: id,
-                storeCode: '???',
-                storeName: id,
-                freshness: 'VERY_STALE',
-                lastSyncAt: null,
-                totalQuantity: 0,
-                totalProducts: 0,
-              };
-              setStoreData((prev) => new Map(prev).set(id, placeholder));
-            });
-        }
+        // Fall back to parallel per-store fetching on batch failure (P1:
+        // StoreView N+1 fix). Requests run concurrently but are capped at
+        // CONCURRENCY_LIMIT in flight so a large store list cannot stampede
+        // the API — Promise.all over bounded worker pool.
+        const CONCURRENCY_LIMIT = 4;
+        const ids = [...storeIdsToLoad];
+        let nextIdx = 0;
+
+        const fetchOne = async (id: string): Promise<void> => {
+          try {
+            const d = await getStoreInventory(id);
+            const item: StoreListItem = {
+              storeId: d.store_id,
+              storeCode: d.store_code,
+              storeName: d.store_name,
+              freshness: d.freshness,
+              lastSyncAt: d.last_sync_at,
+              totalQuantity: d.total_quantity,
+              totalProducts: d.total_products,
+            };
+            setStoreData((prev) => new Map(prev).set(id, item));
+          } catch {
+            const placeholder: StoreListItem = {
+              storeId: id,
+              storeCode: '???',
+              storeName: id,
+              freshness: 'VERY_STALE',
+              lastSyncAt: null,
+              totalQuantity: 0,
+              totalProducts: 0,
+            };
+            setStoreData((prev) => new Map(prev).set(id, placeholder));
+          }
+        };
+
+        const worker = async (): Promise<void> => {
+          for (;;) {
+            const i = nextIdx;
+            nextIdx += 1;
+            if (i >= ids.length) return;
+            await fetchOne(ids[i]);
+          }
+        };
+
+        const workerCount = Math.min(CONCURRENCY_LIMIT, ids.length);
+        await Promise.all(Array.from({ length: workerCount }, () => worker()));
       } finally {
         setBatchLoading(false);
       }

@@ -9,6 +9,7 @@
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ReturnStockView } from '../views/ReturnStockView';
 import * as tauriStoreService from '../services/tauriStoreService';
@@ -154,7 +155,7 @@ describe('ReturnStockView — Issue 08 Acceptance Criteria', (): void => {
   });
 
   async function setupForm(): Promise<void> {
-    render(<ReturnStockView />);
+    renderWithProviders(<ReturnStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('product-search')).toBeInTheDocument();
@@ -219,7 +220,7 @@ describe('ReturnStockView — Issue 08 Acceptance Criteria', (): void => {
       });
     });
 
-    expect(screen.getByTestId('success-banner')).toBeInTheDocument();
+    expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
   });
 
   it('supplier return decreases AVAILABLE bucket correctly', async (): Promise<void> => {
@@ -265,7 +266,7 @@ describe('ReturnStockView — Issue 08 Acceptance Criteria', (): void => {
       );
     });
 
-    expect(screen.getByTestId('success-banner')).toBeInTheDocument();
+    expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
   });
 
   it('preserves optional original transaction reference field on submit', async (): Promise<void> => {

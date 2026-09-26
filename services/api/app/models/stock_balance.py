@@ -48,6 +48,7 @@ class StockBalance(Base):
         Index("ix_stock_balances_updated_at", "updated_at"),
         # Composite index for common joins and bucket filtering.
         Index("ix_stock_balances_store_product_bucket", "store_id", "product_id", "stock_bucket"),
+        Index("ix_stock_balances_product_bucket", "product_id", "stock_bucket"),
         # Partial index for delta sync performance (updated_at IS NOT NULL).
         Index("ix_stock_balances_updated_at_not_null", "updated_at", postgresql_where=text("updated_at IS NOT NULL")),
     )

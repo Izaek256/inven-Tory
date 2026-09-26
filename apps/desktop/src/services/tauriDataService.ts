@@ -1,5 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { isTauriEnvironment } from './tauriStoreService';
+import { invalidateStockBalanceCache } from './tauriTransactionService';
+
+/** Default retention period for local business caches (days). */
+export const LOCAL_CACHE_RETENTION_DAYS = 30;
 
 export interface SearchResult {
   product_id: string;
@@ -150,6 +154,9 @@ const BUSINESS_CACHE_PREFIXES = ['inven_tory_daybooks_', 'inven_tory_daybook_det
  * caches). Safe to call in any environment; ignores storage errors.
  */
 export function clearLocalBusinessCaches(): void {
+  // In-memory stock balance cache lives outside localStorage — clear it too
+  // so wiped databases don't keep serving stale quantities.
+  invalidateStockBalanceCache();
   try {
     if (typeof localStorage === 'undefined') return;
     for (const key of BUSINESS_CACHE_EXACT_KEYS) {
@@ -165,6 +172,92 @@ export function clearLocalBusinessCaches(): void {
     staleKeys.forEach((k) => localStorage.removeItem(k));
   } catch {
     // ignore quota / private-mode errors — reload still resets React state
+  }
+}
+
+/**
+ * Purge local business caches that are older than the retention period.
+ * Returns the number of entries purged.
+ */
+export function purgeExpiredLocalCaches(
+  retentionDays: number = LOCAL_CACHE_RETENTION_DAYS,
+): number {
+  if (typeof localStorage === 'undefined') return 0;
+  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
+  let purged = 0;
+  try {
+    // Check exact keys
+    for (const key of BUSINESS_CACHE_EXACT_KEYS) {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          if (parsed.cachedAt && parsed.cachedAt < cutoff) {
+            localStorage.removeItem(key);
+            purged++;
+          }
+        } catch {
+          // If not JSON or no cachedAt, keep it (legacy format)
+        }
+      }
+    }
+    // Check prefixed keys
+    const staleKeys: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && BUSINESS_CACHE_PREFIXES.some((p) => k.startsWith(p))) {
+        try {
+          const raw = localStorage.getItem(k);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.cachedAt && parsed.cachedAt < cutoff) {
+              staleKeys.push(k);
+            }
+          }
+        } catch {
+          // If not JSON or no cachedAt, keep it (legacy format)
+        }
+      }
+    }
+    staleKeys.forEach((k) => {
+      localStorage.removeItem(k);
+      purged++;
+    });
+  } catch {
+    // ignore quota / private-mode errors
+  }
+  return purged;
+}
+
+/**
+ * Wrapper to store business data with a cachedAt timestamp.
+ * Call this instead of localStorage.setItem directly for business caches.
+ */
+export function setBusinessCacheItem<T>(key: string, value: T): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify({ value, cachedAt: Date.now() }));
+  } catch {
+    // ignore quota / private-mode errors
+  }
+}
+
+/**
+ * Retrieve business data from cache, returning null if not found or expired.
+ */
+export function getBusinessCacheItem<T>(key: string, maxAgeMs?: number): T | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed.cachedAt && maxAgeMs && Date.now() - parsed.cachedAt > maxAgeMs) {
+      localStorage.removeItem(key);
+      return null;
+    }
+    return parsed.value as T;
+  } catch {
+    return null;
   }
 }
 

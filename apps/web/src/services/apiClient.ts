@@ -26,7 +26,17 @@ function _getBaseUrl(): string {
 
 const BASE_URL = _getBaseUrl().replace(/\/$/, '');
 
+import { get, set, del } from 'idb-keyval';
+
 let _token: string | null = null;
+
+export async function initToken(): Promise<string | null> {
+  const token = await get('auth_token');
+  if (typeof token === 'string') {
+    _token = token;
+  }
+  return _token;
+}
 
 export function getToken(): string | null {
   return _token;
@@ -34,10 +44,12 @@ export function getToken(): string | null {
 
 export function setToken(token: string): void {
   _token = token;
+  void set('auth_token', token);
 }
 
 export function clearToken(): void {
   _token = null;
+  void del('auth_token');
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;

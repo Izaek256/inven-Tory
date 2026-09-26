@@ -26,5 +26,8 @@
   "devDependencies": {
     "jsdom": "^24.1.0",
     "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "@tanstack/react-virtual": "^3.14.13"
   }
 }

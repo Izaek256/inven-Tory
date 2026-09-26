@@ -32,11 +32,13 @@ import {
   NumericInput,
   Select,
   ColumnDef,
+  useToast,
 } from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 export const TransferStockView: React.FC = () => {
   const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState<'create' | 'list'>('list');
 
   // Auth: resolve user/device from the active session instead of hardcoded values.
@@ -79,8 +81,6 @@ export const TransferStockView: React.FC = () => {
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
-
   // Form State
   const [destinationStoreId, setDestinationStoreId] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -217,7 +217,6 @@ export const TransferStockView: React.FC = () => {
 
   const handleCreateTransfer = async (shouldDispatch: boolean = false): Promise<void> => {
     setError(null);
-    setSuccessMessage(null);
 
     if (!activeStoreId) {
       setError('Please select a store from the header.');
@@ -261,11 +260,9 @@ export const TransferStockView: React.FC = () => {
 
       if (shouldDispatch) {
         await dispatchTransfer(created.id, userId, deviceId);
-        setSuccessMessage(
-          `Transfer ${created.id} created and dispatched! Source stock decreased by ${quantity}.`,
-        );
+        toast('success', `Transfer ${created.id} created and dispatched!`);
       } else {
-        setSuccessMessage(`Transfer ${created.id} created in DRAFT status.`);
+        toast('success', `Transfer ${created.id} created in DRAFT status.`);
       }
 
       // Reset form
@@ -284,14 +281,14 @@ export const TransferStockView: React.FC = () => {
 
   const handleDispatch = async (transferId: string): Promise<void> => {
     setError(null);
-    setSuccessMessage(null);
+
     setSubmitting(true);
     const userId = sessionUserId || 'USER-LOCAL';
     const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
 
     try {
       await dispatchTransfer(transferId, userId, deviceId);
-      setSuccessMessage(`Transfer ${transferId} successfully dispatched!`);
+      toast('success', `Transfer ${transferId} successfully dispatched!`);
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -302,14 +299,14 @@ export const TransferStockView: React.FC = () => {
 
   const handleReceive = async (transferId: string): Promise<void> => {
     setError(null);
-    setSuccessMessage(null);
+
     setSubmitting(true);
     const userId = sessionUserId || 'USER-LOCAL';
     const deviceId = sessionDeviceId || 'SINGLE-USER-DEVICE';
 
     try {
       await receiveTransfer(transferId, userId, deviceId);
-      setSuccessMessage(`Transfer ${transferId} receipt confirmed! Stock added to destination.`);
+      toast('success', `Transfer ${transferId} receipt confirmed! Stock added to destination.`);
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -320,7 +317,7 @@ export const TransferStockView: React.FC = () => {
 
   const handleCancel = async (transferId: string): Promise<void> => {
     setError(null);
-    setSuccessMessage(null);
+
     setSubmitting(true);
     if (!sessionUserId) {
       setError('User session not found. Please log in again.');
@@ -329,7 +326,7 @@ export const TransferStockView: React.FC = () => {
     }
     try {
       await cancelTransfer(transferId, sessionUserId, sessionDeviceId);
-      setSuccessMessage(`Transfer ${transferId} cancelled.`);
+      toast('success', `Transfer ${transferId} cancelled.`);
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -340,11 +337,11 @@ export const TransferStockView: React.FC = () => {
 
   const handleException = async (transferId: string): Promise<void> => {
     setError(null);
-    setSuccessMessage(null);
+
     setSubmitting(true);
     try {
       await markTransferException(transferId, 'Flagged by operator');
-      setSuccessMessage(`Transfer ${transferId} marked as EXCEPTION.`);
+      toast('success', `Transfer ${transferId} marked as EXCEPTION.`);
       await fetchData();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -561,19 +558,6 @@ export const TransferStockView: React.FC = () => {
         >
           <AlertTriangle size={16} aria-hidden="true" />
           <span>{error}</span>
-        </div>
-      )}
-
-      {successMessage && (
-        <div
-          className="it-toast it-toast--success"
-          role="status"
-          aria-live="polite"
-          style={{ marginBottom: '16px' }}
-          data-testid="alert-success"
-        >
-          <CheckCircle size={16} aria-hidden="true" />
-          <span>{successMessage}</span>
         </div>
       )}
 

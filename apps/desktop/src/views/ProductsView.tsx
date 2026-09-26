@@ -590,6 +590,7 @@ export const ProductsView: React.FC<ProductsViewProps> = ({ userRole = 'ADMIN' }
               columns={columns}
               rows={filteredProducts}
               rowKey={(p) => p.id}
+              rowClassName={(row) => (row.id === flashRowId ? 'it-flash-success' : undefined)}
               data-testid="products-table"
               emptySlot={
                 <EmptyState

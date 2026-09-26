@@ -31,7 +31,6 @@ Design notes
 from __future__ import annotations
 
 import asyncio
-import gzip
 import logging
 from datetime import UTC, datetime
 from typing import Annotated, Any, Self
@@ -51,11 +50,24 @@ from app.models.sync_receipt import SyncReceipt
 from app.models.user import User
 from app.services.ingestion import TransactionPayload, ingest_batch
 
+logger = logging.getLogger(__name__)
+
+
 class _CoalescingWindow:
+    """Coalesces nearby sync-triggering operations into batches.
+
+    When multiple stock operations happen in quick succession, each one
+    would otherwise trigger a full push+pull sync.  This waits out a
+    short window so nearby operations batch into a single sync.
+    Per-key so push/pull/restore don't serialise each other.
+    """
+
     _last_trigger: dict[str, float] = {}
 
     @classmethod
-    async def wait(cls, key: str, window_s: float = settings.sync_coalescing_window_s) -> None:
+    async def wait(cls, key: str, window_s: float | None = None) -> None:
+        if window_s is None:
+            window_s = settings.sync_coalescing_window_s
         now = asyncio.get_event_loop().time()
         last = cls._last_trigger.get(key, 0)
         elapsed = now - last
@@ -73,12 +85,6 @@ async def _with_timeout(coro, timeout_s: int = settings.sync_request_timeout_s):
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Request timed out after {timeout_s}s",
         )
-
-
-def _compress_response(data: bytes) -> bytes:
-    if settings.compression_enabled and len(data) > 1024:
-        return gzip.compress(data)
-    return data
 
 
 async def _paginated_pull(
@@ -454,6 +460,11 @@ class SyncStatusResponse(BaseModel):
 # POST /api/v1/sync/push  (SYNC-007, SYNC-010)
 # ---------------------------------------------------------------------------
 
+
+# TODO(optimization-plan): Batch stock operation support (`batch_operations`
+# endpoint + bulk receive/sell UI) is DEFERRED (flagged LATER, high effort,
+# needs its own design pass) per the Optimization & UX Implementation Prompt
+# (feat/inventory-optimization). Do not implement here without that design pass.
 
 @router.post(
     "/push",

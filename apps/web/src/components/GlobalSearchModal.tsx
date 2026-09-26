@@ -22,8 +22,9 @@
  */
 import React, { useEffect, useMemo, useState, useTransition } from 'react';
 import { Modal, SearchInput, DataTable, EmptyState, Skeleton, type ColumnDef } from '@invenTory/ui';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { searchProductsServer } from '../services/dashboardService';
-import type { ProductSearchResponse, ProductSearchResult } from '../types/dashboard';
+import type { ProductSearchResult } from '../types/dashboard';
 
 export interface GlobalSearchStore {
   id: string;
@@ -45,14 +46,6 @@ interface SearchResultRow {
   total: number;
 }
 
-const CACHE_TTL_MS = 60_000;
-const cacheMap = new Map<string, { data: ProductSearchResult[]; expiresAt: number }>();
-const inFlightMap = new Map<string, Promise<ProductSearchResponse>>();
-
-function getCacheKey(query: string): string {
-  return `global:${query}`;
-}
-
 export function GlobalSearchModal({
   isOpen,
   onClose,
@@ -60,78 +53,29 @@ export function GlobalSearchModal({
   initialQuery = '',
 }: GlobalSearchModalProps): React.ReactElement {
   const [query, setQuery] = useState(initialQuery);
-  const [products, setProducts] = useState<ProductSearchResult[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isPending, startTransition] = useTransition();
-
-  const isLoading = loading || isPending;
+  const [isPendingTransition, startTransition] = useTransition();
 
   useEffect(() => {
     if (!isOpen) return;
     setQuery(initialQuery);
   }, [isOpen, initialQuery]);
 
-  useEffect(() => {
-    if (!isOpen) return;
-    let cancelled = false;
+  const {
+    data,
+    isPending: isQueryPending,
+    error: queryError,
+  } = useQuery({
+    queryKey: ['globalSearch', query],
+    queryFn: () => searchProductsServer(query, 1, 200),
+    enabled: isOpen,
+    staleTime: 60_000,
+    placeholderData: keepPreviousData,
+  });
 
-    const cacheKey = getCacheKey(query);
-    const now = Date.now();
-    const cached = cacheMap.get(cacheKey);
-
-    if (cached && cached.expiresAt > now && products.length > 0) {
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    const existingInFlight = inFlightMap.get(cacheKey);
-    if (existingInFlight) {
-      existingInFlight
-        .then((data) => {
-          if (!cancelled) {
-            setProducts(data.results);
-            setLoading(false);
-          }
-        })
-        .catch((err: unknown) => {
-          if (!cancelled) {
-            setProducts([]);
-            setError(err instanceof Error ? err.message : String(err));
-            setLoading(false);
-          }
-        });
-      return;
-    }
-
-    const promise = searchProductsServer(query, 1, 200);
-    inFlightMap.set(cacheKey, promise);
-
-    promise
-      .then((data) => {
-        cacheMap.set(cacheKey, { data: data.results, expiresAt: now + CACHE_TTL_MS });
-        if (!cancelled) {
-          setProducts(data.results ?? []);
-          setLoading(false);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setProducts([]);
-          setError(err instanceof Error ? err.message : String(err));
-          setLoading(false);
-        }
-      })
-      .finally(() => {
-        inFlightMap.delete(cacheKey);
-      });
-
-    return (): void => {
-      cancelled = true;
-    };
-  }, [isOpen, query]);
+  const products = data?.results ?? [];
+  const error =
+    queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
+  const isLoading = isQueryPending || isPendingTransition;
 
   const results = useMemo<SearchResultRow[]>(() => {
     const term = query.toLowerCase().trim();

@@ -322,144 +322,146 @@ function App(): React.ReactElement {
   ];
 
   return (
-    <div className="app-container app-container--artifact" data-testid="web-app-container">
-      {/* Rail — full-height dark ink sidebar (artifact .rail), hidden on narrow */}
-      {!isNarrow && (
-        <aside
-          className={`app-sidebar app-sidebar--mockup ${collapsed ? 'app-sidebar--collapsed' : ''}`}
-          data-testid="web-sidebar"
-          style={{ width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
-        >
-          <div className="rail-brand">
-            <div className="rail-brand__mark">
-              <img src="/favicon.svg" alt="" aria-hidden="true" />
+    <QueryClientProvider client={queryClient}>
+      <div className="app-container app-container--artifact" data-testid="web-app-container">
+        {/* Rail — full-height dark ink sidebar (artifact .rail), hidden on narrow */}
+        {!isNarrow && (
+          <aside
+            className={`app-sidebar app-sidebar--mockup ${collapsed ? 'app-sidebar--collapsed' : ''}`}
+            data-testid="web-sidebar"
+            style={{ width: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_WIDTH }}
+          >
+            <div className="rail-brand">
+              <div className="rail-brand__mark">
+                <img src="/favicon.svg" alt="" aria-hidden="true" />
+              </div>
+              <div className="rail-brand__text">
+                <strong>invenTory</strong>
+              </div>
             </div>
-            <div className="rail-brand__text">
-              <strong>invenTory</strong>
+            <div className="app-sidebar__nav">
+              <div className="nav-caption">Overview</div>
+              {NAV_ITEMS.map((item) => (
+                <button
+                  key={item.id}
+                  className={`nav-item nav-item--mockup ${effectiveView === item.id ? 'active' : ''}`}
+                  data-testid={`nav-${item.id}`}
+                  onClick={() => handleSelectView(item.id)}
+                  title={collapsed ? item.label : undefined}
+                  aria-label={item.label}
+                  onMouseEnter={() => collapsed && setHoveredItem(item.id)}
+                  onMouseLeave={() => setHoveredItem(null)}
+                  onFocus={() => collapsed && setHoveredItem(item.id)}
+                  onBlur={() => setHoveredItem(null)}
+                >
+                  <span className="nav-bar" aria-hidden="true" />
+                  <item.icon size={16} aria-hidden="true" />
+                  {!collapsed && <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>}
+                  {collapsed && hoveredItem === item.id && (
+                    <span className="nav-tooltip">{item.label}</span>
+                  )}
+                </button>
+              ))}
+              {/* hidden legacy for test compat — Recent Activity */}
+              {NAV_LEGACY.map((item) => (
+                <button
+                  key={item.id}
+                  className={`nav-item ${effectiveView === 'stock-movements' ? 'active' : ''}`}
+                  data-testid={`nav-${item.id}`}
+                  onClick={() => handleSelectView(item.id)}
+                  style={{ display: 'none' }}
+                  aria-hidden="true"
+                >
+                  <item.icon size={18} aria-hidden="true" />
+                  <span>{item.label}</span>
+                </button>
+              ))}
             </div>
-          </div>
-          <div className="app-sidebar__nav">
-            <div className="nav-caption">Overview</div>
-            {NAV_ITEMS.map((item) => (
+
+            <div className="rail-foot" data-testid="rail-sync-status">
+              <span className="dot" aria-hidden="true" />
+              <span>{isOnline ? 'SYNCED · ONLINE' : 'OFFLINE'}</span>
+            </div>
+            <button
+              className="sidebar-collapse-btn"
+              onClick={() => setCollapsed((c) => !c)}
+              data-testid="sidebar-collapse"
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            >
+              {collapsed ? (
+                <ChevronRight size={14} />
+              ) : (
+                <>
+                  <ChevronLeft size={14} /> <span className="rail-collapse-label">Collapse</span>
+                </>
+              )}
+            </button>
+          </aside>
+        )}
+
+        {/* Right column — topbar over content only (artifact .col) */}
+        <div className="app-main-col">
+          <TopBar
+            placeholder={placeholder}
+            isOnline={isOnline}
+            me={me}
+            onLogout={() => {
+              clearToken();
+              setMe(null);
+              setIsAuthenticated(false);
+            }}
+            onSearchChange={setTopSearch}
+            onSearchSubmit={handleHeaderSearch}
+          />
+
+          {/* Main Content */}
+          <main className="app-content app-content--mockup" data-testid="web-main-content">
+            {storeListError && (
+              <div
+                style={{
+                  padding: '12px 16px',
+                  marginBottom: '16px',
+                  backgroundColor: 'var(--it-red-surface)',
+                  color: 'var(--it-red-text)',
+                  border: '1px solid var(--it-red-border)',
+                  borderRadius: 'var(--it-r-md)',
+                  fontSize: '14px',
+                }}
+                data-testid="store-list-error"
+              >
+                {storeListError}
+              </div>
+            )}
+            {renderView()}
+          </main>
+        </div>
+
+        <GlobalSearchModal
+          isOpen={globalSearchOpen}
+          onClose={() => setGlobalSearchOpen(false)}
+          stores={storeMeta}
+          initialQuery={topSearch}
+        />
+
+        {isNarrow && (
+          <nav className="web-bottom-nav web-bottom-nav--mockup" data-testid="web-bottom-nav">
+            {bottomItems.map((item) => (
               <button
                 key={item.id}
-                className={`nav-item nav-item--mockup ${effectiveView === item.id ? 'active' : ''}`}
+                className={`web-bottom-nav__item ${effectiveView === item.id ? 'active' : ''}`}
                 data-testid={`nav-${item.id}`}
                 onClick={() => handleSelectView(item.id)}
-                title={collapsed ? item.label : undefined}
                 aria-label={item.label}
-                onMouseEnter={() => collapsed && setHoveredItem(item.id)}
-                onMouseLeave={() => setHoveredItem(null)}
-                onFocus={() => collapsed && setHoveredItem(item.id)}
-                onBlur={() => setHoveredItem(null)}
+                aria-current={effectiveView === item.id ? 'page' : undefined}
               >
-                <span className="nav-bar" aria-hidden="true" />
-                <item.icon size={16} aria-hidden="true" />
-                {!collapsed && <span style={{ flex: 1, textAlign: 'left' }}>{item.label}</span>}
-                {collapsed && hoveredItem === item.id && (
-                  <span className="nav-tooltip">{item.label}</span>
-                )}
-              </button>
-            ))}
-            {/* hidden legacy for test compat — Recent Activity */}
-            {NAV_LEGACY.map((item) => (
-              <button
-                key={item.id}
-                className={`nav-item ${effectiveView === 'stock-movements' ? 'active' : ''}`}
-                data-testid={`nav-${item.id}`}
-                onClick={() => handleSelectView(item.id)}
-                style={{ display: 'none' }}
-                aria-hidden="true"
-              >
-                <item.icon size={18} aria-hidden="true" />
+                <item.icon size={20} aria-hidden="true" />
                 <span>{item.label}</span>
               </button>
             ))}
-          </div>
-
-          <div className="rail-foot" data-testid="rail-sync-status">
-            <span className="dot" aria-hidden="true" />
-            <span>{isOnline ? 'SYNCED · ONLINE' : 'OFFLINE'}</span>
-          </div>
-          <button
-            className="sidebar-collapse-btn"
-            onClick={() => setCollapsed((c) => !c)}
-            data-testid="sidebar-collapse"
-            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          >
-            {collapsed ? (
-              <ChevronRight size={14} />
-            ) : (
-              <>
-                <ChevronLeft size={14} /> <span className="rail-collapse-label">Collapse</span>
-              </>
-            )}
-          </button>
-        </aside>
-      )}
-
-      {/* Right column — topbar over content only (artifact .col) */}
-      <div className="app-main-col">
-        <TopBar
-          placeholder={placeholder}
-          isOnline={isOnline}
-          me={me}
-          onLogout={() => {
-            clearToken();
-            setMe(null);
-            setIsAuthenticated(false);
-          }}
-          onSearchChange={setTopSearch}
-          onSearchSubmit={handleHeaderSearch}
-        />
-
-        {/* Main Content */}
-        <main className="app-content app-content--mockup" data-testid="web-main-content">
-          {storeListError && (
-            <div
-              style={{
-                padding: '12px 16px',
-                marginBottom: '16px',
-                backgroundColor: 'var(--it-red-surface)',
-                color: 'var(--it-red-text)',
-                border: '1px solid var(--it-red-border)',
-                borderRadius: 'var(--it-r-md)',
-                fontSize: '14px',
-              }}
-              data-testid="store-list-error"
-            >
-              {storeListError}
-            </div>
-          )}
-          {renderView()}
-        </main>
+          </nav>
+        )}
       </div>
-
-      <GlobalSearchModal
-        isOpen={globalSearchOpen}
-        onClose={() => setGlobalSearchOpen(false)}
-        stores={storeMeta}
-        initialQuery={topSearch}
-      />
-
-      {isNarrow && (
-        <nav className="web-bottom-nav web-bottom-nav--mockup" data-testid="web-bottom-nav">
-          {bottomItems.map((item) => (
-            <button
-              key={item.id}
-              className={`web-bottom-nav__item ${effectiveView === item.id ? 'active' : ''}`}
-              data-testid={`nav-${item.id}`}
-              onClick={() => handleSelectView(item.id)}
-              aria-label={item.label}
-              aria-current={effectiveView === item.id ? 'page' : undefined}
-            >
-              <item.icon size={20} aria-hidden="true" />
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
-      )}
-    </div>
+    </QueryClientProvider>
   );
 }
 

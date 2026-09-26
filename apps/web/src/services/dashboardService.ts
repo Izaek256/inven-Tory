@@ -64,7 +64,14 @@ export async function searchProductsServer(
   page = 1,
   pageSize = 50,
 ): Promise<ProductSearchResponse> {
-  const params = new URLSearchParams({ q: query, page: String(page), pageSize: String(pageSize) });
+  const safePage = Math.max(1, Math.floor(page));
+  const safeSize = Math.min(1000, Math.max(1, Math.floor(pageSize)));
+  const offset = (safePage - 1) * safeSize;
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(safeSize),
+    offset: String(offset),
+  });
   const path = `/products/search?${params.toString()}`;
   const cached = getCache(path);
   if (cached !== undefined) return cached as ProductSearchResponse;
@@ -85,7 +92,7 @@ export async function searchProductsServer(
 
 export async function searchProducts(
   query: string = '',
-  limit = 10000,
+  limit = 100,
   scope: 'all-stores' | '' = '',
 ): Promise<ProductSearchResponse> {
   const params = new URLSearchParams({ q: query, limit: String(limit) });

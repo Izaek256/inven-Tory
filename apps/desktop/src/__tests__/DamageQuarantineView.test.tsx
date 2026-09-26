@@ -9,6 +9,7 @@
  */
 
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { renderWithProviders } from '../test/renderWithProviders';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { DamageQuarantineView } from '../views/DamageQuarantineView';
 import { SaleStockView } from '../views/SaleStockView';
@@ -187,7 +188,7 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
   });
 
   async function setupForm(qty: number = 2, reasonText: string = ''): Promise<void> {
-    render(<DamageQuarantineView />);
+    renderWithProviders(<DamageQuarantineView />);
 
     act((): void => {
       fireEvent.change(screen.getByTestId('product-search-input'), {
@@ -223,7 +224,7 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
   }
 
   it('renders the damage/quarantine screen correctly', async (): Promise<void> => {
-    render(<DamageQuarantineView />);
+    renderWithProviders(<DamageQuarantineView />);
     expect(screen.getByTestId('damage-quarantine-view')).toBeInTheDocument();
   });
 
@@ -255,7 +256,7 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     });
 
     await waitFor((): void => {
-      expect(screen.getByTestId('damage-success-banner')).toBeInTheDocument();
+      expect(screen.getByText('Recorded! Transaction saved.')).toBeInTheDocument();
     });
 
     expect(moveSpy).toHaveBeenCalledOnce();
@@ -269,10 +270,6 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     // Property 1: session-derived actor IDs are used
     expect(callArg.user_id).toBe('TEST-USER-123');
     expect(callArg.device_id).toBe('TEST-DEVICE-456');
-
-    expect(screen.getByTestId('damage-success-banner')).toHaveTextContent(
-      'Stock movement recorded successfully! 2 unit(s) moved from AVAILABLE to DAMAGED.',
-    );
   });
 
   it('surfaces strict mode rejection when source bucket has insufficient stock', async (): Promise<void> => {
@@ -315,7 +312,7 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
     );
     vi.spyOn(tauriProductService, 'searchProductsFts5').mockResolvedValue([MOCK_PRODUCT]);
 
-    render(<SaleStockView />);
+    renderWithProviders(<SaleStockView />);
 
     await waitFor((): void => {
       expect(screen.getByTestId('live-search-panel')).toBeInTheDocument();

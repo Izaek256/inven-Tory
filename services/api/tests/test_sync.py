@@ -1045,3 +1045,273 @@ async def test_resubmit_already_accepted_transaction_returns_accepted(
     assert stored is not None
     assert stored.accepted is True
     assert stored.rejection_reason is None
+
+
+# ---------------------------------------------------------------------------
+# Coalescing window unit tests (P0: batch nearby operations before syncing)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_coalescing_window_first_call_does_not_block() -> None:
+    """The first call for a key returns immediately (no prior trigger)."""
+    from app.api.v1.sync import _CoalescingWindow
+
+    _CoalescingWindow._last_trigger.pop("test-first", None)
+    import asyncio as _asyncio
+
+    start = _asyncio.get_event_loop().time()
+    await _CoalescingWindow.wait("test-first", window_s=10.0)
+    elapsed = _asyncio.get_event_loop().time() - start
+    assert elapsed < 1.0, f"first call should not wait, took {elapsed:.3f}s"
+
+
+@pytest.mark.asyncio
+async def test_coalescing_window_second_call_within_window_waits() -> None:
+    """A second call inside the window sleeps until the window elapses."""
+    from app.api.v1.sync import _CoalescingWindow
+
+    _CoalescingWindow._last_trigger.pop("test-second", None)
+    import asyncio as _asyncio
+
+    loop = _asyncio.get_event_loop()
+
+    await _CoalescingWindow.wait("test-second", window_s=0.3)
+    first_at = loop.time()
+
+    await _CoalescingWindow.wait("test-second", window_s=0.3)
+    second_at = loop.time()
+
+    waited = second_at - first_at
+    assert waited >= 0.25, f"second call should wait ~0.3s, waited {waited:.3f}s"
+
+
+@pytest.mark.asyncio
+async def test_coalescing_window_keys_are_independent() -> None:
+    """Different keys do not block each other."""
+    from app.api.v1.sync import _CoalescingWindow
+
+    _CoalescingWindow._last_trigger.pop("test-key-a", None)
+    _CoalescingWindow._last_trigger.pop("test-key-b", None)
+    import asyncio as _asyncio
+
+    loop = _asyncio.get_event_loop()
+
+    await _CoalescingWindow.wait("test-key-a", window_s=10.0)
+    start_b = loop.time()
+    await _CoalescingWindow.wait("test-key-b", window_s=10.0)
+    elapsed_b = loop.time() - start_b
+    assert elapsed_b < 1.0, f"key b should not wait on key a, took {elapsed_b:.3f}s"
+
+
+@pytest.mark.asyncio
+async def test_coalescing_window_uses_settings_default() -> None:
+    """wait() without an explicit window falls back to the setting."""
+    from app.api.v1.sync import _CoalescingWindow
+    from app.core.config import settings
+
+    assert settings.sync_coalescing_window_s > 0
+    _CoalescingWindow._last_trigger.pop("test-default", None)
+    import asyncio as _asyncio
+
+    start = _asyncio.get_event_loop().time()
+    await _CoalescingWindow.wait("test-default")
+    elapsed = _asyncio.get_event_loop().time() - start
+    assert elapsed < settings.sync_coalescing_window_s + 1.0
+
+
+# ---------------------------------------------------------------------------
+# gzip transport (compression): request decompression + response compression
+# ---------------------------------------------------------------------------
+
+
+async def test_push_gzipped_request_body_is_accepted(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """
+    P2 (optimization plan): the desktop client gzips push payloads
+    (Content-Encoding: gzip). The server must gunzip them before JSON
+    parsing — without the request-decompression middleware this returns
+    422 (invalid JSON) instead of 200.
+    """
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    product = await _seed_product(db_session)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+    event = _tx_item(store.id, product.id, user.id, device.id, transaction_id=_uid())
+
+    import gzip
+    import json
+
+    raw = json.dumps({"events": [event]}).encode()
+    compressed = gzip.compress(raw)
+
+    response = client.post(
+        "/api/v1/sync/push",
+        content=compressed,
+        headers={
+            **headers,
+            "Content-Type": "application/json",
+            "Content-Encoding": "gzip",
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["accepted_count"] == 1
+    assert data["rejected_count"] == 0
+
+
+def test_push_invalid_gzip_body_returns_400(client: TestClient) -> None:
+    """A body claiming Content-Encoding: gzip but not gzip fails with 400."""
+    headers = {"Content-Type": "application/json", "Content-Encoding": "gzip"}
+    response = client.post(
+        "/api/v1/sync/push",
+        content=b"this is not gzip at all",
+        headers=headers,
+    )
+    assert response.status_code == 400
+    assert "gzip" in response.json()["detail"].lower()
+
+
+def test_large_response_is_gzip_compressed(client: TestClient) -> None:
+    """
+    P2 (optimization plan): sync/pull payloads are gzip-compressed when the
+    client advertises support and the body exceeds the 1 KB threshold.
+    /openapi.json is a stable >1 KB JSON response for this smoke test.
+    """
+    response = client.get("/openapi.json", headers={"Accept-Encoding": "gzip"})
+    assert response.status_code == 200
+    assert response.headers.get("content-encoding") == "gzip"
+    assert len(response.content) > 1024
+
+
+def test_small_response_is_not_gzip_compressed(client: TestClient) -> None:
+    """Responses below the 1 KB threshold stay uncompressed even with gzip offered."""
+    response = client.get("/health", headers={"Accept-Encoding": "gzip"})
+    assert response.status_code == 200
+    assert "content-encoding" not in response.headers
+
+
+# ---------------------------------------------------------------------------
+# P2 (optimization plan): delta sync (`since`) + page limits on /sync/pull
+# ---------------------------------------------------------------------------
+
+
+async def test_pull_delta_sync_returns_only_rows_newer_than_since(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """`since` filters products/stores/balances to updated_at > since (delta sync)."""
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    old_product = await _seed_product(db_session)
+    await db_session.commit()
+
+    # Cursor: strictly after store + old_product rows.
+    since = datetime.now(UTC) + timedelta(seconds=1)
+
+    new_product = Product(
+        id=_uid(),
+        sku=f"SKU-{uuid.uuid4().hex[:8].upper()}",
+        name="Newer Widget",
+        category="Electronics",
+        unit="pcs",
+        created_at=since,
+        updated_at=since + timedelta(seconds=1),
+    )
+    db_session.add(new_product)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+
+    import urllib.parse
+
+    qs = urllib.parse.quote(since.isoformat())
+    response = client.post(f"/api/v1/sync/pull?since={qs}", headers=headers)
+    assert response.status_code == 200, response.text
+    data = response.json()
+
+    product_ids = [p["id"] for p in data["products"]]
+    assert new_product.id in product_ids, "row newer than `since` must be returned"
+    assert old_product.id not in product_ids, "row older than `since` must be excluded"
+    store_ids = [s["id"] for s in data["stores"]]
+    assert store.id not in store_ids, "store older than `since` must be excluded"
+    # Delta filters apply to the reported totals too.
+    assert data["pagination"]["total_products"] == 1
+
+
+async def test_pull_without_since_returns_full_snapshot(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """No `since` → full snapshot (all rows regardless of updated_at)."""
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    product = await _seed_product(db_session)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+    response = client.post("/api/v1/sync/pull", headers=headers)
+    assert response.status_code == 200
+    data = response.json()
+
+    assert product.id in [p["id"] for p in data["products"]]
+    assert store.id in [s["id"] for s in data["stores"]]
+
+
+async def test_pull_respects_page_limit_and_offset(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """limit/offset page the combined stream without duplication or loss."""
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+
+    products = []
+    for _ in range(5):
+        p = Product(
+            id=_uid(),
+            sku=f"SKU-{uuid.uuid4().hex[:8].upper()}",
+            name=f"Bulk Widget {uuid.uuid4().hex[:4]}",
+            category="Electronics",
+            unit="pcs",
+            created_at=datetime.now(UTC),
+            updated_at=datetime.now(UTC),
+        )
+        db_session.add(p)
+        products.append(p)
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+
+    # Page 1: limit=2.
+    r1 = client.post("/api/v1/sync/pull?limit=2&offset=0", headers=headers)
+    assert r1.status_code == 200
+    d1 = r1.json()
+    assert d1["pagination"]["total_products"] == 5
+    assert d1["pagination"]["has_more"] is True
+    assert len(d1["products"]) == 2
+
+    # Page 2: offset=2.
+    r2 = client.post("/api/v1/sync/pull?limit=2&offset=2", headers=headers)
+    d2 = r2.json()
+    assert len(d2["products"]) == 2
+
+    # Page 3: offset=4 → last product + the store (combined stream).
+    r3 = client.post("/api/v1/sync/pull?limit=2&offset=4", headers=headers)
+    d3 = r3.json()
+    assert d3["pagination"]["has_more"] is False
+
+    # No product is duplicated or lost across pages.
+    seen = [p["id"] for p in d1["products"]] + [p["id"] for p in d2["products"]] + [
+        p["id"] for p in d3["products"]
+    ]
+    expected = [p.id for p in products]
+    assert sorted(seen) == sorted(expected), f"expected exactly {expected}, got {seen}"
