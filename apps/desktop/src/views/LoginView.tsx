@@ -135,7 +135,7 @@ export const LoginView: React.FC<LoginViewProps> = ({
               padding: '2px 6px',
             }}
           >
-            v1.3.0
+            v1.3.1
           </span>
         </div>
         <div style={{ flex: 1 }} />
