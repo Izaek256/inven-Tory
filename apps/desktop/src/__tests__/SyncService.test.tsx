@@ -363,10 +363,8 @@ describe('tauriSyncService', () => {
     vi.useFakeTimers();
     // Real CompressionStream resolves via macrotasks that fake timers can't
     // reach — disable it so the pre-push path stays on the microtask queue.
-    // @ts-expect-error - explicitly disable for this test
     const originalCompressionStream = globalThis.CompressionStream;
-    // @ts-expect-error - explicitly disable CompressionStream for test
-    globalThis.CompressionStream = undefined;
+    globalThis.CompressionStream = undefined as any;
 
     try {
       const { isTauriEnvironment } = await import('../services/tauriStoreService');
