@@ -72,12 +72,12 @@ export function GlobalSearchModal({
     placeholderData: keepPreviousData,
   });
 
-  const products = data?.results ?? [];
   const error =
     queryError instanceof Error ? queryError.message : queryError ? String(queryError) : null;
   const isLoading = isQueryPending || isPendingTransition;
 
   const results = useMemo<SearchResultRow[]>(() => {
+    const products = data?.results ?? [];
     const term = query.toLowerCase().trim();
     const filtered = products.filter(
       (p) =>
@@ -99,7 +99,7 @@ export function GlobalSearchModal({
       }
       return { product: p, qtyByStore: rowQty, total };
     });
-  }, [products, query, stores]);
+  }, [data, query, stores]);
 
   const storeColumns = stores.map((store): ColumnDef<SearchResultRow> => ({
     key: `qty-${store.id}`,

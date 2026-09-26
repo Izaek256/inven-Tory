@@ -304,6 +304,7 @@ export function StoreView({
     const unknownIds = storeIds.filter((id) => !storeData.has(id));
     if (unknownIds.length === 0) return;
     loadAllStores(unknownIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [storeIds, loadAllStores]);
 
   const handleRefresh = useCallback(() => {

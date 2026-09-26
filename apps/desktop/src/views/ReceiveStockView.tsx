@@ -349,7 +349,15 @@ export const ReceiveStockView: React.FC = () => {
         throw err;
       }
     },
-    [activeStoreId, productMap, nameToId, sessionUserId, sessionDeviceId, setCommittedTxnIds],
+    [
+      activeStoreId,
+      productMap,
+      nameToId,
+      sessionUserId,
+      sessionDeviceId,
+      setCommittedTxnIds,
+      toast,
+    ],
   );
 
   // ── Edit / Delete handlers (row-level) ───────────────────────────────────
@@ -390,7 +398,7 @@ export const ReceiveStockView: React.FC = () => {
         setError(String(err instanceof Error ? err.message : err));
       }
     },
-    [committedTxnIds],
+    [committedTxnIds, toast],
   );
 
   const handleDeleteRow = useCallback(

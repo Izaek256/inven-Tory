@@ -350,7 +350,15 @@ export const SaleStockView: React.FC = () => {
         throw err;
       }
     },
-    [activeStoreId, productMap, nameToId, sessionUserId, sessionDeviceId, setCommittedTxnIds],
+    [
+      activeStoreId,
+      productMap,
+      nameToId,
+      sessionUserId,
+      sessionDeviceId,
+      setCommittedTxnIds,
+      toast,
+    ],
   );
 
   // ── Edit / Delete handlers (row-level) ───────────────────────────────────
@@ -379,25 +387,11 @@ export const SaleStockView: React.FC = () => {
           reason_code: null,
         });
         toast('success', 'Recorded! Transaction saved.');
-
-        // Optimistically update entry log
-        setEntryLog((prev) =>
-          prev.map((item) =>
-            item.id === rowId
-              ? {
-                  ...item,
-                  quantity: qty,
-                  referenceNumber: String(newValues.reference_number ?? '').trim() || null,
-                  timestamp: new Date().toLocaleTimeString(),
-                }
-              : item,
-          ),
-        );
       } catch (err) {
         setError(String(err instanceof Error ? err.message : err));
       }
     },
-    [committedTxnIds],
+    [committedTxnIds, toast],
   );
 
   const handleDeleteRow = useCallback(

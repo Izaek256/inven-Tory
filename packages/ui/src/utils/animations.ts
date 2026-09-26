@@ -75,7 +75,7 @@ export function triggerMicroAnimation(
     const className = MICRO_ANIMATIONS[animation];
     element.classList.add(className);
 
-    const cleanup = () => {
+    const cleanup = (): void => {
       element.classList.remove(className);
       element.removeEventListener('animationend', cleanup);
       resolve();

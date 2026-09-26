@@ -107,7 +107,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Clear the success banner timer on unmount
-  useEffect(() => {
+  useEffect((): (() => void) => {
     return () => {};
   }, []);
 
@@ -345,7 +345,7 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
           : `Adjusted ${product.name}.`,
       );
     },
-    [activeStoreId, productMap, nameToId, storeQtyCache, sessionUserId, sessionDeviceId],
+    [activeStoreId, productMap, nameToId, storeQtyCache, sessionUserId, sessionDeviceId, toast],
   );
 
   const handleVoidCount = useCallback((rowId: string) => {

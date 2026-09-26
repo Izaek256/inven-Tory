@@ -115,15 +115,17 @@ export function AnalyticsDashboardView({
     queries: [
       {
         queryKey: ['dashboardMetrics', activeStoreId],
-        queryFn: () => getDashboardMetrics(activeStoreId),
+        queryFn: (): ReturnType<typeof getDashboardMetrics> => getDashboardMetrics(activeStoreId),
       },
       {
         queryKey: ['stockTrend', dateRangeParams.start, dateRangeParams.end, activeStoreId],
-        queryFn: () => getStockTrend(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+        queryFn: (): ReturnType<typeof getStockTrend> =>
+          getStockTrend(dateRangeParams.start, dateRangeParams.end, activeStoreId),
       },
       {
         queryKey: ['categoryDistribution', activeStoreId],
-        queryFn: () => getCategoryDistribution(activeStoreId),
+        queryFn: (): ReturnType<typeof getCategoryDistribution> =>
+          getCategoryDistribution(activeStoreId),
       },
       {
         queryKey: [
@@ -133,7 +135,7 @@ export function AnalyticsDashboardView({
           MOST_SOLD_LIMIT,
           activeStoreId,
         ],
-        queryFn: () =>
+        queryFn: (): ReturnType<typeof getMostSoldExtended> =>
           getMostSoldExtended(
             dateRangeParams.start,
             dateRangeParams.end,
@@ -143,19 +145,21 @@ export function AnalyticsDashboardView({
       },
       {
         queryKey: ['recentActivity', RECENT_ACTIVITY_LIMIT, activeStoreId],
-        queryFn: () => getRecentActivity(RECENT_ACTIVITY_LIMIT, activeStoreId),
+        queryFn: (): ReturnType<typeof getRecentActivity> =>
+          getRecentActivity(RECENT_ACTIVITY_LIMIT, activeStoreId),
       },
       {
         queryKey: ['kpiDeltas', dateRangeParams.start, dateRangeParams.end, activeStoreId],
-        queryFn: () => getKPIDeltas(dateRangeParams.start, dateRangeParams.end, activeStoreId),
+        queryFn: (): ReturnType<typeof getKPIDeltas> =>
+          getKPIDeltas(dateRangeParams.start, dateRangeParams.end, activeStoreId),
       },
       {
         queryKey: ['listStores'],
-        queryFn: () => listStores(),
+        queryFn: (): ReturnType<typeof listStores> => listStores(),
       },
       {
         queryKey: ['operationsSummary', dateRangeParams.start, dateRangeParams.end, activeStoreId],
-        queryFn: () =>
+        queryFn: (): ReturnType<typeof getOperationsSummary> =>
           getOperationsSummary(dateRangeParams.start, dateRangeParams.end, activeStoreId),
       },
     ],

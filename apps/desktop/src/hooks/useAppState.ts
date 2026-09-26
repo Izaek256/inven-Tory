@@ -15,7 +15,6 @@ const DEFAULT_STATE: AppPersistentState = {
 };
 
 const cachedState: Record<string, AppPersistentState | null> = {};
-let stateVersion = 0;
 
 function _getCachedState(): AppPersistentState | null {
   return cachedState[APP_STATE_KEY] ?? null;
@@ -23,17 +22,27 @@ function _getCachedState(): AppPersistentState | null {
 
 function _setCachedState(state: AppPersistentState): void {
   cachedState[APP_STATE_KEY] = state;
-  stateVersion++;
 }
 
-export function useAppState() {
+export function useAppState(): {
+  currentView: NavView;
+  activeStoreId: string | null;
+  setCurrentView: (view: NavView | ((prev: NavView) => NavView)) => void;
+  setActiveStoreId: (storeId: string | null | ((prev: string | null) => string | null)) => void;
+  resetState: () => void;
+  isPending: boolean;
+  getCachedState: () => AppPersistentState | null;
+} {
   const [state, setState, resetState] = usePersistentState<AppPersistentState>(
     APP_STATE_KEY,
     DEFAULT_STATE,
   );
   const [isPending, startTransition] = useTransition();
 
-  const memoizedState = useMemo(() => state, [state.currentView, state.activeStoreId]);
+  const memoizedState = useMemo(
+    () => ({ currentView: state.currentView, activeStoreId: state.activeStoreId }),
+    [state.currentView, state.activeStoreId],
+  );
 
   const setCurrentView = useCallback(
     (view: NavView | ((prev: NavView) => NavView)): void => {

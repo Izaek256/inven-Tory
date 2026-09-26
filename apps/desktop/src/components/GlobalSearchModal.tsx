@@ -81,11 +81,10 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     staleTime: 60_000,
   });
 
-  const products = data?.products ?? [];
-  const qtyMap = data?.qtyMap ?? new Map();
-
   // Name/SKU/brand/model/category matching — across ALL stores.
   const results = useMemo<SearchResultRow[]>(() => {
+    const products = data?.products ?? [];
+    const qtyMap = data?.qtyMap ?? new Map();
     const term = query.toLowerCase().trim();
     const filtered = products.filter(
       (p) =>
@@ -104,7 +103,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
       }
       return { product: p, qtyByStore: rowQty, total };
     });
-  }, [products, query, stores, qtyMap]);
+  }, [data, query, stores]);
 
   const storeColumns = stores.map((store: Store): ColumnDef<SearchResultRow> => ({
     key: `qty-${store.id}`,

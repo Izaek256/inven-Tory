@@ -126,7 +126,7 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
 
   useEffect(() => {
     fetchResults('', 1);
-    return () => {};
+    return (): void => {};
   }, [fetchResults]);
 
   useEffect(() => {

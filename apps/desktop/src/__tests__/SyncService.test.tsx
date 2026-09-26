@@ -363,9 +363,9 @@ describe('tauriSyncService', () => {
     vi.useFakeTimers();
     // Real CompressionStream resolves via macrotasks that fake timers can't
     // reach — disable it so the pre-push path stays on the microtask queue.
-    // @ts-ignore - explicitly disable for this test
+    // @ts-expect-error - explicitly disable for this test
     const originalCompressionStream = globalThis.CompressionStream;
-    // @ts-ignore
+    // @ts-expect-error - explicitly disable CompressionStream for test
     globalThis.CompressionStream = undefined;
 
     try {
@@ -522,7 +522,7 @@ describe('tauriSyncService', () => {
 
     // Temporarily disable CompressionStream so the payload isn't gzipped, allowing us to inspect the JSON body
     const originalCompressionStream = globalThis.CompressionStream;
-    // @ts-ignore - we are explicitly removing it for this test
+    // @ts-expect-error - we are explicitly removing it for this test
     globalThis.CompressionStream = undefined;
 
     try {
@@ -583,7 +583,7 @@ describe('tauriSyncService', () => {
     const fetchMock = stubFetch(makePushResponse([txId]), PULL_OK);
 
     const originalCompressionStream = globalThis.CompressionStream;
-    // @ts-ignore - disable gzip so we can inspect the JSON body
+    // @ts-expect-error - disable gzip so we can inspect the JSON body
     globalThis.CompressionStream = undefined;
     try {
       await triggerSync(makeSyncConfig()); // NOT forced

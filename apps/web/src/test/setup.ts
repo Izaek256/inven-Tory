@@ -8,7 +8,7 @@ vi.mock('@testing-library/react', async (importOriginal) => {
 
   return {
     ...actual,
-    render: (ui: React.ReactElement, options?: any) => {
+    render: (ui: React.ReactElement, options?: Record<string, unknown>) => {
       const queryClient = new QueryClient({
         defaultOptions: {
           queries: {
@@ -22,7 +22,7 @@ vi.mock('@testing-library/react', async (importOriginal) => {
         options,
       );
     },
-  };
+  } as typeof import('@testing-library/react');
 });
 
 // Pin timezone to UTC for consistent date formatting across environments
