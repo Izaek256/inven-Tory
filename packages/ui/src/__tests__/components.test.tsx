@@ -148,11 +148,12 @@ describe('packages/ui components', () => {
   });
 
   it('renders DataTable with columns and rows', () => {
+    type Row = { id: string; name: string };
     const columns = [
-      { key: 'id', header: 'ID', accessor: (r: { id: string }): string => r.id },
-      { key: 'name', header: 'Name', accessor: (r: { name: string }): string => r.name },
+      { key: 'id', header: 'ID', accessor: (r: Row): string => r.id },
+      { key: 'name', header: 'Name', accessor: (r: Row): string => r.name },
     ];
-    const rows = [{ id: '1', name: 'Item A' }];
+    const rows: Row[] = [{ id: '1', name: 'Item A' }];
     render(<DataTable columns={columns} rows={rows} rowKey={(r): string => r.id} />);
     expect(screen.getByText('Item A')).toBeDefined();
   });
@@ -270,10 +271,11 @@ describe('Modal focus trap and Escape (P0)', () => {
 });
 
 describe('VirtualizedDataTable (P2: virtual scrolling)', () => {
+  type VRow = { id: string; name: string; value: number };
   const columns = [
-    { key: 'id', header: 'ID', accessor: (r: { id: string }) => r.id },
-    { key: 'name', header: 'Name', accessor: (r: { name: string }) => r.name },
-    { key: 'value', header: 'Value', accessor: (r: { value: number }) => r.value, numeric: true },
+    { key: 'id', header: 'ID', accessor: (r: VRow): string => r.id },
+    { key: 'name', header: 'Name', accessor: (r: VRow): string => r.name },
+    { key: 'value', header: 'Value', accessor: (r: VRow): number => r.value, numeric: true },
   ];
 
   it('renders headers and container without crashing', () => {

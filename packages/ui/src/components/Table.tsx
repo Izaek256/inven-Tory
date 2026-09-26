@@ -32,7 +32,9 @@ function DataTableRow<T>({ row, columns, rowClassName }: DataTableRowProps<T>): 
   );
 }
 
-const MemoizedDataTableRow = React.memo(DataTableRow);
+const MemoizedDataTableRow = React.memo(DataTableRow) as <T>(
+  props: DataTableRowProps<T>,
+) => React.ReactElement | null;
 
 export interface ColumnDef<T> {
   key: string;
