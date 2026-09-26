@@ -5,15 +5,23 @@ Outbox service layer component managing local durable outbox storage and state t
 import json
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from domain.entities.enums import SyncStatus
 from domain.rules.outbox_state_machine import OutboxStateMachine
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from storage.models.outbox_event import OutboxEvent
+
+#: Terminal outbox states — safe to archive once past the retention window.
+TERMINAL_STATUSES: tuple[str, ...] = (
+    SyncStatus.ACCEPTED.value,
+    SyncStatus.SYNCED.value,
+    SyncStatus.PERMANENT_REJECTION.value,
+    SyncStatus.EXCEPTION_REVIEW.value,
+)
 
 
 class OutboxService:
@@ -86,6 +94,27 @@ class OutboxService:
             )
         )
         return session.scalar(stmt) or 0
+
+    @staticmethod
+    def archive_old_events(session: Session, retention_days: int = 7) -> int:
+        """
+        Archive (delete) terminal outbox events older than ``retention_days``.
+
+        P2 (optimization plan): bound outbox growth instead of storing
+        events indefinitely. Only terminal states
+        (:data:`TERMINAL_STATUSES`) are archived — deliverable events
+        (PENDING / SENDING / RETRYABLE_ERROR) are still the offline
+        queue's payload and must never be dropped. Returns the number of
+        archived rows.
+        """
+        cutoff = datetime.now(UTC) - timedelta(days=max(retention_days, 1))
+        result = session.execute(
+            delete(OutboxEvent).where(
+                OutboxEvent.created_at < cutoff,
+                OutboxEvent.status.in_(TERMINAL_STATUSES),
+            )
+        )
+        return int(result.rowcount or 0)
 
     @staticmethod
     def transition_event_state(

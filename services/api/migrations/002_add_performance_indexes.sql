@@ -24,3 +24,10 @@ CREATE INDEX IF NOT EXISTS ix_stock_balances_updated_at
 --    index lets the count skip the receipt rows entirely.
 CREATE INDEX IF NOT EXISTS ix_sync_receipts_received_accepted
     ON sync_receipts (received_at, accepted);
+-- 5. Ledger queries by store and product
+CREATE INDEX IF NOT EXISTS ix_inv_tx_store_prod_date
+    ON inventory_transactions (store_id, product_id, occurred_at);
+
+-- 6. Stock balance lookup by product
+CREATE INDEX IF NOT EXISTS ix_stock_balances_product_bucket
+    ON stock_balances (product_id, stock_bucket);

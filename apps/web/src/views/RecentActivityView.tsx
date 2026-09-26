@@ -4,9 +4,9 @@
  */
 import React, { useMemo, useState } from 'react';
 import { Activity, Clock, Search, Filter, RefreshCw } from 'lucide-react';
-import { Button, EmptyState, Spinner } from '@invenTory/ui';
+import { Button, EmptyState, SkeletonTable } from '@invenTory/ui';
 import { getRecentActivity } from '../services/dashboardService';
-import { useResistantQuery } from '../hooks/useResistantQuery';
+import { useQuery } from '@tanstack/react-query';
 import type { RecentActivityResponse } from '../types/dashboard';
 import { RecentActivityList } from '../components/RecentActivityList';
 
@@ -24,10 +24,10 @@ export function RecentActivityView({
     if (globalSearch !== undefined) setSearchQuery(globalSearch);
   }, [globalSearch]);
 
-  const activityQuery = useResistantQuery<RecentActivityResponse>(
-    () => getRecentActivity(RECENT_LIMIT),
-    [],
-  );
+  const activityQuery = useQuery<RecentActivityResponse>({
+    queryKey: ['recentActivity', RECENT_LIMIT],
+    queryFn: () => getRecentActivity(RECENT_LIMIT),
+  });
   const activityItems = useMemo(() => activityQuery.data?.data ?? [], [activityQuery.data?.data]);
 
   const filteredActivity = useMemo(() => {
@@ -118,13 +118,17 @@ export function RecentActivityView({
           variant="secondary"
           size="sm"
           onClick={(): void => {
-            void activityQuery.retry();
+            void activityQuery.refetch();
           }}
-          disabled={activityQuery.loading}
+          disabled={activityQuery.isLoading || activityQuery.isFetching}
           data-testid="refresh-activity"
           type="button"
         >
-          <RefreshCw size={14} className={activityQuery.loading ? 'spin' : ''} aria-hidden="true" />{' '}
+          <RefreshCw
+            size={14}
+            className={activityQuery.isLoading || activityQuery.isFetching ? 'spin' : ''}
+            aria-hidden="true"
+          />{' '}
           Refresh
         </Button>
       </div>
@@ -139,16 +143,20 @@ export function RecentActivityView({
             <EmptyState
               variant="error"
               heading="Failed to load activity"
-              body={activityQuery.error}
+              body={
+                activityQuery.error instanceof Error
+                  ? activityQuery.error.message
+                  : String(activityQuery.error)
+              }
             />
           </div>
-        ) : activityQuery.loading && activityItems.length === 0 ? (
+        ) : (activityQuery.isLoading || activityQuery.isFetching) && activityItems.length === 0 ? (
           <div
             className="web-center-spinner"
             data-testid="recent-feed-loading"
             style={{ padding: 24 }}
           >
-            <Spinner size="sm" label="Loading recent activity..." />
+            <SkeletonTable rows={10} columns={4} />
           </div>
         ) : filteredActivity.length > 0 ? (
           <RecentActivityList items={filteredActivity} />

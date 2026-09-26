@@ -230,6 +230,76 @@ describe('LinearGridEntry — keyboard model', () => {
     expect(committedRow.values.product).toBe('Apple');
   });
 
+  it('rolls back the optimistic row commit when onCommitRow rejects', async () => {
+    const onCommitRow = vi.fn().mockRejectedValue(new Error('server rejected'));
+    render(<Wrapper onCommitRow={onCommitRow} />);
+
+    act(() => {
+      fireEvent.focus(screen.getByTestId('cell-0-product'));
+      fireEvent.click(screen.getByTestId('search-result-P1'));
+    });
+    await waitFor(() => {
+      expect((screen.getByTestId('cell-0-product') as HTMLInputElement).value).toBe('Apple');
+    });
+
+    const qtyCell = screen.getByTestId('cell-0-quantity') as HTMLInputElement;
+    act(() => {
+      qtyCell.focus();
+      fireEvent.keyDown(qtyCell, { key: 'Enter', code: 'Enter' });
+    });
+
+    const receiptCell = screen.getByTestId('cell-0-reference_number') as HTMLInputElement;
+    await act(async () => {
+      receiptCell.focus();
+      fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(onCommitRow).toHaveBeenCalledOnce();
+    });
+
+    // The optimistic commit must be reverted: the row is editable again.
+    await waitFor(() => {
+      expect(screen.getByTestId('cell-0-product')).not.toBeDisabled();
+    });
+    expect(screen.getByTestId('cell-0-quantity')).not.toBeDisabled();
+    expect(screen.getByTestId('cell-0-reference_number')).not.toBeDisabled();
+    // And focus does NOT advance to the next row on failure.
+    expect(screen.getByTestId('cell-1-product')).not.toHaveFocus();
+  });
+
+  it('keeps the row committed when onCommitRow resolves', async () => {
+    const onCommitRow = vi.fn().mockResolvedValue(undefined);
+    render(<Wrapper onCommitRow={onCommitRow} />);
+
+    act(() => {
+      fireEvent.focus(screen.getByTestId('cell-0-product'));
+      fireEvent.click(screen.getByTestId('search-result-P1'));
+    });
+    await waitFor(() => {
+      expect((screen.getByTestId('cell-0-product') as HTMLInputElement).value).toBe('Apple');
+    });
+
+    const qtyCell = screen.getByTestId('cell-0-quantity') as HTMLInputElement;
+    act(() => {
+      qtyCell.focus();
+      fireEvent.keyDown(qtyCell, { key: 'Enter', code: 'Enter' });
+    });
+
+    const receiptCell = screen.getByTestId('cell-0-reference_number') as HTMLInputElement;
+    await act(async () => {
+      receiptCell.focus();
+      fireEvent.keyDown(receiptCell, { key: 'Enter', code: 'Enter' });
+    });
+
+    await waitFor(() => {
+      expect(onCommitRow).toHaveBeenCalledOnce();
+    });
+
+    // Success path: the committed row stays disabled.
+    expect(screen.getByTestId('cell-0-product')).toBeDisabled();
+  });
+
   it('focus advances to row 1 after committing row 0', async () => {
     const onCommitRow = vi.fn().mockResolvedValue(undefined);
     render(<Wrapper onCommitRow={onCommitRow} />);

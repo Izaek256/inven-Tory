@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, beforeEach, vi } from 'vitest';
 import { AnalyticsDashboardView } from '../views/AnalyticsDashboardView';
 import * as dashboardService from '../services/dashboardService';
@@ -135,13 +135,14 @@ describe('Recent Activity preview — row detail regression', () => {
     render(<AnalyticsDashboardView />);
 
     const preview = await screen.findByTestId('recent-activity-preview');
-    const timeElements = preview.querySelectorAll('.web-dashboard-preview-time');
-
-    // Relative strings — NOT absolute "9/12/2026, 10:43:39 AM".
-    expect(timeElements[0].textContent).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
-    expect(timeElements[1].textContent).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
-    expect(timeElements[0].textContent).toContain('ago');
-    expect(timeElements[1].textContent).toContain('ago');
+    await waitFor(() => {
+      const timeElements = preview.querySelectorAll('.web-dashboard-preview-time');
+      expect(timeElements.length).toBeGreaterThan(0);
+      expect(timeElements[0].textContent).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+      expect(timeElements[1].textContent).not.toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+      expect(timeElements[0].textContent).toContain('ago');
+      expect(timeElements[1].textContent).toContain('ago');
+    });
   });
 
   it('absolute timestamp is available via title/hover tooltip', async () => {
@@ -153,10 +154,12 @@ describe('Recent Activity preview — row detail regression', () => {
     render(<AnalyticsDashboardView />);
 
     const preview = await screen.findByTestId('recent-activity-preview');
-    const timeElements = preview.querySelectorAll('.web-dashboard-preview-time');
-
-    expect(timeElements[0].getAttribute('title')).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
-    expect(timeElements[1].getAttribute('title')).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+    await waitFor(() => {
+      const timeElements = preview.querySelectorAll('.web-dashboard-preview-time');
+      expect(timeElements.length).toBeGreaterThan(0);
+      expect(timeElements[0].getAttribute('title')).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+      expect(timeElements[1].getAttribute('title')).toMatch(/\d{1,2}\/\d{1,2}\/\d{4}/);
+    });
   });
 
   it('does NOT show raw product IDs or bare underscored type in the meta line', async () => {
@@ -168,13 +171,15 @@ describe('Recent Activity preview — row detail regression', () => {
     render(<AnalyticsDashboardView />);
 
     const preview = await screen.findByTestId('recent-activity-preview');
-    const metaLines = preview.querySelectorAll('.web-dashboard-preview-meta');
-
-    for (const meta of metaLines) {
-      expect(meta.textContent).not.toContain('prod-');
-      // Underscores should be humanized to spaces.
-      expect(meta.textContent).not.toContain('stock_sold');
-      expect(meta.textContent).not.toContain('stock_added');
-    }
+    await waitFor(() => {
+      const metaLines = preview.querySelectorAll('.web-dashboard-preview-meta');
+      expect(metaLines.length).toBeGreaterThan(0);
+      for (const meta of metaLines) {
+        expect(meta.textContent).not.toContain('prod-');
+        // Underscores should be humanized to spaces.
+        expect(meta.textContent).not.toContain('stock_sold');
+        expect(meta.textContent).not.toContain('stock_added');
+      }
+    });
   });
 });

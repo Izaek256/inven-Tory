@@ -186,6 +186,7 @@ const CSS = `
 
 @media (prefers-reduced-motion: reduce) {
   .it-btn__spinner { animation: none; }
+  .it-btn.it-micro-press:not(:disabled) { animation: none; }
 }
 `;
 

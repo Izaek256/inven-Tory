@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { Product, CreateProductInput, UpdateProductInput } from '../types/product';
 import { isTauriEnvironment } from './tauriStoreService';
+import { searchLocal as _searchLocal } from './tauriDataService';
 
 export interface BatchProductInput {
   sku: string;
@@ -22,14 +23,43 @@ export interface BatchProductResult {
 }
 
 /**
- * Kick off a background sync after a local product mutation.
- *
- * Product changes are written to the local outbox and only reach the server
- * when a sync runs.  Mutating products must therefore nudge the sync engine —
- * the same pattern used by `tauriTransactionService` / `tauriTransferService`.
- * `triggerSync` is re-entrant-safe: overlapping calls collapse into the run
- * that is already in flight.
+ * Search the local SQLite FTS5 index directly (no network request).
+ * Returns ranked search results for the given query string.
  */
+export async function searchLocal(
+  query: string,
+  storeId?: string | null,
+  limit?: number,
+): Promise<Product[]> {
+  const results = await _searchLocal(query, storeId, limit);
+  return results.map(
+    (r) =>
+      ({
+        id: r.product_id,
+        sku: r.sku,
+        name: r.name,
+        brand: r.brand,
+        model: null,
+        category: '',
+        unit: '',
+        barcode: null,
+        alternate_names: null,
+        serial_tracking_enabled: false,
+        is_active: true,
+        updated_at: new Date().toISOString(),
+      }) as Product,
+  );
+}
+
+export async function initFTS5Index(): Promise<boolean> {
+  if (!isTauriEnvironment()) return false;
+  try {
+    return await invoke<boolean>('init_fts5_index');
+  } catch {
+    return false;
+  }
+}
+
 function _triggerAutoSync(): void {
   const envBaseUrl =
     typeof import.meta !== 'undefined'

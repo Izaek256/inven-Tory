@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { RotateCcw, X, Check, AlertCircle, Eye, EyeOff, Package } from 'lucide-react';
+import { RotateCcw, X, AlertCircle, Eye, EyeOff, Package } from 'lucide-react';
 import { searchProducts, getProductsByStore } from '../services/tauriProductService';
 import { returnStock, getStockBalanceForBucket } from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { ReturnStockInput, StockBucket } from '../types/transaction';
-import { Button, TextInput, NumericInput, Select } from '@invenTory/ui';
+import { Button, TextInput, NumericInput, Select, useToast } from '@invenTory/ui';
 import { useActiveStore } from '../context/StoreContext';
 
 export const ReturnStockView: React.FC = () => {
   const { activeStoreId } = useActiveStore();
+  const { toast } = useToast();
   const [productQuery, setProductQuery] = useState<string>('');
   const [searchResults, setSearchResults] = useState<Product[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
@@ -19,7 +20,6 @@ export const ReturnStockView: React.FC = () => {
   const [reason, setReason] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<boolean>(false);
   const [bucketQuantity, setBucketQuantity] = useState<number | null>(null);
   const [showEntryLog, setShowEntryLog] = useState<boolean>(true);
   const [entryLog, setEntryLog] = useState<
@@ -165,8 +165,6 @@ export const ReturnStockView: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent): Promise<void> => {
     e.preventDefault();
     setError(null);
-    setSuccess(false);
-
     if (!activeStoreId) {
       setError('Please select a store from the header');
       return;
@@ -199,7 +197,7 @@ export const ReturnStockView: React.FC = () => {
       };
 
       await returnStock(input);
-      setSuccess(true);
+      toast('success', 'Recorded! Transaction saved.');
 
       // Add to entry log
       setEntryLog((prev) => [
@@ -257,17 +255,6 @@ export const ReturnStockView: React.FC = () => {
             <span>{showEntryLog ? 'Hide Log' : 'Show Log'}</span>
           </Button>
         </div>
-
-        {success && (
-          <div
-            className="it-toast it-toast--success"
-            data-testid="success-banner"
-            style={{ marginBottom: '16px' }}
-          >
-            <Check size={16} aria-hidden="true" />
-            <span>Return transaction recorded successfully and stock balance updated.</span>
-          </div>
-        )}
 
         {error && (
           <div

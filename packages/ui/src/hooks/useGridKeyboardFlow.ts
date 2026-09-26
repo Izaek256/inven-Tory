@@ -50,6 +50,7 @@ export interface UseGridKeyboardFlowReturn {
   fieldRefs: React.MutableRefObject<Record<string, HTMLInputElement | HTMLSelectElement | null>>;
   registerFieldRef: (cellId: string, el: HTMLInputElement | HTMLSelectElement | null) => void;
   searchQuery: string;
+  setSearchQuery: (query: string) => void;
   barcodeBuffer: string;
   /**
    * Patch the display values of an already-committed row by its id.
@@ -212,6 +213,22 @@ export function useGridKeyboardFlow({
         setSearchQuery('');
         // Focus next row's first field after React flushes the new row render
         setTimeout(() => focusCell(nextRowIndex, 0), 0);
+      } catch {
+        // P1 optimistic commit rollback: the row was optimistically marked
+        // committed above — revert it so the operator can correct and retry.
+        // The view already surfaced the failure (error banner/toast), so the
+        // rejection is handled here rather than escaping the keydown handler.
+        setRows((prev) => {
+          const prevRow = prev[rowIndex];
+          if (!prevRow || !prevRow.committed) return prev;
+          const next = [...prev];
+          next[rowIndex] = {
+            ...prevRow,
+            committed: false,
+            committedAt: undefined,
+          };
+          return next;
+        });
       } finally {
         setIsCommitting(false);
       }
@@ -410,6 +427,7 @@ export function useGridKeyboardFlow({
     fieldRefs,
     registerFieldRef,
     searchQuery,
+    setSearchQuery,
     barcodeBuffer,
     patchRowValues,
   };

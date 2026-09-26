@@ -167,6 +167,7 @@ export function LinearGridEntry({
     isCommitting,
     registerFieldRef,
     searchQuery,
+    setSearchQuery,
     patchRowValues,
   } = useGridKeyboardFlow({
     fields,
@@ -649,6 +650,7 @@ export function LinearGridEntry({
             onSelect={handleSearchPanelSelect}
             highlightedIndex={highlightedIndex}
             onHighlightedIndexChange={setHighlightedIndex}
+            onHistorySelect={(term) => setSearchQuery(term)}
             dataTestid="live-search-panel"
           />
         </div>

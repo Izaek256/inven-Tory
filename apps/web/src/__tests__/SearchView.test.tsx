@@ -12,6 +12,7 @@ import type { ProductInventoryResponse, ProductSearchResponse } from '../types/d
 // ── Service mock ────────────────────────────────────────────────────────────
 vi.mock('../services/dashboardService', () => ({
   searchProducts: vi.fn(),
+  searchProductsServer: vi.fn(),
   getProductInventory: vi.fn(),
   getProductHistory: vi.fn(),
 }));
@@ -100,7 +101,7 @@ describe('SearchView', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Default: on-mount catalogue load returns empty list
-    vi.mocked(svc.searchProducts).mockResolvedValue(EMPTY_CATALOGUE);
+    vi.mocked(svc.searchProductsServer).mockResolvedValue(EMPTY_CATALOGUE);
   });
 
   it('renders search input on mount', async () => {
@@ -119,7 +120,7 @@ describe('SearchView', () => {
   });
 
   it('shows search results after typing', async () => {
-    vi.mocked(svc.searchProducts).mockResolvedValue(MOCK_RESULTS);
+    vi.mocked(svc.searchProductsServer).mockResolvedValue(MOCK_RESULTS);
     renderSearch();
 
     // Wait for initial load to complete
@@ -136,7 +137,7 @@ describe('SearchView', () => {
   });
 
   it('shows "no products found" for empty results', async () => {
-    vi.mocked(svc.searchProducts).mockResolvedValue({
+    vi.mocked(svc.searchProductsServer).mockResolvedValue({
       query: 'xyznotfound',
       total: 0,
       results: [],
@@ -156,7 +157,7 @@ describe('SearchView', () => {
   });
 
   it('navigates to inventory panel when View is clicked', async () => {
-    vi.mocked(svc.searchProducts).mockResolvedValue(MOCK_RESULTS);
+    vi.mocked(svc.searchProductsServer).mockResolvedValue(MOCK_RESULTS);
     vi.mocked(svc.getProductInventory).mockResolvedValue(MOCK_INVENTORY);
     renderSearch();
 
@@ -172,7 +173,7 @@ describe('SearchView', () => {
   });
 
   it('shows per-store quantities and global total in inventory panel', async () => {
-    vi.mocked(svc.searchProducts).mockResolvedValue(MOCK_RESULTS);
+    vi.mocked(svc.searchProductsServer).mockResolvedValue(MOCK_RESULTS);
     vi.mocked(svc.getProductInventory).mockResolvedValue(MOCK_INVENTORY);
     renderSearch();
 
@@ -190,7 +191,7 @@ describe('SearchView', () => {
   });
 
   it('back button returns to search results', async () => {
-    vi.mocked(svc.searchProducts).mockResolvedValue(MOCK_RESULTS);
+    vi.mocked(svc.searchProductsServer).mockResolvedValue(MOCK_RESULTS);
     vi.mocked(svc.getProductInventory).mockResolvedValue(MOCK_INVENTORY);
     renderSearch();
 

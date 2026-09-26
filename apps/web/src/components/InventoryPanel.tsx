@@ -7,7 +7,7 @@
  */
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, DataTable, EmptyState, Spinner, type ColumnDef } from '@invenTory/ui';
+import { Badge, Button, DataTable, EmptyState, SkeletonTable, type ColumnDef } from '@invenTory/ui';
 import {
   ArrowLeft,
   BarChart2,
@@ -251,8 +251,8 @@ export function InventoryPanel({
       {activeTab === 'inventory' && (
         <>
           {loading && (
-            <div className="web-center-spinner">
-              <Spinner size="md" />
+            <div style={{ padding: '24px' }}>
+              <SkeletonTable rows={10} columns={5} />
             </div>
           )}
           {error && (
@@ -325,8 +325,8 @@ export function InventoryPanel({
       {activeTab === 'history' && (
         <>
           {historyLoading && (
-            <div className="web-center-spinner">
-              <Spinner size="md" />
+            <div style={{ padding: '24px' }}>
+              <SkeletonTable rows={10} columns={5} />
             </div>
           )}
           {historyError && (

@@ -44,6 +44,47 @@ function _triggerAutoSync(): void {
     .catch(() => undefined);
 }
 
+// ---------------------------------------------------------------------------
+// P2 (optimization plan): in-memory stock balance cache
+// ---------------------------------------------------------------------------
+// Read-through cache keyed by (store, product, bucket) so list-heavy views
+// (physical count, day books) don't re-fetch the same balance from SQLite on
+// every render pass. Invalidated wholesale on every local stock mutation,
+// on business-cache wipes, and after a sync pull; the TTL is a safety net
+// for any write path that slips through instrumentation.
+
+const _stockBalanceCache = new Map<string, { quantity: number; at: number }>();
+const STOCK_BALANCE_TTL_MS = 30_000;
+
+/** Drop all cached stock balances. Call after any stock mutation or wipe. */
+export function invalidateStockBalanceCache(): void {
+  _stockBalanceCache.clear();
+}
+
+// @visibleForTesting
+export function getStockBalanceCacheSize(): number {
+  return _stockBalanceCache.size;
+}
+
+function _balanceCacheKey(storeId: string, productId: string, bucket: StockBucket): string {
+  return `${storeId}:${productId}:${bucket}`;
+}
+
+/** Return the cached quantity if present and fresh, else undefined. */
+function _readBalanceCache(key: string): number | undefined {
+  const hit = _stockBalanceCache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > STOCK_BALANCE_TTL_MS) {
+    _stockBalanceCache.delete(key);
+    return undefined;
+  }
+  return hit.quantity;
+}
+
+function _writeBalanceCache(key: string, quantity: number): void {
+  _stockBalanceCache.set(key, { quantity, at: Date.now() });
+}
+
 // @visibleForTesting
 export function getMockBalance(
   storeId: string,
@@ -113,6 +154,7 @@ export async function receiveStock(input: CreateTransactionInput): Promise<Inven
         device_id: input.device_id,
       };
       const res = await invoke<InventoryTransaction>('receive_stock', { input: receiveInput });
+      invalidateStockBalanceCache();
       _triggerAutoSync();
       return res;
     } catch (err) {
@@ -142,6 +184,7 @@ export async function sellStock(input: CreateTransactionInput): Promise<Inventor
         device_id: input.device_id,
       };
       const res = await invoke<InventoryTransaction>('sell_stock', { input: sellInput });
+      invalidateStockBalanceCache();
       _triggerAutoSync();
       return res;
     } catch (err) {
@@ -164,6 +207,7 @@ export async function returnStock(input: ReturnStockInput): Promise<InventoryTra
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<InventoryTransaction>('return_stock', { input });
+      invalidateStockBalanceCache();
       _triggerAutoSync();
       return res;
     } catch (err) {
@@ -187,6 +231,7 @@ export async function moveStockBucket(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<InventoryTransaction[]>('move_stock_bucket', { input });
+      invalidateStockBalanceCache();
       _triggerAutoSync();
       return res;
     } catch (err) {
@@ -212,7 +257,13 @@ export async function getStockBalancesForStore(storeId: string): Promise<Map<str
         'get_stock_balances_for_store',
         { storeId },
       );
-      return new Map(rows.map((r) => [r.product_id, r.quantity]));
+      const balances = new Map(rows.map((r) => [r.product_id, r.quantity]));
+      // Prime the per-product cache so subsequent getStockBalance() calls
+      // for this store hit memory instead of SQLite.
+      for (const [productId, quantity] of balances) {
+        _writeBalanceCache(_balanceCacheKey(storeId, productId, 'AVAILABLE'), quantity);
+      }
+      return balances;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[TransactionService] Error invoking get_stock_balances_for_store:', err);
@@ -227,28 +278,40 @@ export async function getStockBalancesForStore(storeId: string): Promise<Map<str
  * Used by the Sale screen to display and validate real local stock.
  */
 export async function getStockBalance(storeId: string, productId: string): Promise<StockBalance> {
-  if (isTauriEnvironment()) {
-    try {
-      const quantity = await invoke<number>('get_stock_balance', {
-        storeId,
-        productId,
-      });
-      return {
-        id: `SB-${storeId}-${productId}-AVAILABLE`,
-        store_id: storeId,
-        product_id: productId,
-        stock_bucket: 'AVAILABLE',
-        quantity,
-        updated_at: new Date().toISOString(),
-      };
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[TransactionService] Error invoking get_stock_balance:', err);
-      throw new Error(`Failed to get stock balance: ${String(err)}`);
-    }
+  if (!isTauriEnvironment()) {
+    throw new Error('[TransactionService] getStockBalance() requires the desktop app runtime.');
   }
-
-  throw new Error('[TransactionService] getStockBalance() requires the desktop app runtime.');
+  const cacheKey = _balanceCacheKey(storeId, productId, 'AVAILABLE');
+  const cachedQuantity = _readBalanceCache(cacheKey);
+  if (cachedQuantity !== undefined) {
+    return {
+      id: `SB-${storeId}-${productId}-AVAILABLE`,
+      store_id: storeId,
+      product_id: productId,
+      stock_bucket: 'AVAILABLE',
+      quantity: cachedQuantity,
+      updated_at: new Date().toISOString(),
+    };
+  }
+  try {
+    const quantity = await invoke<number>('get_stock_balance', {
+      storeId,
+      productId,
+    });
+    _writeBalanceCache(cacheKey, quantity);
+    return {
+      id: `SB-${storeId}-${productId}-AVAILABLE`,
+      store_id: storeId,
+      product_id: productId,
+      stock_bucket: 'AVAILABLE',
+      quantity,
+      updated_at: new Date().toISOString(),
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[TransactionService] Error invoking get_stock_balance:', err);
+    throw new Error(`Failed to get stock balance: ${String(err)}`);
+  }
 }
 
 /**
@@ -259,31 +322,43 @@ export async function getStockBalanceForBucket(
   productId: string,
   stockBucket: StockBucket,
 ): Promise<StockBalance> {
-  if (isTauriEnvironment()) {
-    try {
-      const quantity = await invoke<number>('get_stock_balance_for_bucket', {
-        storeId,
-        productId,
-        stockBucket,
-      });
-      return {
-        id: `SB-${storeId}-${productId}-${stockBucket}`,
-        store_id: storeId,
-        product_id: productId,
-        stock_bucket: stockBucket,
-        quantity,
-        updated_at: new Date().toISOString(),
-      };
-    } catch (err) {
-      // eslint-disable-next-line no-console
-      console.error('[TransactionService] Error invoking get_stock_balance_for_bucket:', err);
-      throw new Error(`Failed to get stock balance: ${String(err)}`);
-    }
+  if (!isTauriEnvironment()) {
+    throw new Error(
+      '[TransactionService] getStockBalanceForBucket() requires the desktop app runtime.',
+    );
   }
-
-  throw new Error(
-    '[TransactionService] getStockBalanceForBucket() requires the desktop app runtime.',
-  );
+  const cacheKey = _balanceCacheKey(storeId, productId, stockBucket);
+  const cachedQuantity = _readBalanceCache(cacheKey);
+  if (cachedQuantity !== undefined) {
+    return {
+      id: `SB-${storeId}-${productId}-${stockBucket}`,
+      store_id: storeId,
+      product_id: productId,
+      stock_bucket: stockBucket,
+      quantity: cachedQuantity,
+      updated_at: new Date().toISOString(),
+    };
+  }
+  try {
+    const quantity = await invoke<number>('get_stock_balance_for_bucket', {
+      storeId,
+      productId,
+      stockBucket,
+    });
+    _writeBalanceCache(cacheKey, quantity);
+    return {
+      id: `SB-${storeId}-${productId}-${stockBucket}`,
+      store_id: storeId,
+      product_id: productId,
+      stock_bucket: stockBucket,
+      quantity,
+      updated_at: new Date().toISOString(),
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[TransactionService] Error invoking get_stock_balance_for_bucket:', err);
+    throw new Error(`Failed to get stock balance: ${String(err)}`);
+  }
 }
 
 /**
@@ -297,6 +372,7 @@ export async function adjustStock(input: AdjustStockInput): Promise<InventoryTra
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<InventoryTransaction>('adjust_stock', { input });
+      invalidateStockBalanceCache();
       _triggerAutoSync();
       return res;
     } catch (err) {
@@ -342,6 +418,7 @@ export async function updateTransaction(
   if (isTauriEnvironment()) {
     try {
       const res = await invoke<InventoryTransaction>('update_transaction', { input });
+      invalidateStockBalanceCache();
       _triggerAutoSync();
       return res;
     } catch (err) {
@@ -365,6 +442,7 @@ export async function deleteTransaction(transactionId: string): Promise<void> {
   if (isTauriEnvironment()) {
     try {
       await invoke<void>('delete_transaction', { transactionId });
+      invalidateStockBalanceCache();
       _triggerAutoSync();
       return;
     } catch (err) {
