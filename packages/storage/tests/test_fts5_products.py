@@ -19,17 +19,17 @@ def _setup_engine(tmp_path, name: str = "fts5.db"):
     return get_engine(db_url)
 
 
-def _insert_product(conn, *, product_id: str, sku: str, name: str, brand: str | None = None) -> None:
+def _insert_product(
+    conn, *, product_id: str, sku: str, name: str, brand: str | None = None
+) -> None:
     conn.execute(
-        text(
-            """
+        text("""
             INSERT INTO products (id, sku, name, brand, category, unit,
                                   serial_tracking_enabled, is_active,
                                   batch_tracking_enabled, created_at, updated_at)
             VALUES (:id, :sku, :name, :brand, 'General', 'pcs', 0, 1, 0,
                     datetime('now'), datetime('now'))
-            """
-        ),
+            """),
         {"id": product_id, "sku": sku, "name": name, "brand": brand},
     )
 
@@ -107,7 +107,10 @@ def test_fts5_triggers_keep_index_in_sync(tmp_path):
 
     with engine.connect() as conn:
         assert _match(conn, "brandnew") == []
-        assert conn.execute(
-            text("SELECT rowid FROM products_fts WHERE products_fts MATCH :q"),
-            {"q": "brandnew"},
-        ).fetchall() == []
+        assert (
+            conn.execute(
+                text("SELECT rowid FROM products_fts WHERE products_fts MATCH :q"),
+                {"q": "brandnew"},
+            ).fetchall()
+            == []
+        )

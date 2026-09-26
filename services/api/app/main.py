@@ -148,7 +148,6 @@ async def _decompress_gzip_request(
     return await call_next(request)
 
 
-
 @app.middleware("http")
 async def _log_requests(
     request: Request, call_next: Callable[[Request], Awaitable[Response]]

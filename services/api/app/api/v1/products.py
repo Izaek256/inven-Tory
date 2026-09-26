@@ -210,6 +210,8 @@ async def list_products(
         )
         for p in products
     ]
+
+
 @router.post(
     "",
     response_model=ProductListItem,

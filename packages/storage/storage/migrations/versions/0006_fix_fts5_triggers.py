@@ -19,8 +19,12 @@ branch_labels = None
 depends_on = None
 
 _COLUMNS = "sku, name, brand, model, category, barcode, alternate_names"
-_OLD_VALUES = "old.sku, old.name, old.brand, old.model, old.category, old.barcode, old.alternate_names"
-_NEW_VALUES = "new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names"
+_OLD_VALUES = (
+    "old.sku, old.name, old.brand, old.model, old.category, old.barcode, old.alternate_names"
+)
+_NEW_VALUES = (
+    "new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names"
+)
 
 
 def upgrade() -> None:

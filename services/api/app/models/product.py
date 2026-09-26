@@ -39,7 +39,9 @@ class Product(Base):
     low_stock_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warranty_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     batch_tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    ts_vector: Mapped[str | None] = mapped_column(Text().with_variant(TSVECTOR, "postgresql"), nullable=True)
+    ts_vector: Mapped[str | None] = mapped_column(
+        Text().with_variant(TSVECTOR, "postgresql"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, nullable=False

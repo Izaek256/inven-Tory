@@ -504,7 +504,7 @@ async def get_stores_inventory_bulk(
 
     Query param: ?ids=store1,store2,store3
     """
-    store_ids = [s.strip() for s in ids.split(',') if s.strip()]
+    store_ids = [s.strip() for s in ids.split(",") if s.strip()]
     if not store_ids:
         return []
 
@@ -567,4 +567,3 @@ async def get_stores_inventory_bulk(
         )
 
     return results
-

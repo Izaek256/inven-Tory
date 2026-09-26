@@ -1310,8 +1310,10 @@ async def test_pull_respects_page_limit_and_offset(
     assert d3["pagination"]["has_more"] is False
 
     # No product is duplicated or lost across pages.
-    seen = [p["id"] for p in d1["products"]] + [p["id"] for p in d2["products"]] + [
-        p["id"] for p in d3["products"]
-    ]
+    seen = (
+        [p["id"] for p in d1["products"]]
+        + [p["id"] for p in d2["products"]]
+        + [p["id"] for p in d3["products"]]
+    )
     expected = [p.id for p in products]
     assert sorted(seen) == sorted(expected), f"expected exactly {expected}, got {seen}"

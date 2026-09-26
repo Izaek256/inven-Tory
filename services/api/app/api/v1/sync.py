@@ -227,6 +227,7 @@ async def _paginated_pull(
         pagination=pagination,
     )
 
+
 router = APIRouter(prefix="/sync", tags=["sync"])
 
 # ---------------------------------------------------------------------------
@@ -465,6 +466,7 @@ class SyncStatusResponse(BaseModel):
 # endpoint + bulk receive/sell UI) is DEFERRED (flagged LATER, high effort,
 # needs its own design pass) per the Optimization & UX Implementation Prompt
 # (feat/inventory-optimization). Do not implement here without that design pass.
+
 
 @router.post(
     "/push",
@@ -765,22 +767,32 @@ async def restore_critical(
         now = datetime.now(UTC)
 
         stores = list(
-            (await db.execute(
-                select(Store).where(Store.is_active.is_(True)).limit(limit).offset(offset)
-            )).scalars().all()
+            (
+                await db.execute(
+                    select(Store).where(Store.is_active.is_(True)).limit(limit).offset(offset)
+                )
+            )
+            .scalars()
+            .all()
         )
 
-        users = list((await db.execute(
-            select(User).where(User.is_active.is_(True)).limit(limit).offset(offset)
-        )).scalars().all())
+        users = list(
+            (
+                await db.execute(
+                    select(User).where(User.is_active.is_(True)).limit(limit).offset(offset)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
-        products = list((await db.execute(
-            select(Product).limit(limit).offset(offset)
-        )).scalars().all())
+        products = list(
+            (await db.execute(select(Product).limit(limit).offset(offset))).scalars().all()
+        )
 
-        balances = list((await db.execute(
-            select(StockBalance).limit(limit).offset(offset)
-        )).scalars().all())
+        balances = list(
+            (await db.execute(select(StockBalance).limit(limit).offset(offset))).scalars().all()
+        )
 
         recent_cutoff = now - timedelta(hours=24)
         recent_transactions = list(
