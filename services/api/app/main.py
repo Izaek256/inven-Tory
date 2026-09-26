@@ -142,7 +142,7 @@ async def _decompress_gzip_request(
     if request.headers.get("content-encoding", "").lower() == "gzip":
         compressed = await request.body()
         try:
-            request._body = gzip.decompress(compressed)  # noqa: SLF001
+            request._body = gzip.decompress(compressed)
         except (OSError, EOFError):
             return JSONResponse(status_code=400, content={"detail": "Invalid gzip request body"})
     return await call_next(request)

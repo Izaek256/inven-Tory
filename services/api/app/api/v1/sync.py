@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, ClassVar, Self
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
@@ -62,7 +62,7 @@ class _CoalescingWindow:
     Per-key so push/pull/restore don't serialise each other.
     """
 
-    _last_trigger: dict[str, float] = {}
+    _last_trigger: ClassVar[dict[str, float]] = {}
 
     @classmethod
     async def wait(cls, key: str, window_s: float | None = None) -> None:
@@ -80,7 +80,7 @@ async def _with_timeout(coro, timeout_s: int = settings.sync_request_timeout_s):
     try:
         async with asyncio.timeout(timeout_s):
             return await coro
-    except asyncio.TimeoutError:
+    except TimeoutError:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Request timed out after {timeout_s}s",
@@ -758,8 +758,9 @@ async def restore_critical(
     await _CoalescingWindow.wait("restore_critical")
 
     async def _do_restore_critical() -> CriticalRestoreResponse:
-        from app.models.inventory_transaction import InventoryTransaction
         from datetime import timedelta
+
+        from app.models.inventory_transaction import InventoryTransaction
 
         now = datetime.now(UTC)
 
