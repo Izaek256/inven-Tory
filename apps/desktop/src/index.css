@@ -1988,9 +1988,9 @@ button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
-[role="menuitem"]:focus-visible,
-[role="option"]:focus-visible,
-[role="listbox"]:focus-visible {
+[role='menuitem']:focus-visible,
+[role='option']:focus-visible,
+[role='listbox']:focus-visible {
   outline: 2px solid var(--amber);
   outline-offset: 2px;
   box-shadow: 0 0 0 4px var(--teal-tint);
@@ -2053,11 +2053,19 @@ textarea:focus-visible,
   pointer-events: none;
 }
 @keyframes it-tooltip-in {
-  from { opacity: 0; transform: translateY(4px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .it-tooltip { animation: none; }
+  .it-tooltip {
+    animation: none;
+  }
 }
 .it-tooltip__arrow {
   position: absolute;
@@ -2100,11 +2108,18 @@ textarea:focus-visible,
   border-radius: var(--it-r-sm);
 }
 @keyframes it-skeleton-pulse {
-  0%   { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .it-skeleton { animation: none; background: var(--it-border); }
+  .it-skeleton {
+    animation: none;
+    background: var(--it-border);
+  }
 }
 
 .it-skeleton-card {
@@ -2125,11 +2140,19 @@ textarea:focus-visible,
   animation: it-view-enter 0.25s ease both;
 }
 @keyframes it-view-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .it-view-enter { animation: none; }
+  .it-view-enter {
+    animation: none;
+  }
 }
 
 /* ── Micro-animations ───────────────────────────────────────────── */
@@ -2137,35 +2160,60 @@ textarea:focus-visible,
   animation: it-btn-press 0.1s ease;
 }
 @keyframes it-btn-press {
-  0%   { transform: scale(1); }
-  50%  { transform: scale(0.97); }
-  100% { transform: scale(1); }
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(0.97);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .it-btn-press { animation: none; }
+  .it-btn-press {
+    animation: none;
+  }
 }
 
 .it-optimistic-flash {
   animation: it-optimistic-flash 0.4s ease;
 }
 @keyframes it-optimistic-flash {
-  0%   { background-color: var(--teal-tint); }
-  100% { background-color: transparent; }
+  0% {
+    background-color: var(--teal-tint);
+  }
+  100% {
+    background-color: transparent;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .it-optimistic-flash { animation: none; }
+  .it-optimistic-flash {
+    animation: none;
+  }
 }
 
 .it-success-check {
   animation: it-success-check 0.3s ease;
 }
 @keyframes it-success-check {
-  0%   { transform: scale(0.5); opacity: 0; }
-  60%  { transform: scale(1.2); opacity: 1; }
-  100% { transform: scale(1); opacity: 1; }
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.2);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .it-success-check { animation: none; }
+  .it-success-check {
+    animation: none;
+  }
 }
 
 /* ── Sidebar shortcut badges ────────────────────────────────────── */
@@ -2288,5 +2336,7 @@ textarea:focus-visible,
   transform: scale(0.97);
 }
 @media (prefers-reduced-motion: reduce) {
-  .it-btn--pressable:active { transform: none; }
+  .it-btn--pressable:active {
+    transform: none;
+  }
 }
