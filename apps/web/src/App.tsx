@@ -10,6 +10,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, Suspense, lazy } from 'react';
 import { History, Search, ChevronLeft, ChevronRight, LogOut } from 'lucide-react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   DashboardIcon,
   MovementsIcon,
@@ -26,6 +27,14 @@ import './index.css';
 import './styles/dashboard-phase4.css';
 import './styles/dashboard-mockup.css';
 import './styles/artifact-theme.css';
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+    },
+  },
+});
 
 const AnalyticsDashboardView = lazy(() =>
   import('./views/AnalyticsDashboardView').then((m) => ({ default: m.AnalyticsDashboardView })),

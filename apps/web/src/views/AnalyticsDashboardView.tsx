@@ -306,7 +306,7 @@ export function AnalyticsDashboardView({
                 aria-controls="dashboard-store-panel"
                 className={`store-tab ${active ? 'store-tab--active' : ''}`}
                 data-testid={`store-tab-${s.id}`}
-                onClick={() => setActiveStoreId(active ? null : s.id)}
+                onClick={() => setActiveStoreId((prev) => (prev === s.id ? null : s.id))}
               >
                 <span
                   className="store-tab__code"

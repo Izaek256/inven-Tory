@@ -1,5 +1,29 @@
 import '@testing-library/jest-dom';
 import { beforeEach, afterEach, vi } from 'vitest';
+import React from 'react';
+
+vi.mock('@testing-library/react', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@testing-library/react')>();
+  const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
+
+  return {
+    ...actual,
+    render: (ui: React.ReactElement, options?: any) => {
+      const queryClient = new QueryClient({
+        defaultOptions: {
+          queries: {
+            retry: false,
+          },
+        },
+      });
+
+      return actual.render(
+        React.createElement(QueryClientProvider, { client: queryClient }, ui),
+        options,
+      );
+    },
+  };
+});
 
 // Pin timezone to UTC for consistent date formatting across environments
 // This prevents snapshot failures due to timezone differences (e.g., CI vs local)
@@ -29,15 +53,6 @@ Object.defineProperty(window, 'matchMedia', {
   }),
 });
 
-// Synchronous requestAnimationFrame for deterministic tests.
-//
-// jsdom's real rAF uses the browser's compositor clock, which under vitest
-// fires at wall-clock ~16ms intervals.  Hooks like useCountUp rely on rAF
-// to drive a timed animation; with real rAF the animation either (a) never
-// settles within a test's waitFor window, or (b) overshoots wildly when the
-// event loop is busy (the "3 h ago" → "-386,342" failure mode).  Replacing
-// rAF with a synchronous stub that advances a virtual clock lets animations
-// complete on the very first tick, so tests assert the final settled state.
 let _rafTime = 0;
 const _rafCallbacks = new Map<number, FrameRequestCallback>();
 let _rafId = 1;
@@ -48,12 +63,6 @@ beforeEach(() => {
   _rafCallbacks.clear();
   _rafId = 1;
 
-  // Shared virtual clock: performance.now() and requestAnimationFrame both
-  // advance off this single counter so duration-based animations (useCountUp)
-  // see a coherent, fast-advancing timeline instead of jsdom's slow wall
-  // clock.  Each rAF tick jumps the clock forward by a large delta — enough
-  // that any animation treats the elapsed time as >= its duration and snaps
-  // to its final value on the very first tick.
   const realPerfNow = performance.now.bind(performance);
   vi.spyOn(performance, 'now').mockImplementation(() => (_rafTime > 0 ? _rafTime : realPerfNow()));
 

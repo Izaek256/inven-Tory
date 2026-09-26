@@ -149,8 +149,8 @@ describe('App — authenticated', () => {
 
   it('navigates to store view via sidebar', async () => {
     renderApp();
-    await userEvent.click(screen.getByTestId('nav-stores'));
-    expect(screen.getByTestId('store-view')).toBeInTheDocument();
+    await userEvent.click(await screen.findByTestId('nav-stores'));
+    expect(await screen.findByTestId('store-view')).toBeInTheDocument();
   });
 
   it('logout clears token and shows login view', async () => {

@@ -759,10 +759,12 @@ async def ingest_batch(
     Each payload is accepted or rejected on its own; a failure in one item
     does not affect others.
 
-    When ``session_factory`` is provided (production path), uses a single
-    session from the pool with batched ``asyncio.gather`` processing for
-    connection-pooling efficiency.  Connection pool size and statement
-    timeouts are respected via ``settings``.
+    When ``session_factory`` is provided (production path), each item runs
+    inside its own short-lived session and transaction so that a DB error on
+    one item cannot corrupt the asyncpg connection used by subsequent items
+    (``InFailedSQLTransactionError`` defence).  The returned SyncReceipt
+    objects are detached plain instances — the caller is responsible for any
+    remaining work on its own session.
 
     When no ``session_factory`` is given (legacy/test path), the original
     single-session savepoint strategy is used so existing tests keep passing.
@@ -773,9 +775,6 @@ async def ingest_batch(
     This prevents spurious "Insufficient stock" rejections when a batch
     contains both the initial count and the movements derived from it.
     """
-    import asyncio
-    from app.core.config import settings
-
     MOVEMENT_PRIORITY: dict[str, int] = {
         "ADJUSTMENT": 0,
         "RECEIPT": 1,
@@ -801,75 +800,63 @@ async def ingest_batch(
         except Exception:  # noqa: BLE001, S110
             pass
 
-    async def _process_item(original_idx: int, payload: TransactionPayload, sess: AsyncSession) -> SyncReceipt:
-        try:
-            receipt = await ingest_transaction(payload, sess)
-            await sess.commit()
-            return receipt
-        except Exception as exc:  # noqa: BLE001
-            if _is_inventory_transactions_pkey_collision(exc):
+    if session_factory is not None:
+        for original_idx, payload in ordered:
+            try:
+                async with session_factory() as item_session:
+                    receipt = await ingest_transaction(payload, item_session)
+                    await item_session.commit()
+            except Exception as exc:  # noqa: BLE001
+                if _is_inventory_transactions_pkey_collision(exc):
+                    # Already durably in the ledger (earlier/concurrent
+                    # submission) — reply accepted so the client stops
+                    # re-pushing an acknowledged event.
+                    try:
+                        receipt = await _ensure_accepted_receipt(
+                            payload.transaction_id, db, session_factory
+                        )
+                    except Exception as receipt_error:  # noqa: BLE001
+                        logger.warning(
+                            "Failed to persist accepted receipt for tx_id=%s: %s",
+                            payload.transaction_id,
+                            receipt_error,
+                        )
+                        receipt = _make_accepted_receipt(payload.transaction_id)
+                    receipts_by_index[original_idx] = receipt
+                    continue
+                rejection_text = f"Unexpected error: {exc!s}"
                 try:
-                    receipt = await _ensure_accepted_receipt(
-                        payload.transaction_id, db, session_factory
-                    )
+                    async with session_factory() as receipt_session:
+                        existing: SyncReceipt | None = None
+                        try:
+                            existing = await receipt_session.get(
+                                SyncReceipt, payload.transaction_id
+                            )
+                        except Exception:  # noqa: BLE001
+                            existing = None
+                        now = _now_utc()
+                        if existing is not None:
+                            existing.accepted = False
+                            existing.rejection_reason = rejection_text
+                            existing.processed_at = now
+                            receipt = existing
+                        else:
+                            receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
+                            receipt_session.add(receipt)
+                        try:
+                            await receipt_session.flush()
+                            await receipt_session.commit()
+                        except Exception:
+                            await _rb_sess(receipt_session)
+                            raise
                 except Exception as receipt_error:  # noqa: BLE001
                     logger.warning(
-                        "Failed to persist accepted receipt for tx_id=%s: %s",
+                        "Failed to persist rejection receipt for tx_id=%s: %s",
                         payload.transaction_id,
                         receipt_error,
                     )
-                    receipt = _make_accepted_receipt(payload.transaction_id)
-                return receipt
-            rejection_text = f"Unexpected error: {exc!s}"
-            try:
-                existing: SyncReceipt | None = None
-                try:
-                    existing = await sess.get(SyncReceipt, payload.transaction_id)
-                except Exception:  # noqa: BLE001
-                    existing = None
-                now = _now_utc()
-                if existing is not None:
-                    existing.accepted = False
-                    existing.rejection_reason = rejection_text
-                    existing.processed_at = now
-                    receipt = existing
-                else:
                     receipt = _make_rejected_receipt(payload.transaction_id, rejection_text)
-                    sess.add(receipt)
-                try:
-                    await sess.flush()
-                    await sess.commit()
-                except Exception:
-                    await _rb_sess(sess)
-                    raise
-                return receipt
-            except Exception as receipt_error:  # noqa: BLE001
-                logger.warning(
-                    "Failed to persist rejection receipt for tx_id=%s: %s",
-                    payload.transaction_id,
-                    receipt_error,
-                )
-                return _make_rejected_receipt(payload.transaction_id, rejection_text)
-
-    if session_factory is not None:
-        batch_size = settings.sync_batch_size
-        sem = asyncio.Semaphore(settings.max_batch_size)
-
-        async def _bounded_process(original_idx: int, payload: TransactionPayload) -> None:
-            async with sem:
-                receipt = await _process_item(original_idx, payload, await session_factory())
-                receipts_by_index[original_idx] = receipt
-
-        tasks = [_bounded_process(original_idx, payload) for original_idx, payload in ordered]
-        batch_tasks = []
-        for i in range(0, len(tasks), batch_size):
-            batch = tasks[i:i + batch_size]
-            batch_tasks.append(asyncio.gather(*batch, return_exceptions=True))
-        for batch_future in batch_tasks:
-            results = await batch_future
-            for r in results:
-                if isinstance(r, Exception):
-                    logger.warning("Batch task failed: %s", r)
+            receipts_by_index[original_idx] = receipt
     else:
         for original_idx, payload in ordered:
             try:
@@ -878,6 +865,9 @@ async def ingest_batch(
                 receipts_by_index[original_idx] = receipt
             except Exception as exc:  # noqa: BLE001
                 if _is_inventory_transactions_pkey_collision(exc):
+                    # Already durably in the ledger (earlier/concurrent
+                    # submission) — reply accepted so the client stops
+                    # re-pushing an acknowledged event.
                     await _rb_sess(db)
                     try:
                         receipt = await _ensure_accepted_receipt(payload.transaction_id, db)

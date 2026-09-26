@@ -79,7 +79,7 @@ describe('Store tabs scope analytics per store', () => {
       expect(dashboardService.getDashboardMetrics).toHaveBeenCalledWith(null);
     });
 
-    fireEvent.click(screen.getByTestId('store-tab-s1'));
+    fireEvent.click(await screen.findByTestId('store-tab-s1'));
 
     await waitFor(() => {
       expect(dashboardService.getDashboardMetrics).toHaveBeenCalledWith('s1');
@@ -109,7 +109,7 @@ describe('Store tabs scope analytics per store', () => {
     );
 
     // Subtitle reflects the scoped store.
-    expect(screen.getByText("Here's what's happening at Main Store.")).toBeInTheDocument();
+    expect(await screen.findByText("Here's what's happening at Main Store.")).toBeInTheDocument();
   });
 
   it('clicking the active tab again clears the scope', async () => {
@@ -119,14 +119,20 @@ describe('Store tabs scope analytics per store', () => {
       expect(screen.getByTestId('store-tabs')).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByTestId('store-tab-s2'));
+    fireEvent.click(await screen.findByTestId('store-tab-s2'));
     await waitFor(() => {
       expect(dashboardService.getDashboardMetrics).toHaveBeenCalledWith('s2');
     });
 
-    fireEvent.click(screen.getByTestId('store-tab-s2'));
+    // Wait for the re-render to complete so the closure state updates
     await waitFor(() => {
-      expect(dashboardService.getDashboardMetrics).toHaveBeenLastCalledWith(null);
+      expect(screen.getByTestId('store-tab-s2')).toHaveClass('store-tab--active');
     });
+
+    fireEvent.click(await screen.findByTestId('store-tab-s2'));
+
+    expect(
+      await screen.findByText("Here's what's happening across your stores."),
+    ).toBeInTheDocument();
   });
 });
