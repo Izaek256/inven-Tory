@@ -8,6 +8,7 @@ Mirrors packages/storage/storage/models/product.py but uses app.db.Base
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -38,6 +39,9 @@ class Product(Base):
     low_stock_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
     warranty_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
     batch_tracking_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    ts_vector: Mapped[str | None] = mapped_column(
+        Text().with_variant(TSVECTOR, "postgresql"), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utc_now, nullable=False
@@ -52,4 +56,9 @@ class Product(Base):
         Index("ix_products_low_stock_threshold", "low_stock_threshold"),
         # Perf: /sync/pull delta filtering and updated_at ordering.
         Index("ix_products_updated_at", "updated_at"),
+        # Full-text search GIN index
+        Index("ix_products_ts_vector", "ts_vector", postgresql_using="gin"),
+        # Composite indexes for dashboard queries
+        Index("ix_products_category_active", "category", "is_active"),
+        Index("ix_products_store_quantity", "category", "low_stock_threshold"),
     )

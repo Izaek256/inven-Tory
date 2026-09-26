@@ -233,6 +233,90 @@ async def test_search_no_results(
     assert resp.json()["results"] == []
 
 
+@pytest.mark.asyncio
+async def test_search_pagination_returns_distinct_pages(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """limit/offset pagination returns distinct, non-overlapping pages.
+
+    P0: /products/search must page instead of returning everything.
+    """
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    names = [f"PAG-{i:03d} Widget" for i in range(5)]
+    for i, nm in enumerate(names):
+        await _seed_product(db_session, name=nm, sku=f"PAG-{i:03d}-SKU")
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+
+    page1 = client.get(
+        "/api/v1/products/search",
+        params={"q": "PAG-", "limit": 2, "offset": 0},
+        headers=headers,
+    )
+    assert page1.status_code == 200
+    p1 = page1.json()
+    assert len(p1["results"]) == 2
+    assert p1["total"] == 5
+
+    page2 = client.get(
+        "/api/v1/products/search",
+        params={"q": "PAG-", "limit": 2, "offset": 2},
+        headers=headers,
+    )
+    assert page2.status_code == 200
+    p2 = page2.json()
+    assert len(p2["results"]) == 2
+    assert p2["total"] == 5
+
+    ids1 = [r["id"] for r in p1["results"]]
+    ids2 = [r["id"] for r in p2["results"]]
+    assert ids1 != ids2
+    assert set(ids1).isdisjoint(ids2)
+
+    # Final page carries the remainder and can be short.
+    page3 = client.get(
+        "/api/v1/products/search",
+        params={"q": "PAG-", "limit": 2, "offset": 4},
+        headers=headers,
+    )
+    assert page3.status_code == 200
+    p3 = page3.json()
+    assert len(p3["results"]) == 1
+    assert set(ids1).isdisjoint({r["id"] for r in p3["results"]})
+
+    # Total is the full match count, not the page size.
+    assert p1["total"] > len(p1["results"])
+
+
+@pytest.mark.asyncio
+async def test_search_total_reflects_all_matches_not_page(
+    client: TestClient,
+    db_session: AsyncSession,
+) -> None:
+    """total equals the full match count even when results are capped."""
+    store = await _seed_store(db_session)
+    user = await _seed_user(db_session)
+    device = await _seed_device(db_session, store.id, user.id)
+    for i in range(3):
+        await _seed_product(db_session, name=f"TTL Widget {i}", sku=f"TTL-{i}")
+    await db_session.commit()
+
+    headers = _auth_header(user.id, device.id)
+    resp = client.get(
+        "/api/v1/products/search",
+        params={"q": "TTL", "limit": 1, "offset": 0},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["results"]) == 1
+    assert data["total"] == 3
+
+
 def test_search_unauthenticated_returns_401(client: TestClient) -> None:
     resp = client.get("/api/v1/products/search", params={"q": "anything"})
     assert resp.status_code == 401

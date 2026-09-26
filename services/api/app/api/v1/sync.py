@@ -30,16 +30,18 @@ Design notes
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Annotated, Any, Self
+from typing import Annotated, Any, ClassVar, Self
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, BeforeValidator, Field, model_validator
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.api.deps import get_current_user, get_db
+from app.core.config import settings
 from app.db import get_session_factory as _get_session_factory
 from app.models.product import Product
 from app.models.stock_balance import StockBalance
@@ -49,6 +51,182 @@ from app.models.user import User
 from app.services.ingestion import TransactionPayload, ingest_batch
 
 logger = logging.getLogger(__name__)
+
+
+class _CoalescingWindow:
+    """Coalesces nearby sync-triggering operations into batches.
+
+    When multiple stock operations happen in quick succession, each one
+    would otherwise trigger a full push+pull sync.  This waits out a
+    short window so nearby operations batch into a single sync.
+    Per-key so push/pull/restore don't serialise each other.
+    """
+
+    _last_trigger: ClassVar[dict[str, float]] = {}
+
+    @classmethod
+    async def wait(cls, key: str, window_s: float | None = None) -> None:
+        if window_s is None:
+            window_s = settings.sync_coalescing_window_s
+        now = asyncio.get_event_loop().time()
+        last = cls._last_trigger.get(key, 0)
+        elapsed = now - last
+        if elapsed < window_s:
+            await asyncio.sleep(window_s - elapsed)
+        cls._last_trigger[key] = asyncio.get_event_loop().time()
+
+
+async def _with_timeout(coro, timeout_s: int = settings.sync_request_timeout_s):
+    try:
+        async with asyncio.timeout(timeout_s):
+            return await coro
+    except TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail=f"Request timed out after {timeout_s}s",
+        )
+
+
+async def _paginated_pull(
+    since: datetime | None,
+    limit: int,
+    offset: int,
+    db: AsyncSession,
+) -> PullResponse:
+    not_placeholder = ~or_(
+        and_(
+            or_(Product.sku.like("OFFLINE-%"), Product.sku.like("AUTO-%")),
+            or_(Product.name.like("OFFLINE-PROD-%"), Product.name.like("Offline Item (%")),
+        )
+    )
+    not_store_placeholder = ~Store.name.like("Auto Store (%")
+
+    now = datetime.now(UTC)
+
+    product_count_stmt = select(func.count()).select_from(Product).where(not_placeholder)
+    if since is not None:
+        product_count_stmt = product_count_stmt.where(Product.updated_at > since)
+    total_products: int = (await db.execute(product_count_stmt)).scalar_one()
+
+    store_count_stmt = (
+        select(func.count())
+        .select_from(Store)
+        .where(Store.is_active.is_(True), not_store_placeholder)
+    )
+    if since is not None:
+        store_count_stmt = store_count_stmt.where(Store.updated_at > since)
+    total_stores: int = (await db.execute(store_count_stmt)).scalar_one()
+
+    balance_count_stmt = select(func.count()).select_from(StockBalance)
+    if since is not None:
+        balance_count_stmt = balance_count_stmt.where(StockBalance.updated_at > since)
+    total_balances: int = (await db.execute(balance_count_stmt)).scalar_one()
+
+    total_rows = total_products + total_stores + total_balances
+
+    start = offset
+    end = min(offset + limit, total_rows)
+
+    def _section_slice(section_start: int, section_len: int) -> tuple[int, int] | None:
+        s_lo = max(start, section_start)
+        s_hi = min(end, section_start + section_len)
+        if s_hi <= s_lo:
+            return None
+        return (s_lo - section_start, s_hi - s_lo)
+
+    products_stmt = select(Product).where(not_placeholder).order_by(Product.name, Product.id)
+    stores_stmt = (
+        select(Store)
+        .where(Store.is_active.is_(True), not_store_placeholder)
+        .order_by(Store.name, Store.id)
+    )
+    balances_stmt = select(StockBalance).order_by(StockBalance.store_id, StockBalance.id)
+
+    if since is not None:
+        products_stmt = products_stmt.where(Product.updated_at > since)
+        stores_stmt = stores_stmt.where(Store.updated_at > since)
+        balances_stmt = balances_stmt.where(StockBalance.updated_at > since)
+
+    p_slice = _section_slice(0, total_products)
+    s_slice = _section_slice(total_products, total_stores)
+    b_slice = _section_slice(total_products + total_stores, total_balances)
+
+    products: list[Product] = []
+    stores: list[Store] = []
+    balances: list[StockBalance] = []
+    if p_slice:
+        sql_offset, count = p_slice
+        products = list(
+            (await db.execute(products_stmt.offset(sql_offset).limit(count))).scalars().all()
+        )
+    if s_slice:
+        sql_offset, count = s_slice
+        stores = list(
+            (await db.execute(stores_stmt.offset(sql_offset).limit(count))).scalars().all()
+        )
+    if b_slice:
+        sql_offset, count = b_slice
+        balances = list(
+            (await db.execute(balances_stmt.offset(sql_offset).limit(count))).scalars().all()
+        )
+
+    has_more = end < total_rows
+    pagination = PullPaginationInfo(
+        offset=offset,
+        limit=limit,
+        total_products=total_products,
+        total_stores=total_stores,
+        total_stock_balances=total_balances,
+        has_more=has_more,
+        next_offset=end,
+    )
+
+    return PullResponse(
+        products=[
+            ProductSnapshot(
+                id=p.id,
+                sku=p.sku,
+                name=p.name,
+                brand=p.brand,
+                model=p.model,
+                category=p.category,
+                unit=p.unit or "pcs",
+                barcode=p.barcode,
+                alternate_names=p.alternate_names,
+                serial_tracking_enabled=bool(p.serial_tracking_enabled),
+                is_active=bool(p.is_active),
+                created_at=p.created_at or now,
+                updated_at=p.updated_at,
+            )
+            for p in products
+        ],
+        stores=[
+            StoreSnapshot(
+                id=s.id,
+                code=s.code,
+                name=s.name,
+                address=s.address,
+                is_active=bool(s.is_active),
+                created_at=s.created_at or now,
+                updated_at=s.updated_at,
+            )
+            for s in stores
+        ],
+        stock_balances=[
+            StockBalanceSnapshot(
+                id=b.id,
+                store_id=b.store_id,
+                product_id=b.product_id,
+                stock_bucket=b.stock_bucket,
+                quantity=b.quantity,
+                updated_at=b.updated_at or now,
+            )
+            for b in balances
+        ],
+        server_time=now,
+        pagination=pagination,
+    )
+
 
 router = APIRouter(prefix="/sync", tags=["sync"])
 
@@ -284,6 +462,12 @@ class SyncStatusResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# TODO(optimization-plan): Batch stock operation support (`batch_operations`
+# endpoint + bulk receive/sell UI) is DEFERRED (flagged LATER, high effort,
+# needs its own design pass) per the Optimization & UX Implementation Prompt
+# (feat/inventory-optimization). Do not implement here without that design pass.
+
+
 @router.post(
     "/push",
     response_model=PushResponse,
@@ -292,6 +476,7 @@ class SyncStatusResponse(BaseModel):
 )
 async def push_events(
     body: PushRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
     session_factory: async_sessionmaker[AsyncSession] = Depends(  # noqa: B008
@@ -311,126 +496,130 @@ async def push_events(
 
     Security: ingest payloads are assigned under the authenticated user.
     """
+    await _CoalescingWindow.wait("push")
 
-    # Eagerly read current_user.id into a plain Python int before any DB
-    # operations that might rollback (and expire) the ORM object.
-    authenticated_user_id: int = int(current_user.id)
+    async def _do_push() -> PushResponse:
+        # Eagerly read current_user.id into a plain Python int before any DB
+        # operations that might rollback (and expire) the ORM object.
+        authenticated_user_id: int = int(current_user.id)
 
-    # Upsert any products pushed by the client to keep both DBs consistent
-    if body.products:
-        now_dt = datetime.now(UTC)
-        for p_snap in body.products:
-            prod = await db.scalar(select(Product).where(Product.id == p_snap.id).limit(1))
-            if prod is None:
-                sku_owner = await db.scalar(
-                    select(Product.id).where(Product.sku == p_snap.sku).limit(1)
-                )
-                final_sku = p_snap.sku
-                if sku_owner:
-                    final_sku = f"{p_snap.sku}-{p_snap.id[:8]}"
-
-                new_p = Product(
-                    id=p_snap.id,
-                    sku=final_sku,
-                    name=p_snap.name,
-                    brand=p_snap.brand,
-                    model=p_snap.model,
-                    category=p_snap.category or "General",
-                    unit=p_snap.unit or "pcs",
-                    barcode=p_snap.barcode,
-                    alternate_names=p_snap.alternate_names,
-                    serial_tracking_enabled=p_snap.serial_tracking_enabled,
-                    is_active=p_snap.is_active,
-                    created_at=p_snap.created_at or now_dt,
-                    updated_at=p_snap.updated_at or now_dt,
-                )
-                db.add(new_p)
-            else:
-                prod.name = p_snap.name
-                if not p_snap.sku.startswith("OFFLINE-"):
+        # Upsert any products pushed by the client to keep both DBs consistent
+        if body.products:
+            now_dt = datetime.now(UTC)
+            for p_snap in body.products:
+                prod = await db.scalar(select(Product).where(Product.id == p_snap.id).limit(1))
+                if prod is None:
                     sku_owner = await db.scalar(
-                        select(Product.id)
-                        .where(Product.sku == p_snap.sku, Product.id != p_snap.id)
-                        .limit(1)
+                        select(Product.id).where(Product.sku == p_snap.sku).limit(1)
                     )
-                    if not sku_owner:
-                        prod.sku = p_snap.sku
-                prod.brand = p_snap.brand
-                prod.model = p_snap.model
-                prod.category = p_snap.category or prod.category
-                prod.unit = p_snap.unit or prod.unit
-                prod.barcode = p_snap.barcode
-                prod.alternate_names = p_snap.alternate_names
-                prod.serial_tracking_enabled = p_snap.serial_tracking_enabled
-                prod.is_active = p_snap.is_active
-                prod.updated_at = p_snap.updated_at or now_dt
-        await db.flush()
+                    final_sku = p_snap.sku
+                    if sku_owner:
+                        final_sku = f"{p_snap.sku}-{p_snap.id[:8]}"
+
+                    new_p = Product(
+                        id=p_snap.id,
+                        sku=final_sku,
+                        name=p_snap.name,
+                        brand=p_snap.brand,
+                        model=p_snap.model,
+                        category=p_snap.category or "General",
+                        unit=p_snap.unit or "pcs",
+                        barcode=p_snap.barcode,
+                        alternate_names=p_snap.alternate_names,
+                        serial_tracking_enabled=p_snap.serial_tracking_enabled,
+                        is_active=p_snap.is_active,
+                        created_at=p_snap.created_at or now_dt,
+                        updated_at=p_snap.updated_at or now_dt,
+                    )
+                    db.add(new_p)
+                else:
+                    prod.name = p_snap.name
+                    if not p_snap.sku.startswith("OFFLINE-"):
+                        sku_owner = await db.scalar(
+                            select(Product.id)
+                            .where(Product.sku == p_snap.sku, Product.id != p_snap.id)
+                            .limit(1)
+                        )
+                        if not sku_owner:
+                            prod.sku = p_snap.sku
+                    prod.brand = p_snap.brand
+                    prod.model = p_snap.model
+                    prod.category = p_snap.category or prod.category
+                    prod.unit = p_snap.unit or prod.unit
+                    prod.barcode = p_snap.barcode
+                    prod.alternate_names = p_snap.alternate_names
+                    prod.serial_tracking_enabled = p_snap.serial_tracking_enabled
+                    prod.is_active = p_snap.is_active
+                    prod.updated_at = p_snap.updated_at or now_dt
+            await db.flush()
+            await db.commit()
+
+        payloads: list[TransactionPayload] = []
+
+        for item in body.events:
+            effective_user_id: int = authenticated_user_id
+
+            payloads.append(
+                TransactionPayload(
+                    transaction_id=item.transaction_id,
+                    store_id=item.store_id,
+                    product_id=item.product_id,
+                    movement_type=item.movement_type,
+                    quantity_delta=item.quantity_delta,
+                    occurred_at=item.occurred_at,
+                    user_id=effective_user_id,
+                    device_id=item.device_id,
+                    stock_bucket=item.stock_bucket,
+                    reference_number=item.reference_number,
+                    reason_code=item.reason_code,
+                    transfer_id=item.transfer_id,
+                    purchase_order_id=item.purchase_order_id,
+                    batch_id=item.batch_id,
+                    client_sequence=item.client_sequence,
+                    original_transaction_id=item.original_transaction_id,
+                )
+            )
+
+        receipts: list[SyncReceipt] = []
+        if payloads:
+            receipts = await ingest_batch(
+                payloads,
+                db,
+                session_factory=session_factory,
+            )
         await db.commit()
 
-    payloads: list[TransactionPayload] = []
+        now = datetime.now(UTC)
+        accepted = sum(1 for r in receipts if r.accepted)
+        rejected = len(receipts) - accepted
 
-    for item in body.events:
-        effective_user_id: int = authenticated_user_id
-
-        payloads.append(
-            TransactionPayload(
-                transaction_id=item.transaction_id,
-                store_id=item.store_id,
-                product_id=item.product_id,
-                movement_type=item.movement_type,
-                quantity_delta=item.quantity_delta,
-                occurred_at=item.occurred_at,
-                user_id=effective_user_id,
-                device_id=item.device_id,
-                stock_bucket=item.stock_bucket,
-                reference_number=item.reference_number,
-                reason_code=item.reason_code,
-                transfer_id=item.transfer_id,
-                purchase_order_id=item.purchase_order_id,
-                batch_id=item.batch_id,
-                client_sequence=item.client_sequence,
-                original_transaction_id=item.original_transaction_id,
-            )
+        logger.info(
+            "Sync push completed: device_id=%s events=%d products=%d accepted=%d rejected=%d user_id=%s",
+            body.events[0].device_id if body.events else "unknown",
+            len(body.events),
+            len(body.products),
+            accepted,
+            rejected,
+            authenticated_user_id,
         )
 
-    receipts: list[SyncReceipt] = []
-    if payloads:
-        receipts = await ingest_batch(
-            payloads,
-            db,
-            session_factory=session_factory,
+        return PushResponse(
+            receipts=[
+                TransactionReceiptItem(
+                    transaction_id=r.transaction_id,
+                    accepted=r.accepted,
+                    rejection_reason=r.rejection_reason,
+                    received_at=r.received_at,
+                    processed_at=r.processed_at,
+                )
+                for r in receipts
+            ],
+            accepted_count=accepted,
+            rejected_count=rejected,
+            server_time=now,
         )
-    await db.commit()
 
-    now = datetime.now(UTC)
-    accepted = sum(1 for r in receipts if r.accepted)
-    rejected = len(receipts) - accepted
-
-    logger.info(
-        "Sync push completed: device_id=%s events=%d products=%d accepted=%d rejected=%d user_id=%s",
-        body.events[0].device_id if body.events else "unknown",
-        len(body.events),
-        len(body.products),
-        accepted,
-        rejected,
-        authenticated_user_id,
-    )
-
-    return PushResponse(
-        receipts=[
-            TransactionReceiptItem(
-                transaction_id=r.transaction_id,
-                accepted=r.accepted,
-                rejection_reason=r.rejection_reason,
-                received_at=r.received_at,
-                processed_at=r.processed_at,
-            )
-            for r in receipts
-        ],
-        accepted_count=accepted,
-        rejected_count=rejected,
-        server_time=now,
-    )
+    return await _with_timeout(_do_push())
 
 
 # ---------------------------------------------------------------------------
@@ -445,6 +634,7 @@ async def push_events(
     summary="Pull the latest product catalogue and store list from the server",
 )
 async def pull_data(
+    request: Request,
     since: datetime | None = Query(  # noqa: B008
         default=None,
         description=(
@@ -454,13 +644,12 @@ async def pull_data(
         ),
     ),
     limit: int = Query(
-        default=0,
+        default=100,
         ge=0,
         le=1_000_000,
         description=(
-            "Optional page size. 0 (default) returns the entire snapshot in one "
-            "response (legacy behaviour). >0 returns a page of the combined "
-            "products → stores → stock_balances stream, with pagination metadata."
+            "Page size. Default 100 for paginated results. Pass 0 only for "
+            "explicit full snapshot (must opt in)."
         ),
     ),
     offset: int = Query(default=0, ge=0, description="Page offset into the combined stream"),
@@ -476,193 +665,22 @@ async def pull_data(
     Stores: all active stores — needed for transfer destination picker and
     multi-store display.
 
+    Pagination is enforced by default (limit=100). Pass limit=0 only with
+    explicit request for full snapshot.
+
     Delta sync: when ``since`` is provided, only rows with ``updated_at >
     since`` are returned for each section.  The device stores the returned
     ``server_time`` and sends it back as ``since`` on the next pull, which
     keeps wire payloads proportional to the change set instead of the whole
     catalogue.
-
-    Pagination: when ``limit`` is set, the three sections form one ordered
-    stream (products, then stores, then stock balances) and each page is
-    sliced at the database level.  The device loops ``offset += limit`` while
-    ``pagination.has_more`` is True.
-
-    The device applies these snapshots as upserts into its local SQLite tables
-    so subsequent offline reads reflect the latest server state.
     """
-    # SQL-side placeholder exclusions (mirrors the legacy Python filtering so
-    # pagination counts are stable and never skewed by excluded rows).
-    not_placeholder = ~or_(
-        and_(
-            or_(Product.sku.like("OFFLINE-%"), Product.sku.like("AUTO-%")),
-            or_(Product.name.like("OFFLINE-PROD-%"), Product.name.like("Offline Item (%")),
-        )
-    )
-    not_store_placeholder = ~Store.name.like("Auto Store (%")
+    await _CoalescingWindow.wait("pull")
 
-    now = datetime.now(UTC)
+    async def _do_pull() -> PullResponse:
+        return await _paginated_pull(since, limit, offset, db)
 
-    # Base counts (always computed so pagination metadata is accurate even on
-    # the legacy full-snapshot path where has_more is None).
-    product_count_stmt = select(func.count()).select_from(Product).where(not_placeholder)
-    if since is not None:
-        product_count_stmt = product_count_stmt.where(Product.updated_at > since)
-    total_products: int = (await db.execute(product_count_stmt)).scalar_one()
-
-    store_count_stmt = (
-        select(func.count())
-        .select_from(Store)
-        .where(Store.is_active.is_(True), not_store_placeholder)
-    )
-    if since is not None:
-        store_count_stmt = store_count_stmt.where(Store.updated_at > since)
-    total_stores: int = (await db.execute(store_count_stmt)).scalar_one()
-
-    balance_count_stmt = select(func.count()).select_from(StockBalance)
-    if since is not None:
-        balance_count_stmt = balance_count_stmt.where(StockBalance.updated_at > since)
-    total_balances: int = (await db.execute(balance_count_stmt)).scalar_one()
-
-    total_rows = total_products + total_stores + total_balances
-
-    # Page slicing across the combined stream.
-    if limit > 0:
-        start = offset
-        end = min(offset + limit, total_rows)
-
-        def _section_slice(section_start: int, section_len: int) -> tuple[int, int] | None:
-            """Return (sql_offset, count) for this section within [start, end)."""
-            s_lo = max(start, section_start)
-            s_hi = min(end, section_start + section_len)
-            if s_hi <= s_lo:
-                return None
-            return (s_lo - section_start, s_hi - s_lo)
-
-        products_stmt = select(Product).where(not_placeholder).order_by(Product.name, Product.id)
-        stores_stmt = (
-            select(Store)
-            .where(Store.is_active.is_(True), not_store_placeholder)
-            .order_by(Store.name, Store.id)
-        )
-        balances_stmt = select(StockBalance).order_by(StockBalance.store_id, StockBalance.id)
-
-        if since is not None:
-            products_stmt = products_stmt.where(Product.updated_at > since)
-            stores_stmt = stores_stmt.where(Store.updated_at > since)
-            balances_stmt = balances_stmt.where(StockBalance.updated_at > since)
-
-        p_slice = _section_slice(0, total_products)
-        s_slice = _section_slice(total_products, total_stores)
-        b_slice = _section_slice(total_products + total_stores, total_balances)
-
-        products: list[Product] = []
-        stores: list[Store] = []
-        balances: list[StockBalance] = []
-        if p_slice:
-            sql_offset, count = p_slice
-            products = list(
-                (await db.execute(products_stmt.offset(sql_offset).limit(count))).scalars().all()
-            )
-        if s_slice:
-            sql_offset, count = s_slice
-            stores = list(
-                (await db.execute(stores_stmt.offset(sql_offset).limit(count))).scalars().all()
-            )
-        if b_slice:
-            sql_offset, count = b_slice
-            balances = list(
-                (await db.execute(balances_stmt.offset(sql_offset).limit(count))).scalars().all()
-            )
-
-        has_more = end < total_rows
-        pagination = PullPaginationInfo(
-            offset=offset,
-            limit=limit,
-            total_products=total_products,
-            total_stores=total_stores,
-            total_stock_balances=total_balances,
-            has_more=has_more,
-            next_offset=end,
-        )
-    else:
-        # Legacy full-snapshot path (no pagination requested).
-        products_stmt = select(Product).where(not_placeholder).order_by(Product.name, Product.id)
-        stores_stmt = (
-            select(Store)
-            .where(Store.is_active.is_(True), not_store_placeholder)
-            .order_by(Store.name, Store.id)
-        )
-        balances_stmt = select(StockBalance).order_by(StockBalance.id)
-        if since is not None:
-            products_stmt = products_stmt.where(Product.updated_at > since)
-            stores_stmt = stores_stmt.where(Store.updated_at > since)
-            balances_stmt = balances_stmt.where(StockBalance.updated_at > since)
-        products = list((await db.execute(products_stmt)).scalars().all())
-        stores = list((await db.execute(stores_stmt)).scalars().all())
-        balances = list((await db.execute(balances_stmt)).scalars().all())
-        pagination = None
-
-    logger.info(
-        "Sync pull completed: user_id=%s since=%s limit=%s offset=%s products=%d stores=%d balances=%d "
-        "total_products=%d total_stores=%d total_balances=%d has_more=%s",
-        current_user.id,
-        since.isoformat() if since else None,
-        limit,
-        offset,
-        len(products),
-        len(stores),
-        len(balances),
-        total_products,
-        total_stores,
-        total_balances,
-        pagination.has_more if pagination else False,
-    )
-
-    return PullResponse(
-        products=[
-            ProductSnapshot(
-                id=p.id,
-                sku=p.sku,
-                name=p.name,
-                brand=p.brand,
-                model=p.model,
-                category=p.category,
-                unit=p.unit or "pcs",
-                barcode=p.barcode,
-                alternate_names=p.alternate_names,
-                serial_tracking_enabled=bool(p.serial_tracking_enabled),
-                is_active=bool(p.is_active),
-                created_at=p.created_at or now,
-                updated_at=p.updated_at,
-            )
-            for p in products
-        ],
-        stores=[
-            StoreSnapshot(
-                id=s.id,
-                code=s.code,
-                name=s.name,
-                address=s.address,
-                is_active=bool(s.is_active),
-                created_at=s.created_at or now,
-                updated_at=s.updated_at,
-            )
-            for s in stores
-        ],
-        stock_balances=[
-            StockBalanceSnapshot(
-                id=b.id,
-                store_id=b.store_id,
-                product_id=b.product_id,
-                stock_bucket=b.stock_bucket,
-                quantity=b.quantity,
-                updated_at=b.updated_at or now,
-            )
-            for b in balances
-        ],
-        server_time=now,
-        pagination=pagination,
-    )
+    response_data = await _with_timeout(_do_pull())
+    return response_data
 
 
 # ---------------------------------------------------------------------------
@@ -726,6 +744,8 @@ async def restore_preview(
     summary="Get critical data for restore (stores, users, products, stock balances)",
 )
 async def restore_critical(
+    limit: int = Query(default=100, ge=1, le=1000, description="Page size for pagination"),
+    offset: int = Query(default=0, ge=0, description="Page offset"),
     db: AsyncSession = Depends(get_db),  # noqa: B008
     current_user: User = Depends(get_current_user),  # noqa: B008
 ) -> CriticalRestoreResponse:
@@ -734,112 +754,133 @@ async def restore_critical(
 
     This includes stores, users, products, stock balances, and recent transactions.
     This data is prioritized and must be restored before the app can be used.
+
+    Pagination is enforced with default limit=100.
     """
-    from app.models.inventory_transaction import InventoryTransaction
+    await _CoalescingWindow.wait("restore_critical")
 
-    now = datetime.now(UTC)
+    async def _do_restore_critical() -> CriticalRestoreResponse:
+        from datetime import timedelta
 
-    # Get all active stores
-    stores = list(
-        (await db.execute(select(Store).where(Store.is_active.is_(True)))).scalars().all()
-    )
+        from app.models.inventory_transaction import InventoryTransaction
 
-    # Get all active users
-    users = list((await db.execute(select(User).where(User.is_active.is_(True)))).scalars().all())
+        now = datetime.now(UTC)
 
-    # Get all products
-    products = list((await db.execute(select(Product))).scalars().all())
-
-    # Get all stock balances
-    balances = list((await db.execute(select(StockBalance))).scalars().all())
-
-    # Get recent transactions (last 24 hours)
-    from datetime import timedelta
-
-    recent_cutoff = now - timedelta(hours=24)
-    recent_transactions = list(
-        (
-            await db.execute(
-                select(InventoryTransaction).where(
-                    InventoryTransaction.occurred_at >= recent_cutoff
+        stores = list(
+            (
+                await db.execute(
+                    select(Store).where(Store.is_active.is_(True)).limit(limit).offset(offset)
                 )
             )
+            .scalars()
+            .all()
         )
-        .scalars()
-        .all()
-    )
 
-    return CriticalRestoreResponse(
-        stores=[
-            StoreSnapshot(
-                id=s.id,
-                code=s.code,
-                name=s.name,
-                address=s.address,
-                is_active=bool(s.is_active),
-                created_at=s.created_at or now,
-                updated_at=s.updated_at or now,
+        users = list(
+            (
+                await db.execute(
+                    select(User).where(User.is_active.is_(True)).limit(limit).offset(offset)
+                )
             )
-            for s in stores
-        ],
-        users=[
-            {
-                "id": str(u.id),
-                "username": u.username,
-                "email": u.email,
-                "full_name": u.full_name,
-                "role": u.role,
-                "assigned_store_id": str(u.assigned_store_id) if u.assigned_store_id else None,
-                "is_active": bool(u.is_active),
-            }
-            for u in users
-        ],
-        products=[
-            ProductSnapshot(
-                id=p.id,
-                sku=p.sku,
-                name=p.name,
-                brand=p.brand,
-                model=p.model,
-                category=p.category,
-                unit=p.unit or "pcs",
-                barcode=p.barcode,
-                alternate_names=p.alternate_names,
-                serial_tracking_enabled=bool(p.serial_tracking_enabled),
-                is_active=bool(p.is_active),
-                created_at=p.created_at or now,
-                updated_at=p.updated_at or now,
+            .scalars()
+            .all()
+        )
+
+        products = list(
+            (await db.execute(select(Product).limit(limit).offset(offset))).scalars().all()
+        )
+
+        balances = list(
+            (await db.execute(select(StockBalance).limit(limit).offset(offset))).scalars().all()
+        )
+
+        recent_cutoff = now - timedelta(hours=24)
+        recent_transactions = list(
+            (
+                await db.execute(
+                    select(InventoryTransaction)
+                    .where(InventoryTransaction.occurred_at >= recent_cutoff)
+                    .limit(limit)
+                    .offset(offset)
+                )
             )
-            for p in products
-        ],
-        stock_balances=[
-            StockBalanceSnapshot(
-                id=b.id,
-                store_id=b.store_id,
-                product_id=b.product_id,
-                stock_bucket=b.stock_bucket,
-                quantity=b.quantity,
-                updated_at=b.updated_at or now,
-            )
-            for b in balances
-        ],
-        recent_transactions=[
-            {
-                "id": t.transaction_id,
-                "transaction_id": t.transaction_id,
-                "store_id": str(t.store_id),
-                "product_id": str(t.product_id),
-                "movement_type": t.movement_type,
-                "quantity_delta": t.quantity_delta,
-                "occurred_at": t.occurred_at.isoformat() if t.occurred_at else now.isoformat(),
-                "user_id": str(t.user_id) if t.user_id is not None else "1",
-                "device_id": str(t.device_id) if t.device_id else "unknown",
-                "stock_bucket": t.stock_bucket,
-            }
-            for t in recent_transactions
-        ],
-        server_time=now,
-    )
+            .scalars()
+            .all()
+        )
+
+        return CriticalRestoreResponse(
+            stores=[
+                StoreSnapshot(
+                    id=s.id,
+                    code=s.code,
+                    name=s.name,
+                    address=s.address,
+                    is_active=bool(s.is_active),
+                    created_at=s.created_at or now,
+                    updated_at=s.updated_at or now,
+                )
+                for s in stores
+            ],
+            users=[
+                {
+                    "id": str(u.id),
+                    "username": u.username,
+                    "email": u.email,
+                    "full_name": u.full_name,
+                    "role": u.role,
+                    "assigned_store_id": str(u.assigned_store_id) if u.assigned_store_id else None,
+                    "is_active": bool(u.is_active),
+                }
+                for u in users
+            ],
+            products=[
+                ProductSnapshot(
+                    id=p.id,
+                    sku=p.sku,
+                    name=p.name,
+                    brand=p.brand,
+                    model=p.model,
+                    category=p.category,
+                    unit=p.unit or "pcs",
+                    barcode=p.barcode,
+                    alternate_names=p.alternate_names,
+                    serial_tracking_enabled=bool(p.serial_tracking_enabled),
+                    is_active=bool(p.is_active),
+                    created_at=p.created_at or now,
+                    updated_at=p.updated_at or now,
+                )
+                for p in products
+            ],
+            stock_balances=[
+                StockBalanceSnapshot(
+                    id=b.id,
+                    store_id=b.store_id,
+                    product_id=b.product_id,
+                    stock_bucket=b.stock_bucket,
+                    quantity=b.quantity,
+                    updated_at=b.updated_at or now,
+                )
+                for b in balances
+            ],
+            recent_transactions=[
+                {
+                    "id": t.transaction_id,
+                    "transaction_id": t.transaction_id,
+                    "store_id": str(t.store_id),
+                    "product_id": str(t.product_id),
+                    "movement_type": t.movement_type,
+                    "quantity_delta": t.quantity_delta,
+                    "occurred_at": t.occurred_at.isoformat() if t.occurred_at else now.isoformat(),
+                    "user_id": str(t.user_id) if t.user_id is not None else "1",
+                    "device_id": str(t.device_id) if t.device_id else "unknown",
+                    "stock_bucket": t.stock_bucket,
+                }
+                for t in recent_transactions
+            ],
+            server_time=now,
+        )
+
+    return await _with_timeout(_do_restore_critical())
 
 
 # ---------------------------------------------------------------------------

@@ -23,7 +23,7 @@ import {
   CheckCircle,
   XCircle,
 } from 'lucide-react';
-import { Badge, Button, EmptyState, Modal } from '@invenTory/ui';
+import { Badge, Button, EmptyState, Modal, Skeleton, SkeletonTable } from '@invenTory/ui';
 import { DataTable, type ColumnDef } from '@invenTory/ui';
 import { useTheme } from '@invenTory/ui';
 import type { AuthSession } from '../types/auth';
@@ -431,11 +431,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
           </button>
         </div>
         {storesLoading ? (
-          <EmptyState
-            variant="loading"
-            heading="Loading stores..."
-            body="Fetching store data from local database"
-          />
+          <div role="status" aria-label="Loading stores">
+            <SkeletonTable rows={4} columns={3} />
+          </div>
         ) : storesError ? (
           <EmptyState
             variant="error"
@@ -610,7 +608,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ currentUser, onLogou
           </button>
         </div>
         {backupsLoading ? (
-          <div style={{ fontSize: 13, color: 'var(--it-text-secondary)' }}>Loading backups…</div>
+          <div role="status" aria-label="Loading backups">
+            <Skeleton height={14} width="100%" count={3} />
+          </div>
         ) : backups.length === 0 ? (
           <div
             style={{

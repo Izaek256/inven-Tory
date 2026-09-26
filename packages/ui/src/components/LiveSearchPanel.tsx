@@ -1,5 +1,41 @@
 import React from 'react';
 
+const HISTORY_KEY = 'it-search-history';
+const MAX_HISTORY = 10;
+
+export function loadSearchHistory(): string[] {
+  try {
+    const stored = localStorage.getItem(HISTORY_KEY);
+    return stored ? JSON.parse(stored) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(items: string[]): void {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(items.slice(0, MAX_HISTORY)));
+  } catch {
+    // ignore
+  }
+}
+
+export function pushSearchHistory(term: string): string[] {
+  const trimmed = term.trim();
+  if (!trimmed) return loadSearchHistory();
+  const next = [trimmed, ...loadSearchHistory().filter((t) => t !== trimmed)];
+  saveHistory(next);
+  return next;
+}
+
+export function clearSearchHistory(): void {
+  try {
+    localStorage.removeItem(HISTORY_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 export interface SearchResultItem {
   id: string;
   label: string;
@@ -19,6 +55,9 @@ export interface LiveSearchPanelProps {
   recentItems?: SearchResultItem[];
   allItems?: SearchResultItem[];
   dataTestid?: string;
+  searchHistory?: string[];
+  onSearchHistoryClear?: () => void;
+  onHistorySelect?: (term: string) => void;
 }
 
 export function LiveSearchPanel({
@@ -32,9 +71,15 @@ export function LiveSearchPanel({
   recentItems = [],
   allItems = [],
   dataTestid,
+  searchHistory = [],
+  onSearchHistoryClear,
+  onHistorySelect,
 }: LiveSearchPanelProps): React.ReactElement {
   const [localHighlightedIndex, setLocalHighlightedIndex] = React.useState(highlightedIndex);
+  const [localHistory, setLocalHistory] = React.useState<string[]>(() => loadSearchHistory());
   const itemRefs = React.useRef<(HTMLDivElement | null)[]>([]);
+
+  const history = searchHistory.length > 0 ? searchHistory : localHistory;
 
   React.useEffect(() => {
     setLocalHighlightedIndex(highlightedIndex);
@@ -72,6 +117,14 @@ export function LiveSearchPanel({
       ? allItems
       : recentItems;
 
+  const handleSelect = React.useCallback(
+    (item: SearchResultItem): void => {
+      if (query.trim()) setLocalHistory(pushSearchHistory(query));
+      onSelect(item);
+    },
+    [onSelect, query],
+  );
+
   const isEmpty = !isLoading && displayItems.length === 0;
   const showAllItemsLabel = !showResults && allItems.length > 0;
   const showRecentLabel = !showResults && allItems.length === 0 && recentItems.length > 0;
@@ -93,7 +146,7 @@ export function LiveSearchPanel({
       e.preventDefault();
       e.stopPropagation();
       if (localHighlightedIndex >= 0 && localHighlightedIndex < displayItems.length) {
-        onSelect(displayItems[localHighlightedIndex]);
+        handleSelect(displayItems[localHighlightedIndex]);
       }
     } else if (e.key === 'Escape') {
       e.preventDefault();
@@ -130,6 +183,43 @@ export function LiveSearchPanel({
           }}
         >
           Searching...
+        </div>
+      )}
+
+      {!isLoading && history.length > 0 && !showResults && (
+        <div className="it-search-history">
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span>Recent Searches</span>
+            <button
+              type="button"
+              className="it-search-history-clear"
+              data-testid="search-history-clear"
+              onClick={() => {
+                clearSearchHistory();
+                setLocalHistory([]);
+                onSearchHistoryClear?.();
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          {history.slice(0, 5).map((term) => (
+            <div
+              key={term}
+              className="it-search-history-item"
+              role="option"
+              aria-selected={false}
+              data-testid="search-history-item"
+              onClick={() => {
+                onHistorySelect?.(term);
+                onHighlightedIndexChange(-1);
+              }}
+              onMouseEnter={() => onHighlightedIndexChange(-1)}
+            >
+              <span style={{ fontSize: '12px', color: 'var(--it-text-disabled)' }}>↩</span>
+              <span>{term}</span>
+            </div>
+          ))}
         </div>
       )}
 
@@ -187,7 +277,7 @@ export function LiveSearchPanel({
               role="option"
               aria-selected={idx === highlightedIndex}
               data-testid={`search-result-${item.id}`}
-              onClick={() => onSelect(item)}
+              onClick={() => handleSelect(item)}
               onMouseEnter={() => onHighlightedIndexChange(idx)}
               style={{
                 padding: '6px 12px',

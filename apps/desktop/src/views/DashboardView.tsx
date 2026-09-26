@@ -2,7 +2,15 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Store } from '../types/store';
 import { getDashboardAnalytics } from '../services/tauriDashboardService';
 import { getLastSyncTimestamp, triggerSync } from '../services/tauriSyncService';
-import { Button, StatCard, DataTable, EmptyState, ColumnDef } from '@invenTory/ui';
+import {
+  Button,
+  StatCard,
+  DataTable,
+  EmptyState,
+  ColumnDef,
+  Skeleton,
+  SkeletonTable,
+} from '@invenTory/ui';
 import {
   LayoutDashboard,
   ArrowDownCircle,
@@ -566,12 +574,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
       {/* Data Status */}
       {(dataLoading || loading) && !error && (
-        <EmptyState
-          variant="loading"
-          heading="Loading analytics"
-          body="Loading your inventory data..."
-          data-testid="dashboard-loading"
-        />
+        <div data-testid="dashboard-loading" role="status" aria-label="Loading analytics">
+          <Skeleton height={20} width="40%" />
+          <div style={{ marginTop: 16 }}>
+            <SkeletonTable rows={4} columns={3} />
+          </div>
+        </div>
       )}
 
       {/* Stock Trend Chart */}
@@ -753,12 +761,12 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               />
             )
           ) : (
-            <EmptyState
-              variant="loading"
-              heading="Loading..."
-              body="Reading local database..."
-              data-testid="most-sold-loading"
-            />
+            <div data-testid="most-sold-loading" role="status" aria-label="Loading top sold items">
+              <Skeleton height={16} width="60%" />
+              <div style={{ marginTop: 12 }}>
+                <Skeleton height={14} width="100%" count={5} />
+              </div>
+            </div>
           )}
         </div>
 
@@ -821,12 +829,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               />
             )
           ) : (
-            <EmptyState
-              variant="loading"
-              heading="Loading..."
-              body="Reading local database..."
+            <div
               data-testid="low-stock-loading"
-            />
+              role="status"
+              aria-label="Loading low stock alerts"
+            >
+              <Skeleton height={16} width="50%" />
+              <div style={{ marginTop: 12 }}>
+                <Skeleton height={14} width="100%" count={5} />
+              </div>
+            </div>
           )}
         </div>
       </div>
@@ -910,12 +922,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ))}
           </div>
         ) : dataLoading ? (
-          <EmptyState
-            variant="loading"
-            heading="Loading..."
-            body="Reading local database..."
-            data-testid="activity-loading"
-          />
+          <div data-testid="activity-loading" role="status" aria-label="Loading recent activity">
+            <Skeleton height={14} width="100%" count={6} />
+          </div>
         ) : (
           <EmptyState
             heading="No recent activity"

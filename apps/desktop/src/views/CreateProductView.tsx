@@ -680,6 +680,8 @@ export const CreateProductView: React.FC<CreateProductViewProps> = ({
           {success && (
             <div
               className="it-toast it-toast--success"
+              role="status"
+              aria-live="polite"
               data-testid="create-product-success"
               style={{ marginBottom: '16px' }}
             >

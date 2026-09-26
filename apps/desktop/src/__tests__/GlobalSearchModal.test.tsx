@@ -8,9 +8,16 @@ import * as tauriProductService from '../services/tauriProductService';
 import * as tauriTransactionService from '../services/tauriTransactionService';
 import { Product } from '../types/product';
 import { Store } from '../types/store';
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 function renderWithProviders(ui: React.ReactElement): ReturnType<typeof render> {
-  return render(<ThemeProvider>{ui}</ThemeProvider>);
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <ThemeProvider>{ui}</ThemeProvider>
+    </QueryClientProvider>,
+  );
 }
 
 const stores: Store[] = [

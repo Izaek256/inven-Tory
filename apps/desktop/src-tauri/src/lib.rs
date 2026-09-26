@@ -4831,6 +4831,45 @@ pub fn apply_restore_background(
         Ok(())
     }
 
+    /// P2 (optimization plan): archive outbox events older than the
+    /// retention window (default 7 days) instead of storing them
+    /// indefinitely.
+    ///
+    /// Only terminal states are archived — PENDING / SENDING /
+    /// RETRYABLE_ERROR events are still deliverable and must never be
+    /// dropped (they are the offline queue's actual payload).
+    /// `created_at` is RFC3339 UTC (`Z` suffix, fixed width), so
+    /// lexicographic comparison against an equally formatted cutoff is
+    /// chronological. Returns the number of archived rows.
+    #[tauri::command]
+    pub fn cleanup_expired_outbox_events(
+        retention_days: Option<i64>,
+    ) -> Result<usize, String> {
+        let conn = get_conn()?;
+        let _ = ensure_schema_tables(&conn);
+
+        let days = retention_days.unwrap_or(7).max(1);
+        let cutoff =
+            (Utc::now() - chrono::Duration::days(days)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+
+        let archived = conn
+            .execute(
+                "DELETE FROM outbox_events \
+                 WHERE created_at < ?1 \
+                   AND status IN ('ACCEPTED', 'SYNCED', 'PERMANENT_REJECTION', 'EXCEPTION_REVIEW')",
+                params![cutoff],
+            )
+            .map_err(|e| format!("Failed to archive expired outbox events: {}", e))?;
+
+        if archived > 0 {
+            println!(
+                "[TAURI-SYNC] cleanup_expired_outbox_events archived {} event(s) older than {} day(s)",
+                archived, days
+            );
+        }
+        Ok(archived)
+    }
+
     /// Batch-update sync_status on inventory_transactions rows after a push
     /// batch (mirrors `update_transaction_sync_status` per-event but commits
     /// once).
@@ -5294,6 +5333,41 @@ pub fn apply_restore_background(
         }
     }
 
+    /// Create/repair the products_fts keep-in-sync triggers.
+    ///
+    /// Earlier versions used plain `DELETE FROM products_fts WHERE rowid = old.rowid`,
+    /// which is wrong for an *external-content* FTS5 table: the delete re-reads
+    /// column values from the content table (already updated/removed), so old
+    /// tokens are never removed — UPDATEs leave stale terms and DELETEs leave
+    /// ghost entries. The official pattern feeds the old values explicitly via
+    /// the `'delete'` command (mirrors Python migration 0006_fix_fts5_triggers).
+    fn create_fts_triggers(conn: &Connection) -> Result<(), String> {
+        conn.execute_batch(
+            "DROP TRIGGER IF EXISTS products_ai;
+            DROP TRIGGER IF EXISTS products_ad;
+            DROP TRIGGER IF EXISTS products_au;
+
+            CREATE TRIGGER products_ai AFTER INSERT ON products BEGIN
+                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
+            END;
+
+            CREATE TRIGGER products_ad AFTER DELETE ON products BEGIN
+                INSERT INTO products_fts(products_fts, rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES ('delete', old.rowid, old.sku, old.name, old.brand, old.model, old.category, old.barcode, old.alternate_names);
+            END;
+
+            CREATE TRIGGER products_au AFTER UPDATE ON products BEGIN
+                INSERT INTO products_fts(products_fts, rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES ('delete', old.rowid, old.sku, old.name, old.brand, old.model, old.category, old.barcode, old.alternate_names);
+                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
+                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
+            END;",
+        )
+        .map_err(|e| format!("Failed to create products_fts triggers: {}", e))?;
+        Ok(())
+    }
+
     /// Ensure the products_fts FTS5 virtual table and its sync triggers exist.
     /// Lazily creates them on first search if the Python Alembic migration hasn't
     /// run in this database yet (Tauri/desktop context).
@@ -5315,7 +5389,20 @@ pub fn apply_restore_background(
             let prod_count: i64 = conn
                 .query_row("SELECT count(*) FROM products", [], |r| r.get(0))
                 .unwrap_or(0);
-            if fts_count == 0 && prod_count > 0 {
+            // Repair triggers created by older builds (broken external-content
+            // delete) — detected by the absence of the official 'delete' command.
+            let ad_sql: String = conn
+                .query_row(
+                    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name='products_ad'",
+                    [],
+                    |r| r.get::<_, String>(0),
+                )
+                .unwrap_or_default();
+            if !ad_sql.contains("'delete'") {
+create_fts_triggers(conn)?;
+                conn.execute_batch("INSERT INTO products_fts(products_fts) VALUES ('rebuild');")
+                    .map_err(|e| format!("Failed to rebuild products_fts: {}", e))?;
+            } else if fts_count == 0 && prod_count > 0 {
                 let _ = conn.execute_batch("INSERT INTO products_fts(products_fts) VALUES ('rebuild');");
             }
             return Ok(());
@@ -5333,26 +5420,14 @@ pub fn apply_restore_background(
                 content='products',
                 content_rowid='rowid',
                 tokenize='porter unicode61'
-            );
-
-            CREATE TRIGGER IF NOT EXISTS products_ai AFTER INSERT ON products BEGIN
-                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
-                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS products_ad AFTER DELETE ON products BEGIN
-                DELETE FROM products_fts WHERE rowid = old.rowid;
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS products_au AFTER UPDATE ON products BEGIN
-                DELETE FROM products_fts WHERE rowid = old.rowid;
-                INSERT INTO products_fts(rowid, sku, name, brand, model, category, barcode, alternate_names)
-                VALUES (new.rowid, new.sku, new.name, new.brand, new.model, new.category, new.barcode, new.alternate_names);
-            END;
-
-            INSERT INTO products_fts(products_fts) VALUES ('rebuild');",
+            );",
         )
         .map_err(|e| format!("Failed to create products_fts table: {}", e))?;
+
+        create_fts_triggers(conn)?;
+
+        conn.execute_batch("INSERT INTO products_fts(products_fts) VALUES ('rebuild');")
+            .map_err(|e| format!("Failed to rebuild products_fts: {}", e))?;
 
         Ok(())
     }
@@ -6417,6 +6492,7 @@ pub fn run() {
             commands::get_pending_outbox_events,
             commands::update_outbox_event_status,
             commands::update_outbox_event_statuses,
+            commands::cleanup_expired_outbox_events,
             commands::update_transaction_sync_status,
             commands::update_transaction_sync_statuses,
             commands::get_last_sync_timestamp,

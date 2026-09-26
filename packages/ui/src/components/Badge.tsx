@@ -64,7 +64,11 @@ export interface BadgeProps {
   className?: string;
 }
 
-export function Badge({ status, label, className = '' }: BadgeProps): React.ReactElement {
+export const Badge = React.memo(function Badge({
+  status,
+  label,
+  className = '',
+}: BadgeProps): React.ReactElement {
   const config = STATUS_MAP[status];
   const displayLabel = label ?? config.label;
 
@@ -73,7 +77,7 @@ export function Badge({ status, label, className = '' }: BadgeProps): React.Reac
       {displayLabel}
     </span>
   );
-}
+});
 
 /* ─── Styles — reference .tag: left 2px bar, mono, 11px, sharp ───────── */
 const CSS = `

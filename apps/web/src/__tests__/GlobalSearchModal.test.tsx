@@ -12,7 +12,7 @@ import * as dashboardService from '../services/dashboardService';
 import type { ProductSearchResult } from '../types/dashboard';
 
 vi.mock('../services/dashboardService');
-const mockSearchProducts = vi.mocked(dashboardService.searchProducts);
+const mockSearchProductsServer = vi.mocked(dashboardService.searchProductsServer);
 
 const STORES = [
   { id: 's1', name: 'Main Store' },
@@ -42,7 +42,7 @@ describe('GlobalSearchModal (desktop parity)', () => {
   });
 
   it('loads the catalogue on open and renders the per-store breakdown table', async () => {
-    mockSearchProducts.mockResolvedValue({
+    mockSearchProductsServer.mockResolvedValue({
       results: [
         result({
           id: 'p1',
@@ -64,7 +64,7 @@ describe('GlobalSearchModal (desktop parity)', () => {
     render(<GlobalSearchModal isOpen={true} onClose={() => {}} stores={STORES} />);
 
     await waitFor(() => {
-      expect(mockSearchProducts).toHaveBeenCalledWith('', 200, 'all-stores');
+      expect(mockSearchProductsServer).toHaveBeenCalledWith('', 1, 200);
     });
     await waitFor(() => {
       expect(screen.getByTestId('global-search-results-table')).toBeInTheDocument();
@@ -76,7 +76,7 @@ describe('GlobalSearchModal (desktop parity)', () => {
   });
 
   it('filters across all stores by name/sku/brand/model/category', async () => {
-    mockSearchProducts.mockResolvedValue({
+    mockSearchProductsServer.mockResolvedValue({
       results: [
         result({ id: 'p1', name: 'Apple iPhone', brand: 'Apple' }),
         result({ id: 'p2', name: 'Sony Headphones', sku: 'SONY-XM5' }),
@@ -102,7 +102,7 @@ describe('GlobalSearchModal (desktop parity)', () => {
   });
 
   it('prefills the query submitted from the header search bar', async () => {
-    mockSearchProducts.mockResolvedValue({ results: [], total: 0, query: '' });
+    mockSearchProductsServer.mockResolvedValue({ results: [], total: 0, query: '' });
 
     render(
       <GlobalSearchModal isOpen={true} onClose={() => {}} stores={STORES} initialQuery="iphone" />,
@@ -115,7 +115,7 @@ describe('GlobalSearchModal (desktop parity)', () => {
 
   it('does not fetch while closed', () => {
     render(<GlobalSearchModal isOpen={false} onClose={() => {}} stores={STORES} />);
-    expect(mockSearchProducts).not.toHaveBeenCalled();
+    expect(mockSearchProductsServer).not.toHaveBeenCalled();
     expect(screen.queryByTestId('global-search-modal')).not.toBeInTheDocument();
   });
 });

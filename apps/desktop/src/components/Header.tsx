@@ -56,6 +56,8 @@ export const Header: React.FC<HeaderProps> = ({
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const storeMenuRef = useRef<HTMLDivElement>(null);
+  const userMenuItemsRef = useRef<HTMLButtonElement[]>([]);
+  const storeMenuItemsRef = useRef<HTMLButtonElement[]>([]);
   void useTheme;
 
   const { progress, isDownloading } = useUpdater();
@@ -99,6 +101,65 @@ export const Header: React.FC<HeaderProps> = ({
       document.removeEventListener('keydown', onKey);
     };
   }, [storeMenuOpen]);
+
+  // Keyboard navigation for user dropdown
+  useEffect(() => {
+    if (!userMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      const items = userMenuItemsRef.current.filter(Boolean);
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const current = items.findIndex((el) => el === document.activeElement);
+        const next = current < items.length - 1 ? current + 1 : 0;
+        items[next]?.focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const current = items.findIndex((el) => el === document.activeElement);
+        const prev = current > 0 ? current - 1 : items.length - 1;
+        items[prev]?.focus();
+      } else if (e.key === 'Escape') {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return (): void => document.removeEventListener('keydown', handleKeyDown);
+  }, [userMenuOpen]);
+
+  // Keyboard navigation for store dropdown
+  useEffect(() => {
+    if (!storeMenuOpen) return;
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      const items = storeMenuItemsRef.current.filter(Boolean);
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        const current = items.findIndex((el) => el === document.activeElement);
+        const next = current < items.length - 1 ? current + 1 : 0;
+        items[next]?.focus();
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        const current = items.findIndex((el) => el === document.activeElement);
+        const prev = current > 0 ? current - 1 : items.length - 1;
+        items[prev]?.focus();
+      } else if (e.key === 'Escape') {
+        setStoreMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return (): void => document.removeEventListener('keydown', handleKeyDown);
+  }, [storeMenuOpen]);
+
+  // Close all dropdowns on Escape globally
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setUserMenuOpen(false);
+        setStoreMenuOpen(false);
+        setIsGlobalSearchOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return (): void => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   const triggerManualSync = async (): Promise<void> => {
     try {
@@ -364,6 +425,9 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="header-user-dropdown" data-testid="header-user-dropdown" role="menu">
               {/* Theme toggler — redesigned as switch row (reference .switch) */}
               <button
+                ref={(el) => {
+                  if (el) userMenuItemsRef.current[0] = el;
+                }}
                 className="header-dropdown-item header-theme-row"
                 onClick={() => toggleTheme()}
                 data-testid="header-theme-toggle"
@@ -385,6 +449,9 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
               <div className="header-dropdown-divider" />
               <button
+                ref={(el) => {
+                  if (el) userMenuItemsRef.current[1] = el;
+                }}
                 className="header-dropdown-item header-logout-row"
                 onClick={() => {
                   setUserMenuOpen(false);
@@ -457,12 +524,15 @@ export const Header: React.FC<HeaderProps> = ({
                 data-testid="store-dropdown"
               >
                 <div className="store-dropdown-caption">Switch store</div>
-                {stores.map((store: Store) => {
+                {stores.map((store: Store, storeIdx: number) => {
                   const isActive = store.id === (activeStoreId || currentStore.id);
                   const color = storeColor(store.id);
                   return (
                     <button
                       key={store.id}
+                      ref={(el) => {
+                        if (el) storeMenuItemsRef.current[storeIdx] = el;
+                      }}
                       type="button"
                       role="option"
                       aria-selected={isActive}

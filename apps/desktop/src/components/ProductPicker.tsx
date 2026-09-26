@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useId } from 'react';
 import { Product } from '../types/product';
 import { searchProducts } from '../services/tauriProductService';
-import { Badge, Spinner } from '@invenTory/ui';
+import { Badge, Skeleton } from '@invenTory/ui';
 import { Search, Package, Check, Tag, Barcode } from 'lucide-react';
 
 interface ProductPickerProps {
@@ -157,7 +157,7 @@ export const ProductPicker: React.FC<ProductPickerProps> = ({
         />
         {loading && (
           <div style={{ paddingRight: '14px' }} data-testid="picker-loading">
-            <Spinner size="sm" />
+            <Skeleton width={18} height={18} borderRadius="50%" />
           </div>
         )}
       </div>
