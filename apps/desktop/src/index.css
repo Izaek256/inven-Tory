@@ -1095,16 +1095,6 @@ html {
 .login-screen.active {
   display: flex;
 }
-.login-topbar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 18px;
-  height: 56px;
-  background: var(--paper-raised);
-  border-bottom: 1px solid var(--it-border);
-}
 .login-center {
   flex: 1;
   display: flex;
