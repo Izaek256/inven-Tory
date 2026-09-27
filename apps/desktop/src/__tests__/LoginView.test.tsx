@@ -29,7 +29,7 @@ describe('LoginView (no mini header)', () => {
 
   it('does not render the mini topbar (version tag, search pill, Online chip)', () => {
     renderLogin();
-    expect(screen.queryByText('v1.3.1')).not.toBeInTheDocument();
+    expect(screen.queryByText('v1.3.2')).not.toBeInTheDocument();
     expect(screen.queryByText('Online')).not.toBeInTheDocument();
     expect(screen.queryByText('Search all stores')).not.toBeInTheDocument();
   });
