@@ -78,7 +78,7 @@ export function useGridKeyboardFlow({
   initialRowCount = 8,
   onCommitRow,
   onSearch,
-  onBarcodeScan,
+  onBarcodeScan, // eslint-disable-line @typescript-eslint/no-unused-vars
   onArrowInSearchPanel,
 }: UseGridKeyboardFlowOptions): UseGridKeyboardFlowReturn {
   const createEmptyRow = useCallback(
@@ -153,10 +153,9 @@ export function useGridKeyboardFlow({
       const field = fields.find((f) => f.id === fieldId);
       if (field && isSearchField(field) && rowIndex === activeRowIndex) {
         setSearchQuery(value);
-        onSearch(value, rowIndex);
       }
     },
-    [fields, activeRowIndex, onSearch],
+    [fields, activeRowIndex],
   );
 
   const handleFieldFocus = useCallback(
@@ -381,6 +380,7 @@ export function useGridKeyboardFlow({
   }, [activeRowIndex]);
 
   const barcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Barcode-scan check on search field changes — debounced so that a burst of
   // keystrokes only triggers one backend search (the last query), matching the
   // view-level 100 ms debounce and keeping bounded backend calls.
@@ -394,27 +394,27 @@ export function useGridKeyboardFlow({
 
   useEffect(() => {
     if (searchQuery && searchQuery !== prevSearchQuery.current) {
-      if (barcodeTimerRef.current) {
-        clearTimeout(barcodeTimerRef.current);
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
       }
       // Only start a new debounce timer when there is an actual search query;
-      // if the query is empty we clear any pending barcode scan so that a
+      // if the query is empty we clear any pending search so that a
       // subsequent backspace truly cancels the pending backend search.
       if (searchQuery) {
-        barcodeTimerRef.current = setTimeout(() => {
-          onBarcodeScan(searchQuery, activeRowIndex);
+        searchTimerRef.current = setTimeout(() => {
+          onSearch(searchQuery, activeRowIndex);
         }, 100);
       }
     } else if (!searchQuery) {
       // Query became empty (e.g. user pressed Backspace) — cancel any pending
-      // barcode scan so the backend is not called with a cleared query.
-      if (barcodeTimerRef.current) {
-        clearTimeout(barcodeTimerRef.current);
-        barcodeTimerRef.current = null;
+      // search so the backend is not called with a cleared query.
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = null;
       }
     }
     prevSearchQuery.current = searchQuery;
-  }, [searchQuery, activeRowIndex]);
+  }, [searchQuery, activeRowIndex, onSearch]);
 
   // Initial focus: row 0, field 0
   const hasInitialFocused = useRef(false);

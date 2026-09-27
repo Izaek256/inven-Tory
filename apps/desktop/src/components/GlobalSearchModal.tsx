@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, useQueryClient } from 'react';
 import {
   Modal,
   SearchInput,
@@ -80,6 +80,14 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
     enabled: isOpen && stores.length > 0,
     staleTime: 60_000,
   });
+  // Stock operation auto-sync: invalidate global search query when stock changes
+  useEffect(() => {
+    const handleStockUpdate = () => {
+      queryClient.invalidateQueries({ queryKey: ['globalSearchAll'] });
+    };
+    window.addEventListener('inven-tory:stock-updated', handleStockUpdate);
+    return () => window.removeEventListener('inven-tory:stock-updated', handleStockUpdate);
+  }, []);
 
   // Name/SKU/brand/model/category matching — across ALL stores.
   const results = useMemo<SearchResultRow[]>(() => {
