@@ -78,7 +78,6 @@ export function useGridKeyboardFlow({
   initialRowCount = 8,
   onCommitRow,
   onSearch,
-  onBarcodeScan,
   onArrowInSearchPanel,
 }: UseGridKeyboardFlowOptions): UseGridKeyboardFlowReturn {
   const createEmptyRow = useCallback(
@@ -153,10 +152,9 @@ export function useGridKeyboardFlow({
       const field = fields.find((f) => f.id === fieldId);
       if (field && isSearchField(field) && rowIndex === activeRowIndex) {
         setSearchQuery(value);
-        onSearch(value, rowIndex);
       }
     },
-    [fields, activeRowIndex, onSearch],
+    [fields, activeRowIndex],
   );
 
   const handleFieldFocus = useCallback(
@@ -372,6 +370,7 @@ export function useGridKeyboardFlow({
   // Barcode detection: if the product field gets a rapid burst of characters
   // followed immediately by an Enter, it's a scanner. We handle this by checking
   // the field value length on Enter — if it matches a barcode exactly, the view's
+  const prevSearchQuery = useRef('');
   // onBarcodeScan callback fires and returns the exact match. The grid's Enter
   // handler then selects it. This is mediated through the view's handleCommitRow.
   // The barcodeBuffer is exposed so the view can implement its own logic.
@@ -379,15 +378,47 @@ export function useGridKeyboardFlow({
     setBarcodeBuffer('');
   }, [activeRowIndex]);
 
-  // Barcode-scan check on search field changes
-  const prevSearchQuery = useRef('');
+  const barcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Barcode-scan check on search field changes — debounced so that a burst of
+  // keystrokes only triggers one backend search (the last query), matching the
+  // view-level 100 ms debounce and keeping bounded backend calls.
+  useEffect(() => {
+    const barcodeTimer = barcodeTimerRef;
+    const searchTimer = searchTimerRef;
+    return () => {
+      if (barcodeTimer.current) {
+        clearTimeout(barcodeTimer.current);
+      }
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current);
+      }
+    };
+  }, []);
+
   useEffect(() => {
     if (searchQuery && searchQuery !== prevSearchQuery.current) {
-      const rowIndex = activeRowIndex;
-      onBarcodeScan(searchQuery, rowIndex);
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+      // Only start a new debounce timer when there is an actual search query;
+      // if the query is empty we clear any pending search so that a
+      // subsequent backspace truly cancels the pending backend search.
+      if (searchQuery) {
+        searchTimerRef.current = setTimeout(() => {
+          onSearch(searchQuery, activeRowIndex);
+        }, 100);
+      }
+    } else if (!searchQuery) {
+      // Query became empty (e.g. user pressed Backspace) — cancel any pending
+      // search so the backend is not called with a cleared query.
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+        searchTimerRef.current = null;
+      }
     }
     prevSearchQuery.current = searchQuery;
-  }, [searchQuery, activeRowIndex, onBarcodeScan]);
+  }, [searchQuery, activeRowIndex, onSearch]);
 
   // Initial focus: row 0, field 0
   const hasInitialFocused = useRef(false);

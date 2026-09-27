@@ -413,11 +413,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     },
   ];
 
-  const lowStockColumns: ColumnDef<{
-    product_name: string;
-    current_stock: number;
-    threshold: number | null;
-  }>[] = [
+  const lowStockColumns: ColumnDef<LowStockAlert>[] = [
     {
       key: 'product',
       header: 'Product',
@@ -437,7 +433,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <span
           style={{
             color:
-              row.current_stock <= (row.threshold ?? 0)
+              row.current_stock < (row.threshold ?? 5)
                 ? 'var(--it-red-text)'
                 : 'var(--it-text-primary)',
           }}
@@ -446,13 +442,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </span>
       ),
       accessor: (row) => row.current_stock,
-    },
-    {
-      key: 'threshold',
-      header: 'Threshold',
-      numeric: true,
-      render: (row) => row.threshold ?? '—',
-      accessor: (row) => row.threshold,
     },
   ];
 

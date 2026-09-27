@@ -162,6 +162,18 @@ export const SaleStockView: React.FC = () => {
     };
   }, [loadAllProducts]);
 
+  // Clean up the debounced search timer on unmount so it doesn't fire after
+  // the view is gone — this is the frontend contribution to the "can't delete /
+  // app hangs" bug (the Rust side still deadlocks, but the frontend no longer
+  // schedules backend calls on an unmounted component).
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+    };
+  }, []);
+
   // ── Live search (instant local filter + 100 ms debounced backend FTS5) ─────
 
   const handleProductSearch = useCallback(

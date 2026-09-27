@@ -22,7 +22,11 @@ import {
   type ColumnDef,
 } from '@invenTory/ui';
 import { ArrowLeft, Clock, Package, RefreshCw, Store, Warehouse } from 'lucide-react';
-import { getStoreInventory, getStoresInventoryBulk } from '../services/dashboardService';
+import {
+  getStoreInventory,
+  getStoresInventoryBulk,
+  isUnregisteredStoreName,
+} from '../services/dashboardService';
 import type { FreshnessStatus, StoreInventoryResponse, StoreProductRow } from '../types/dashboard';
 import { formatRelativeTime } from '../utils/formatters';
 
@@ -336,6 +340,14 @@ export function StoreView({
         <span className="web-cell-store">
           <Store size={14} aria-hidden="true" />
           {r.storeName}
+          {isUnregisteredStoreName(r.storeName) && (
+            <span
+              className="web-cell-code"
+              title="Synced from a device before this store was registered on the server. Its name updates automatically once the desktop app reconnects."
+            >
+              Unregistered
+            </span>
+          )}
           <span className="web-cell-code">{r.storeCode}</span>
         </span>
       ),
