@@ -437,7 +437,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         <span
           style={{
             color:
-              row.current_stock <= (row.threshold ?? 0)
+              row.current_stock < (row.threshold ?? 5)
                 ? 'var(--it-red-text)'
                 : 'var(--it-text-primary)',
           }}

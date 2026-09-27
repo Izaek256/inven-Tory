@@ -5799,7 +5799,6 @@ create_fts_triggers(conn)?;
             }
         }
         low_stock.sort_by(|a, b| a["current_stock"].as_i64().cmp(&b["current_stock"].as_i64()));
-        low_stock.truncate(5);
         let stock_status_by_category: Vec<serde_json::Value> = status_by_cat
             .iter()
             .map(|(category, (in_s, low, out_s))| {
