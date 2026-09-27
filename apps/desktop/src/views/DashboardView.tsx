@@ -413,10 +413,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     },
   ];
 
-  const lowStockColumns: ColumnDef<{
-    product_name: string;
-    current_stock: number;
-  }>[] = [
+  const lowStockColumns: ColumnDef<LowStockAlert>[] = [
     {
       key: 'product',
       header: 'Product',

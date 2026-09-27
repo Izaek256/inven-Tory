@@ -61,16 +61,6 @@ vi.mock('../context/StoreContext', () => ({
   },
 }));
 
-const MOCK_STORE = {
-  id: 'STORE-A',
-  code: 'A',
-  name: 'Store Alpha',
-  address: '1 Main St',
-  is_active: true,
-  created_at: '2026-08-01T00:00:00Z',
-  updated_at: '2026-08-01T00:00:00Z',
-};
-
 const MOCK_PRODUCT = {
   id: 'PROD-001',
   sku: 'ELEC-001',
@@ -234,7 +224,6 @@ describe('Issue #7 — product search stays editable after a no-result search', 
     // One debounced FTS search + at most one (debounced) barcode probe.
     // Before the fix every keystroke fired an immediate IPC from the
     // undebounced onBarcodeScan effect → 3 + 1 = 4 calls.
-    // eslint-disable-next-line no-console
     console.log(
       'CALLS',
       JSON.stringify(vi.mocked(tauriProductService.searchProductsFts5).mock.calls),

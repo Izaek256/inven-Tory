@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect, useQueryClient } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   Modal,
   SearchInput,
@@ -38,7 +38,7 @@ interface SearchResultRow {
  * never changes the active store — it is a read-only lookup layered on top of
  * whatever store context is currently active.
  */
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   isOpen,
@@ -47,6 +47,7 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
 }) => {
   const [query, setQuery] = useState('');
   const [searchHistory, setSearchHistory] = useState<string[]>(() => loadSearchHistory());
+  const queryClient = useQueryClient();
 
   const { data, isPending: isLoading } = useQuery({
     queryKey: ['globalSearchAll', stores.map((s) => s.id)],
@@ -82,12 +83,12 @@ export const GlobalSearchModal: React.FC<GlobalSearchModalProps> = ({
   });
   // Stock operation auto-sync: invalidate global search query when stock changes
   useEffect(() => {
-    const handleStockUpdate = () => {
+    const handleStockUpdate = (): void => {
       queryClient.invalidateQueries({ queryKey: ['globalSearchAll'] });
     };
     window.addEventListener('inven-tory:stock-updated', handleStockUpdate);
     return () => window.removeEventListener('inven-tory:stock-updated', handleStockUpdate);
-  }, []);
+  }, [queryClient]);
 
   // Name/SKU/brand/model/category matching — across ALL stores.
   const results = useMemo<SearchResultRow[]>(() => {

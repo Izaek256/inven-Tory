@@ -524,8 +524,8 @@ export function App(): React.ReactElement {
       currentView === 'receive_stock' ||
       currentView === 'physical_count'
     ) {
-      const tick = () => {
-        const cell = document.querySelector('[data-cell-id="cell-0-product"]');
+      const tick = (): void => {
+        const cell = document.querySelector<HTMLElement>('[data-cell-id="cell-0-product"]');
         if (cell) cell.focus();
       };
       setTimeout(tick, 0);

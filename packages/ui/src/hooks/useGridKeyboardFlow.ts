@@ -78,7 +78,6 @@ export function useGridKeyboardFlow({
   initialRowCount = 8,
   onCommitRow,
   onSearch,
-  onBarcodeScan, // eslint-disable-line @typescript-eslint/no-unused-vars
   onArrowInSearchPanel,
 }: UseGridKeyboardFlowOptions): UseGridKeyboardFlowReturn {
   const createEmptyRow = useCallback(
@@ -385,9 +384,14 @@ export function useGridKeyboardFlow({
   // keystrokes only triggers one backend search (the last query), matching the
   // view-level 100 ms debounce and keeping bounded backend calls.
   useEffect(() => {
+    const barcodeTimer = barcodeTimerRef;
+    const searchTimer = searchTimerRef;
     return () => {
-      if (barcodeTimerRef.current) {
-        clearTimeout(barcodeTimerRef.current);
+      if (barcodeTimer.current) {
+        clearTimeout(barcodeTimer.current);
+      }
+      if (searchTimer.current) {
+        clearTimeout(searchTimer.current);
       }
     };
   }, []);
