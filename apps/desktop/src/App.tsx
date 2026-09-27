@@ -516,6 +516,20 @@ export function App(): React.ReactElement {
 
     const el = document.getElementById('main-content');
     if (el) el.focus({ preventScroll: true });
+    // On navigation to the three operational pages, also focus the product
+    // entry field after the main-content focus, so the user can start typing
+    // / using arrow keys immediately without a mouse click.
+    if (
+      currentView === 'sale_stock' ||
+      currentView === 'receive_stock' ||
+      currentView === 'physical_count'
+    ) {
+      const tick = () => {
+        const cell = document.querySelector('[data-cell-id="cell-0-product"]');
+        if (cell) cell.focus();
+      };
+      setTimeout(tick, 0);
+    }
     setLiveMessage(`${currentView} view loaded`);
 
     const timer = window.setTimeout(() => setLiveMessage(''), 1500);
