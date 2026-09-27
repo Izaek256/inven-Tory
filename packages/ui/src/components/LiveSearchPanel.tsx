@@ -283,7 +283,8 @@ export function LiveSearchPanel({
                 padding: '6px 12px',
                 cursor: 'pointer',
                 borderBottom: '1px solid var(--it-border)',
-                backgroundColor: idx === highlightedIndex ? 'var(--it-surface)' : 'transparent',
+                backgroundColor:
+                  idx === highlightedIndex ? 'var(--it-list-highlight)' : 'transparent',
                 display: 'flex',
                 flexDirection: 'row',
                 alignItems: 'center',
