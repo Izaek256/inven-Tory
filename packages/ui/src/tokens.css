@@ -313,9 +313,9 @@
     --red-tint: #341915;
 
     --it-bg: var(--paper);
---it-surface: var(--paper-raised);
-  --it-card: var(--surface);
-  --it-list-highlight: #2a3138;
+    --it-surface: var(--paper-raised);
+    --it-card: var(--surface);
+    --it-list-highlight: #2a3138;
     --it-border: var(--line);
     --it-border-strong: var(--line-strong);
     --it-text-primary: var(--text);
