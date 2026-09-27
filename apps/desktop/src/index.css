@@ -67,9 +67,9 @@ html {
   align-items: center;
   gap: 14px;
   padding: 0 22px;
-  height: 64px;
-  min-height: 64px;
-  max-height: 64px;
+  height: 48px;
+  min-height: 48px;
+  max-height: 48px;
   background: var(--paper-raised);
   border-bottom: 1px solid var(--line);
   box-shadow: none;
@@ -84,7 +84,7 @@ html {
   align-items: center;
   gap: 14px;
   padding: 0 22px;
-  height: 64px;
+  height: 48px;
   background: var(--paper-raised);
   border-bottom: 1px solid var(--line);
 }
@@ -93,7 +93,7 @@ html {
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 
 .brand-icon,
@@ -240,10 +240,10 @@ html {
 
 /* Brand in rail — reference .brand */
 .rail-brand {
-  height: 64px;
+  height: 48px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   padding: 0 20px;
   border-bottom: 1px solid var(--ink-line);
   flex-shrink: 0;
@@ -306,7 +306,7 @@ html {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 20px 14px;
+  padding: 8px 14px 10px;
   background: none;
   border: none;
   color: #9aa3af;
@@ -325,7 +325,7 @@ html {
 }
 
 .nav-group {
-  padding: 14px 12px 6px;
+  padding: 10px 10px 4px;
 }
 .nav-caption {
   font-size: 10.5px;
@@ -343,8 +343,8 @@ html {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 11px 14px 11px 16px;
+  gap: 10px;
+  padding: 8px 12px 7px 14px;
   border-radius: var(--it-r-sm);
   color: #b7bec8;
   font-family: var(--it-font-ui);
@@ -355,7 +355,7 @@ html {
   background: none;
   width: 100%;
   text-align: left;
-  margin-bottom: 3px;
+  margin-bottom: 1px;
   transition:
     background 0.15s ease,
     color 0.15s ease;
@@ -415,7 +415,7 @@ html {
 }
 .nav-more-group .nav-item {
   font-size: 13.5px;
-  padding: 11px 14px 11px 16px;
+  padding: 8px 12px 7px 14px;
 }
 
 .rail-divider {
@@ -426,7 +426,7 @@ html {
 
 .rail-foot {
   margin-top: auto;
-  padding: 14px 20px 12px;
+  padding: 8px 16px 10px;
   border-top: 1px solid var(--ink-line);
   font-size: 11px;
   font-family: var(--it-font-mono);
@@ -452,7 +452,7 @@ html {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 20px 14px;
+  padding: 8px 14px 10px;
   background: none;
   border: none;
   color: #9aa3af;
@@ -581,7 +581,7 @@ html {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 14px;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .sheet-head h2 {
@@ -599,7 +599,7 @@ html {
 .desktop-kpi-grid {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 16px;
 }
 @media (max-width: 1100px) {
@@ -776,7 +776,7 @@ html {
 .field-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
+  gap: 10px;
 }
 .field textarea {
   resize: vertical;
@@ -894,7 +894,7 @@ html {
   padding: 12px 16px;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .info-bar svg {
   width: 18px;
@@ -2121,7 +2121,7 @@ textarea:focus-visible,
 
 .it-skeleton-table .it-skeleton-row {
   display: flex;
-  gap: 12px;
+  gap: 10px;
   margin-bottom: 8px;
 }
 
