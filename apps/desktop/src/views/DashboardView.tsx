@@ -416,7 +416,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const lowStockColumns: ColumnDef<{
     product_name: string;
     current_stock: number;
-    threshold: number | null;
   }>[] = [
     {
       key: 'product',
@@ -446,13 +445,6 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </span>
       ),
       accessor: (row) => row.current_stock,
-    },
-    {
-      key: 'threshold',
-      header: 'Threshold',
-      numeric: true,
-      render: (row) => row.threshold ?? '—',
-      accessor: (row) => row.threshold,
     },
   ];
 
