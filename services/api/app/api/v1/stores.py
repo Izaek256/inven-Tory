@@ -85,6 +85,7 @@ class StoreListItem(BaseModel):
     name: str
     address: str | None
     is_active: bool
+    is_placeholder: bool
 
 
 class CreateStoreRequest(BaseModel):
@@ -165,6 +166,7 @@ async def list_stores(
             name=store.name,
             address=store.address,
             is_active=bool(store.is_active),
+            is_placeholder=store.name.startswith("Auto Store ("),
         )
         for store in stores
     ]
@@ -242,9 +244,57 @@ async def create_store(
             name=existing_by_id.name,
             address=existing_by_id.address,
             is_active=bool(existing_by_id.is_active),
+            is_placeholder=existing_by_id.name.startswith("Auto Store ("),
         )
 
-    # Check for duplicate code
+    # Heal a same-CODE auto-provisioned placeholder (different ID).
+    # This handles the case where ingestion created a placeholder with a
+    # different ID but the same code before the desktop pushed its creation.
+    existing_by_code = await db.execute(
+        select(Store).where(
+            Store.code == request.code,
+            Store.name.like("Auto Store (%"),
+        )
+    )
+    existing_code_placeholder = existing_by_code.scalar_one_or_none()
+    if existing_code_placeholder is not None:
+        # Check if there's another real store with this code (shouldn't happen)
+        real_store_with_code = await db.execute(
+            select(Store.id).where(
+                Store.code == request.code,
+                Store.id != existing_code_placeholder.id,
+                ~Store.name.like("Auto Store (%"),
+            )
+        )
+        if real_store_with_code.scalar_one_or_none() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Store with code '{request.code}' already exists",
+            )
+        existing_code_placeholder.code = request.code
+        existing_code_placeholder.name = request.name
+        existing_code_placeholder.address = request.address
+        existing_code_placeholder.is_active = True
+        # Keep the existing ID (which might be different from deterministic)
+        await db.commit()
+        await db.refresh(existing_code_placeholder)
+        logger.info(
+            "Healed auto-provisioned placeholder store %s (by code match) into '%s' (%s)",
+            existing_code_placeholder.id,
+            request.name,
+            request.code,
+        )
+        response.status_code = status.HTTP_200_OK
+        return StoreListItem(
+            id=existing_code_placeholder.id,
+            code=existing_code_placeholder.code,
+            name=existing_code_placeholder.name,
+            address=existing_code_placeholder.address,
+            is_active=bool(existing_code_placeholder.is_active),
+            is_placeholder=existing_code_placeholder.name.startswith("Auto Store ("),
+        )
+
+    # Check for duplicate code (real store)
     existing = await db.execute(select(Store).where(Store.code == request.code))
     if existing.scalar_one_or_none():
         raise HTTPException(
@@ -288,6 +338,7 @@ async def create_store(
         name=store.name,
         address=store.address,
         is_active=bool(store.is_active),
+        is_placeholder=store.name.startswith("Auto Store ("),
     )
 
 
@@ -321,6 +372,7 @@ async def update_store(
         name=store.name,
         address=store.address,
         is_active=bool(store.is_active),
+        is_placeholder=store.name.startswith("Auto Store ("),
     )
 
 
@@ -357,6 +409,7 @@ async def patch_store(
         name=store.name,
         address=store.address,
         is_active=bool(store.is_active),
+        is_placeholder=store.name.startswith("Auto Store ("),
     )
 
 
@@ -389,6 +442,7 @@ async def toggle_store_active(
         name=store.name,
         address=store.address,
         is_active=bool(store.is_active),
+        is_placeholder=store.name.startswith("Auto Store ("),
     )
 
 

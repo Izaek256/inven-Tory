@@ -24,6 +24,7 @@ vi.mock('../services/dashboardService', () => ({
   getProductInventory: vi.fn(),
   getProductHistory: vi.fn(),
   getStoreInventory: vi.fn(),
+  isUnregisteredStoreName: (name: string): boolean => name.startsWith('Auto Store ('),
   listStores: vi.fn(async () => []),
   getDashboardMetrics: vi.fn(),
   getStockTrend: vi.fn(async () => ({ data: [], date_range: { start: '', end: '' } })),

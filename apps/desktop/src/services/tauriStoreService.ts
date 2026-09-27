@@ -72,6 +72,57 @@ export async function getStores(): Promise<Store[]> {
 }
 
 /**
+ * Queue for failed store pushes to retry later.
+ */
+const _pendingPushQueue: Array<{
+  method: 'POST' | 'PATCH';
+  path: string;
+  body: unknown;
+  retries: number;
+}> = [];
+
+let _isProcessingQueue = false;
+
+/**
+ * Process the pending push queue with retry logic.
+ */
+async function _processPushQueue(): Promise<void> {
+  if (_isProcessingQueue || _pendingPushQueue.length === 0) return;
+  _isProcessingQueue = true;
+
+  while (_pendingPushQueue.length > 0) {
+    const item = _pendingPushQueue.shift();
+    if (!item) continue;
+
+    let success = false;
+    for (let attempt = 0; attempt <= item.retries; attempt++) {
+      try {
+        await _fetchApi<Store>(item.path, {
+          method: item.method,
+          body: JSON.stringify(item.body),
+        });
+        success = true;
+        break;
+      } catch {
+        if (attempt < item.retries) {
+          const backoff = Math.pow(2, attempt) * 1000;
+          await new Promise((r) => setTimeout(r, backoff));
+        }
+      }
+    }
+
+    if (!success) {
+      // eslint-disable-next-line no-console
+      console.error('[StoreService] Failed to push store after retries:', item.path, item.body);
+      // Re-queue with reduced retry count for next processing cycle
+      _pendingPushQueue.push({ ...item, retries: Math.max(0, item.retries - 1) });
+    }
+  }
+
+  _isProcessingQueue = false;
+}
+
+/**
  * Best-effort push of a local store change to the central API so the server's
  * copy of the store (name/address/active state) stays in sync with the local
  * SQLite database. Without this, the next sync pull would overwrite local
@@ -79,16 +130,31 @@ export async function getStores(): Promise<Store[]> {
  * placeholder data ("Auto Store (...)").
  *
  * Local SQLite is the source of truth while offline; failures here are non-fatal.
+ * Now includes exponential backoff retry and persistent queue for offline scenarios.
  */
 async function _pushStoreToApi(
   method: 'POST' | 'PATCH',
   path: string,
   body: unknown,
+  retries = 3,
 ): Promise<void> {
-  try {
-    await _fetchApi<Store>(path, { method, body: JSON.stringify(body) });
-  } catch {
-    // ignore — offline / server unreachable
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      await _fetchApi<Store>(path, { method, body: JSON.stringify(body) });
+      return; // Success
+    } catch {
+      if (attempt === retries) {
+        // eslint-disable-next-line no-console
+        console.error('[StoreService] Failed to push store after retries, queueing:', body);
+        // Queue for later retry when connectivity may be restored
+        _pendingPushQueue.push({ method, path, body, retries: 2 });
+        // Kick off queue processing
+        void _processPushQueue();
+        return;
+      }
+      const backoff = Math.pow(2, attempt) * 1000;
+      await new Promise((r) => setTimeout(r, backoff));
+    }
   }
 }
 
@@ -98,6 +164,13 @@ function _dispatchStoresUpdated(): void {
       window.dispatchEvent(new CustomEvent('inven-tory:stores-updated'));
     }, 0);
   }
+}
+
+// Process queued pushes when coming online
+if (typeof window !== 'undefined') {
+  window.addEventListener('online', () => {
+    void _processPushQueue();
+  });
 }
 
 /**

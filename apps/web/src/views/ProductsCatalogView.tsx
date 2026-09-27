@@ -20,7 +20,7 @@ import {
   Plus,
   Store as StoreIcon,
 } from 'lucide-react';
-import { searchProductsServer } from '../services/dashboardService';
+import { searchProducts } from '../services/dashboardService';
 import type { ProductSearchResult, StoreQuantity } from '../types/dashboard';
 import { InventoryPanel } from '../components/InventoryPanel';
 
@@ -115,7 +115,8 @@ export function ProductsCatalogView({ topSearch }: { topSearch?: string }): Reac
     const cancelled = { current: false };
     setLoading(true);
     setError(null);
-    const data = await searchProductsServer(searchQuery, pageNum, PAGE_SIZE);
+    const offset = (pageNum - 1) * PAGE_SIZE;
+    const data = await searchProducts(searchQuery, PAGE_SIZE, 'all-stores', offset);
     if (!cancelled.current) {
       setResults(data.results);
       setTotalResults(data.total);
