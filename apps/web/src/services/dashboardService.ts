@@ -94,8 +94,9 @@ export async function searchProducts(
   query: string = '',
   limit = 100,
   scope: 'all-stores' | '' = '',
+  offset = 0,
 ): Promise<ProductSearchResponse> {
-  const params = new URLSearchParams({ q: query, limit: String(limit) });
+  const params = new URLSearchParams({ q: query, limit: String(limit), offset: String(offset) });
   if (scope) params.set('scope', scope);
   const path = `/products/search?${params.toString()}`;
   const cached = getCache(path);
@@ -242,17 +243,53 @@ export async function getStoresInventoryBulk(
   }
 }
 
-export async function listStores(
-  includePlaceholders = false,
-): Promise<
-  Array<{ id: string; code: string; name: string; address?: string | null; is_active: boolean }>
-> {
-  const stores =
-    await api.get<
-      Array<{ id: string; code: string; name: string; address?: string | null; is_active: boolean }>
-    >('/stores');
+export interface StoreListItem {
+  id: string;
+  code: string;
+  name: string;
+  address?: string | null;
+  is_active: boolean;
+  is_placeholder?: boolean;
+}
+
+/**
+ * True when the server row is an auto-provisioned sync placeholder rather than a
+ * store the user actually registered.
+ *
+ * These are NOT dropped: a placeholder carries real stock balances and
+ * transactions, so hiding it made desktop-managed stores (and their inventory)
+ * vanish from the dashboard entirely. The server's healing path normally renames
+ * them, but while a store is still unhealed its data must stay visible — callers
+ * use `is_placeholder` to badge it as awaiting its real name.
+ */
+export function isStorePlaceholder(store: StoreListItem): boolean {
+  return store.is_placeholder ?? store.name.startsWith('Auto Store (');
+}
+
+/**
+ * Name-only variant for rows that arrive from endpoints which do not carry the
+ * `is_placeholder` flag (e.g. the per-store inventory snapshots).
+ */
+export function isUnregisteredStoreName(name: string): boolean {
+  return name.startsWith('Auto Store (');
+}
+
+/**
+ * List stores for the dashboard.
+ *
+ * Always asks the server for placeholders too, then decides visibility here so
+ * the rule lives in one place: a store is listed when it is a real store, or
+ * when it is a placeholder that already holds data — hiding the latter made
+ * desktop-managed stores and their inventory disappear from the dashboard.
+ * Inactive stores stay in the list so the dashboard can count them.
+ * `includePlaceholders` skips the client-side pass for callers wanting the raw
+ * server list.
+ */
+export async function listStores(includePlaceholders = false): Promise<StoreListItem[]> {
+  const stores = await api.get<StoreListItem[]>('/stores?include_placeholders=true');
   if (includePlaceholders) return stores;
-  return stores.filter((s) => !s.name.startsWith('Auto Store ('));
+
+  return stores.filter((s) => !isStorePlaceholder(s) || s.is_active !== false);
 }
 
 export async function login(

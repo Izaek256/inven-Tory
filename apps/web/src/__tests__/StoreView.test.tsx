@@ -11,6 +11,7 @@ import type { StoreInventoryResponse } from '../types/dashboard';
 
 vi.mock('../services/dashboardService', () => ({
   getStoreInventory: vi.fn(),
+  isUnregisteredStoreName: (name: string): boolean => name.startsWith('Auto Store ('),
 }));
 
 import * as svc from '../services/dashboardService';

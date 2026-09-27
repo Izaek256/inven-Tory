@@ -166,6 +166,83 @@ async def test_create_store_normal_create_still_201(
     assert resp.json()["name"] == "New Shop"
 
 
+async def test_create_store_heals_same_code_placeholder(
+    client: TestClient,
+    db_session: AsyncSession,
+    seed_helpers: dict[str, Any],
+) -> None:
+    """POST with a different ID but same CODE heals the placeholder.
+
+    This covers the race where ingestion creates a placeholder with a
+    non-deterministic ID but the same code before the desktop pushes
+    its creation with the deterministic ID.
+    """
+    headers = await _login(client, seed_helpers, db_session)
+    # Ingestion creates placeholder with a different ID but same code
+    placeholder = Store(
+        id="DIFFERENT-ID-123",
+        code="MAIN-2",
+        name="Auto Store (MAIN-2)",
+        is_active=True,
+    )
+    db_session.add(placeholder)
+    await db_session.flush()
+
+    # Attach a balance as the early syncs would have — healing must keep it.
+    product = Product(
+        id=f"PROD-{uuid.uuid4().hex[:8]}",
+        sku=f"SKU-{uuid.uuid4().hex[:8]}",
+        name="Heater",
+        category="General",
+        unit="pcs",
+    )
+    db_session.add(product)
+    await db_session.flush()
+    db_session.add(
+        StockBalance(
+            id=str(uuid.uuid4()),
+            store_id=placeholder.id,
+            product_id=product.id,
+            stock_bucket="AVAILABLE",
+            quantity=7,
+            updated_at=datetime.now(UTC),
+        )
+    )
+    await db_session.flush()
+
+    # Desktop pushes creation with deterministic ID
+    resp = client.post(
+        "/api/v1/stores",
+        json={"id": "STORE-MAIN-2", "code": "MAIN-2", "name": "Second Shop"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    # Should heal the existing placeholder, keeping its ID
+    assert data["id"] == placeholder.id
+    assert data["code"] == "MAIN-2"
+    assert data["name"] == "Second Shop"
+
+    healed = await db_session.get(Store, placeholder.id)
+    assert healed is not None
+    assert healed.name == "Second Shop"
+    balances = (
+        (
+            await db_session.execute(
+                select(StockBalance).where(StockBalance.store_id == placeholder.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [b.quantity for b in balances] == [7]
+
+    # And it is no longer filtered out of the store list
+    listed = client.get("/api/v1/stores", headers=headers)
+    assert listed.status_code == 200
+    assert "Second Shop" in [s["name"] for s in listed.json()]
+
+
 async def test_list_stores_excludes_placeholders_by_default(
     client: TestClient,
     db_session: AsyncSession,

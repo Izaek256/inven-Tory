@@ -119,6 +119,8 @@
   --it-text-secondary: var(--text-muted);
   --it-text-disabled: var(--text-faint);
 
+  --it-list-highlight: #f0f4f8;
+
   /* Green — positive / Receive */
   --it-green: var(--green);
   --it-green-hover: #256a42;
@@ -313,6 +315,7 @@
     --it-bg: var(--paper);
     --it-surface: var(--paper-raised);
     --it-card: var(--surface);
+    --it-list-highlight: #2a3138;
     --it-border: var(--line);
     --it-border-strong: var(--line-strong);
     --it-text-primary: var(--text);

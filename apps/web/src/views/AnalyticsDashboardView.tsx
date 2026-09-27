@@ -34,6 +34,7 @@ import {
   getStockTrend,
   getMostSoldExtended,
   getOperationsSummary,
+  isUnregisteredStoreName,
   listStores,
 } from '../services/dashboardService';
 import { useQueries } from '@tanstack/react-query';
@@ -357,6 +358,14 @@ export function AnalyticsDashboardView({
                 <span className="store-tab__label">
                   <span style={{ fontWeight: 700, marginRight: 4 }}>{s.code || shortCode}</span>
                   {s.name}
+                  {isUnregisteredStoreName(s.name) && (
+                    <span
+                      className="store-tab__pending"
+                      title="Synced from a device before this store was registered on the server. Its name updates automatically once the desktop app reconnects."
+                    >
+                      Unregistered
+                    </span>
+                  )}
                 </span>
               </button>
             );

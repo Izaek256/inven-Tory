@@ -267,6 +267,19 @@
   background: var(--it-green);
   color: #fff;
 }
+/* Safety net for stores auto-provisioned by sync that are not yet registered. */
+.store-tab__pending {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--it-amber-border);
+  border-radius: 999px;
+  background: var(--it-amber-surface);
+  color: var(--it-amber-text);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
 /* Uniform tile row */
 .dash-tiles {
   display: grid;

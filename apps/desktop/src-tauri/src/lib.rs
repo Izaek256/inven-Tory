@@ -5084,6 +5084,62 @@ pub fn apply_restore_background(
             }
             // Both are placeholders — fall through to normal upsert so at least the
             // row exists with an ID the FK constraints need.
+        } else {
+            // The server has a real (healed) store. The server may have healed a
+            // placeholder that was created under a *different* ID than the one this
+            // desktop uses locally (server-side healing matches on code). Inserting
+            // it verbatim would surface a duplicate store row in the desktop UI —
+            // the same code listed twice. Update the existing local row that owns
+            // the code instead, and return that row so callers keep a stable local
+            // primary key for their foreign keys.
+            let existing_by_code: Option<(String, String, String, Option<String>, bool)> = conn
+                .query_row(
+                    "SELECT id, code, name, address, is_active FROM stores WHERE code = ?1 AND id != ?2 LIMIT 1",
+                    params![store.code, store.id],
+                    |row| {
+                        Ok((
+                            row.get(0)?,
+                            row.get(1)?,
+                            row.get(2)?,
+                            row.get(3)?,
+                            row.get::<_, i64>(4)? != 0,
+                        ))
+                    },
+                )
+                .ok();
+
+            if let Some((local_id, _, _, _, _)) = existing_by_code {
+                conn.execute(
+                    "UPDATE stores SET name = ?1, address = ?2, is_active = ?3, updated_at = ?4 WHERE id = ?5",
+                    params![
+                        store.name,
+                        store.address,
+                        if store.is_active { 1 } else { 0 },
+                        store.updated_at,
+                        local_id,
+                    ],
+                )
+                .map_err(|e| format!("Failed to update store by code match: {}", e))?;
+
+                let local_row: Store = conn
+                    .query_row(
+                        "SELECT id, code, name, address, is_active, created_at, updated_at FROM stores WHERE id = ?1",
+                        params![local_id],
+                        |row| {
+                            Ok(Store {
+                                id: row.get(0)?,
+                                code: row.get(1)?,
+                                name: row.get(2)?,
+                                address: row.get(3)?,
+                                is_active: row.get::<_, i64>(4)? != 0,
+                                created_at: row.get(5)?,
+                                updated_at: row.get(6)?,
+                            })
+                        },
+                    )
+                    .map_err(|e| format!("Failed to read healed store: {}", e))?;
+                return Ok(local_row);
+            }
         }
 
         conn.execute(
@@ -5799,7 +5855,6 @@ create_fts_triggers(conn)?;
             }
         }
         low_stock.sort_by(|a, b| a["current_stock"].as_i64().cmp(&b["current_stock"].as_i64()));
-        low_stock.truncate(5);
         let stock_status_by_category: Vec<serde_json::Value> = status_by_cat
             .iter()
             .map(|(category, (in_s, low, out_s))| {

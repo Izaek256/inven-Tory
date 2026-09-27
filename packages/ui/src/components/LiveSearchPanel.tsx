@@ -78,6 +78,7 @@ export function LiveSearchPanel({
   const [localHighlightedIndex, setLocalHighlightedIndex] = React.useState(highlightedIndex);
   const [localHistory, setLocalHistory] = React.useState<string[]>(() => loadSearchHistory());
   const itemRefs = React.useRef<(HTMLDivElement | null)[]>([]);
+  const [isFocused, setIsFocused] = React.useState(false);
 
   const history = searchHistory.length > 0 ? searchHistory : localHistory;
 
@@ -95,6 +96,14 @@ export function LiveSearchPanel({
   }, [highlightedIndex]);
 
   const showResults = query.trim().length > 0;
+
+  const isFocusedStyle = isFocused
+    ? {
+        border: '2px solid var(--it-accent)',
+        borderRadius: 'var(--it-r-md)',
+        boxShadow: '0 0 0 2px var(--it-card)',
+      }
+    : undefined;
 
   // Immediate client-side filtering on allItems on every keystroke
   const filteredAllItems = React.useMemo(() => {
@@ -130,6 +139,9 @@ export function LiveSearchPanel({
   const showRecentLabel = !showResults && allItems.length === 0 && recentItems.length > 0;
 
   const handleKeyDown = (e: React.KeyboardEvent): void => {
+    if (e.key === 'f') {
+      setIsFocused(true);
+    }
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       e.stopPropagation();
@@ -167,6 +179,7 @@ export function LiveSearchPanel({
         borderRadius: 'var(--it-r-md)',
         backgroundColor: 'var(--it-card)',
         boxShadow: 'var(--it-shadow-md)',
+        ...isFocusedStyle,
       }}
       role="listbox"
       aria-label="Search results"
@@ -283,7 +296,10 @@ export function LiveSearchPanel({
                 padding: '6px 12px',
                 cursor: 'pointer',
                 borderBottom: '1px solid var(--it-border)',
-                backgroundColor: idx === highlightedIndex ? 'var(--it-surface)' : 'transparent',
+                backgroundColor:
+                  idx === highlightedIndex
+                    ? 'var(--it-list-highlight, var(--it-surface))'
+                    : 'transparent',
                 display: 'flex',
                 flexDirection: 'row',
                 alignItems: 'center',
