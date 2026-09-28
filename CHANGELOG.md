@@ -2,6 +2,27 @@
 
 All notable changes to invenTory are documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+## [1.3.4] — 2026-09-28
+
+### Fixed — Genesis First-Run Layout
+
+- **The first-run setup screen fills the window** — `.genesis-screen` now stretches (`flex: 1 1 auto`, `min-width: 0`, `width/height: 100%`) instead of being laid out against `min-height: 100vh`, which left the card off-centre and clipped on short windows; `.genesis-center` scrolls internally (`overflow-y: auto`, `min-height: 0`) and `.genesis-card` centres with `margin: auto`. The role-selector chips stay on one line (`flex-wrap: nowrap`, `flex: 1 1 auto`, tighter padding) so the wizard fits without horizontal overflow.
+
+### Fixed — Database Migration System
+
+- **One source of truth per database** — `infra/migrations/` is the only migration system for the central PostgreSQL database and `packages/storage/storage/migrations/` the only one for local SQLite. `services/api/migrations/*.sql` (hand-applied `psql` scripts) is removed; the day-book tables it duplicated were already in the chain, and the tsvector column/indexes it created are now created by revision `0007_fts_and_composite_indexes`.
+- **PostgreSQL 0007 actually runs** — `sa.TSVECTOR()` does not exist and was replaced with `sqlalchemy.dialects.postgresql.TSVECTOR`; two composite indexes were created on a nonexistent `transactions` table and now target `inventory_transactions`; `ix_transactions_store_product_occurred` duplicated 0002's `ix_inv_tx_store_prod_date` and is gone. The revision also adds the delta-sync/dashboard indexes the models declare but no migration created (`ix_products_updated_at`, `ix_inv_tx_movement_date`, `ix_stock_balances_updated_at`, `ix_stock_balances_store_product_bucket`, `ix_sync_receipts_received_*`, `ix_products_category_active`, `ix_products_store_quantity`). Every statement is `IF [NOT] EXISTS`, the trigger/function use `CREATE OR REPLACE`, and the legacy trigger from the removed raw SQL is dropped so exactly one maintains `products.ts_vector`.
+- **PostgreSQL revision ids fit `alembic_version`** — the id exceeded the `VARCHAR(32)` column and made the chain unusable; it is now `0007_fts_and_composite_indexes`.
+- **PostgreSQL 0004 constraint names** — the `users` table was rebuilt through a temporary `_users_new`, so its primary key and unique constraints were named `_users_new_*` (and, on PostgreSQL 17+, so were the `NOT NULL` constraints). They are now named explicitly and any leftover temporary name is renamed after the table rename, in both directions.
+- **Local SQLite gained the desktop schema** — `kv_store`, `day_books`, `day_book_entries`, `daily_stock_snapshot` (+ its two triggers), `users.assigned_store_id` and 11 query indexes existed only inside the Tauri Rust bootstrap, so a database created by `alembic upgrade head` was missing objects the desktop app writes to at runtime. Revisions `0007_reconcile_desktop_schema` and `0008_add_query_indexes` define them, with guarded creation so an already-bootstrapped database is untouched.
+- **Cloud restore no longer drops every user** — `apply_restore_critical` inserted into `users.assigned_store_id`, a column declared by no schema anywhere; the error was discarded, so restores silently created nothing. The column now exists.
+- **Desktop startup creates the schema** — `run()` did not call `ensure_schema_tables()`, so a fresh install started against an empty database and the following startup steps failed silently. It also ran a duplicate ad-hoc `CREATE INDEX` batch; those statements, the ad-hoc column-repair list and the second, conflicting `kv_store` definition are removed now that the chain owns them.
+- **The two systems can no longer disagree** — the Rust bootstrap records the canonical revision in `alembic_version`, so `alembic upgrade head` is a no-op on a desktop-bootstrapped database and applies the next revision normally. Both sides are guarded by tests: `packages/storage/tests/test_migrations.py` and `bootstrap_creates_every_object_the_desktop_requires` in `lib.rs`.
+- **Migrations run from the repository root** — `infra/migrations/env.py` and the SQLite `env.py` put their package roots on `sys.path` themselves and read the URL from `ALEMBIC_DB_URL` / `ALEMBIC_SQLITE_URL`, so `alembic -c infra/migrations/alembic.ini upgrade head` works without `cd infra/migrations` and without an editable install. The `alembic.ini` post-write hooks pointed at POSIX-only `.venv/bin` paths that do not exist on Windows and are removed.
+- **Autogenerate no longer proposes dropping `day_books`** — `DayBook`/`DayBookEntry` were missing from `infra/migrations/env.py`, so the tables were invisible to the model metadata.
+
 ## [1.3.3] — 2026-09-28
 
 ### Fixed — Search Freeze, Store Sync & Dashboard Tabs

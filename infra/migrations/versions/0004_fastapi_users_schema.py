@@ -100,6 +100,10 @@ def upgrade() -> None:
     # ------------------------------------------------------------------
     # 5. Create new users table with FastAPI Users integer PK schema
     # ------------------------------------------------------------------
+    # The temporary name is used only so the original table can be dropped
+    # without a long ALTER; the constraints are named explicitly because
+    # PostgreSQL derives their default names from the table name at creation
+    # time, which would leave them called "_users_new_*" after the rename.
     op.create_table(
         "_users_new",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -125,15 +129,42 @@ def upgrade() -> None:
         sa.Column("assigned_store_id", sa.String(length=36), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("email"),
-        sa.UniqueConstraint("username"),
+        sa.PrimaryKeyConstraint("id", name="users_pkey"),
+        sa.UniqueConstraint("email", name="users_email_key"),
+        sa.UniqueConstraint("username", name="users_username_key"),
     )
 
     # ------------------------------------------------------------------
     # 6. Rename into place and recreate indexes + outbound FK
     # ------------------------------------------------------------------
     op.rename_table("_users_new", "users")
+
+    # PostgreSQL 17+ registers every NOT NULL column as a named constraint, and
+    # those names are also derived from the table name at creation time. Rename
+    # anything still carrying the temporary prefix. The block is a no-op on
+    # PostgreSQL < 17, where no such constraints exist.
+    op.execute(
+        """
+        DO $$
+        DECLARE
+            c record;
+        BEGIN
+            FOR c IN
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid = 'users'::regclass
+                  AND conname LIKE '\\_users\\_new\\_%'
+            LOOP
+                EXECUTE format(
+                    'ALTER TABLE users RENAME CONSTRAINT %I TO %I',
+                    c.conname,
+                    replace(c.conname, '_users_new_', 'users_')
+                );
+            END LOOP;
+        END
+        $$;
+        """
+    )
 
     op.create_index("ix_users_username", "users", ["username"], unique=True)
     op.create_index("ix_users_assigned_store_id", "users", ["assigned_store_id"], unique=False)
@@ -179,7 +210,11 @@ def downgrade() -> None:
     op.drop_index("ix_users_assigned_store_id", table_name="users")
     op.drop_index("ix_users_username", table_name="users")
 
-    # Rebuild old UUID-based users table
+    # Rebuild old UUID-based users table.
+    # The replacement is created while `users` still exists, so its constraints
+    # must carry temporary names (a constraint's backing index shares its name
+    # and index names are schema-global in PostgreSQL). They are renamed to the
+    # 0001-era names after the old table is dropped.
     op.create_table(
         "_users_old",
         sa.Column("id", sa.String(length=36), nullable=False),
@@ -197,9 +232,9 @@ def downgrade() -> None:
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("username"),
-        sa.UniqueConstraint("email"),
+        sa.PrimaryKeyConstraint("id", name="_users_old_pkey"),
+        sa.UniqueConstraint("username", name="_users_old_username_key"),
+        sa.UniqueConstraint("email", name="_users_old_email_key"),
     )
 
     op.execute(
@@ -217,6 +252,31 @@ def downgrade() -> None:
 
     op.drop_table("users")
     op.rename_table("_users_old", "users")
+
+    # Mirror of the upgrade-side rename; see the comment there. Restores the
+    # constraint names that 0001 created.
+    op.execute(
+        """
+        DO $$
+        DECLARE
+            c record;
+        BEGIN
+            FOR c IN
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid = 'users'::regclass
+                  AND conname LIKE '\\_users\\_old\\_%'
+            LOOP
+                EXECUTE format(
+                    'ALTER TABLE users RENAME CONSTRAINT %I TO %I',
+                    c.conname,
+                    replace(c.conname, '_users_old_', 'users_')
+                );
+            END LOOP;
+        END
+        $$;
+        """
+    )
 
     op.create_index("ix_users_username", "users", ["username"], unique=True)
     op.create_index("ix_users_assigned_store_id", "users", ["assigned_store_id"], unique=False)

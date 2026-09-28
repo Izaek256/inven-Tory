@@ -1,6 +1,6 @@
 # <img src="https://res.cloudinary.com/dun3og1nu/image/upload/v1788902797/app-icon_fleogl.svg" alt="invenTory Logo" height="40" valign="middle"> invenTory
 
-> Offline-First, Multi-Store Inventory Management System — v1.3.3
+> Offline-First, Multi-Store Inventory Management System — v1.3.4
 
 [![CI](https://github.com/Izaek256/inven-Tory/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/Izaek256/inven-Tory/actions/workflows/ci.yml)
 [![Logo](https://img.shields.io/badge/logo-teal%20barcode-%23085041?logoWidth=12&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA1MTIgNTEyIj48cmVjdCB3aWR0aD0iNTEyIiBoZWlnaHQ9IjUxMiIgZmlsbD0iIzA4NTA0MSIvPjxwYXRoIGQ9Ik0xMjggMTI4aDMydjI1NmgtMzJ6bTY0IDBoMTZ2MjU2aC0xNnptNDQgMGgzMnYyNTZoLTMyem02NCAwaDE2djI1NmgtMTZ6bTQ0IDBoMzJ2MjU2aC0zMnoiIGZpbGw9IiNmZmYiLz48L3N2Zz4=)](https://res.cloudinary.com/dun3og1nu/image/upload/v1788902797/app-icon_fleogl.svg)
@@ -318,7 +318,9 @@ docker compose -f infra/docker/docker-compose.yml ps
 
 ### Step 7: Run Database Migrations
 
-There are **TWO separate Alembic migration chains** — one for the central PostgreSQL DB and one for the local SQLite DB. Run both **before** seeding.
+There are **TWO separate Alembic migration chains** — one for the central PostgreSQL DB and one for the local SQLite DB. Each database has exactly **one** source of truth. Run both **before** seeding.
+
+> All commands below are run from the **repository root** with the venv activated. No `cd` into a migrations directory is required.
 
 #### Option A: Migrations via Genesis Script (Recommended)
 
@@ -326,35 +328,28 @@ The Genesis bootstrap script (Step 8 below) has a `--run-migrations` flag that a
 
 #### Option B: Run Migrations Manually
 
-**Central PostgreSQL (Alembic config: `infra/migrations/alembic.ini`):**
+**Central PostgreSQL — `infra/migrations/alembic.ini`:**
+
 ```bash
-cd infra/migrations
-alembic upgrade head
-cd -
+export ALEMBIC_DB_URL="postgresql+asyncpg://user:pass@localhost:5432/inventory"
+
+alembic -c infra/migrations/alembic.ini upgrade head
+alembic -c infra/migrations/alembic.ini current
+alembic -c infra/migrations/alembic.ini heads
+alembic -c infra/migrations/alembic.ini history
 ```
 
-**Local SQLite (Alembic config: `packages/storage/storage/migrations/alembic.ini`):**
+**Local SQLite — `packages/storage/storage/migrations/alembic.ini`:**
 
-Option 1 — via the Python runner (recommended, same as Genesis uses):
 ```bash
-python -c "from storage.migrations.runner import run_migrations; run_migrations('sqlite:///packages/storage/inven_tory_local.db')"
+export ALEMBIC_SQLITE_URL="sqlite:///packages/storage/inven_tory_local.db"
+
+alembic -c packages/storage/storage/migrations/alembic.ini upgrade head
+alembic -c packages/storage/storage/migrations/alembic.ini current
+alembic -c packages/storage/storage/migrations/alembic.ini history
 ```
 
-Option 2 — via Alembic CLI directly:
-```bash
-cd packages/storage/storage/migrations
-alembic upgrade head
-cd -
-```
-
-For each chain, verify the migration status with:
-```bash
-# PostgreSQL
-cd infra/migrations && alembic current && cd -
-
-# SQLite
-cd packages/storage/storage/migrations && alembic current && cd -
-```
+Both commands are **idempotent** — running them again on an up-to-date database is a clean no-op.
 
 ### Step 8: Bootstrap Your First Admin Account (Genesis — Run ONCE)
 
@@ -417,48 +412,52 @@ xdg-open http://localhost:8000/docs   # Linux
 
 ## Database Migrations (Detailed Reference)
 
+Each database has **exactly one** migration chain. There is no second,
+hand-maintained system: no raw `.sql` scripts, and no schema logic hidden in
+application code.
+
+| Database | Canonical chain | Config file |
+|----------|-----------------|-------------|
+| Central PostgreSQL | `infra/migrations/versions/` | `infra/migrations/alembic.ini` |
+| Local SQLite (desktop) | `packages/storage/storage/migrations/versions/` | `packages/storage/storage/migrations/alembic.ini` |
+
+> The Tauri desktop app cannot run Alembic (it is a compiled Rust binary), so
+> `ensure_schema_tables()` in `apps/desktop/src-tauri/src/lib.rs` still
+> materialises the schema for a fresh install or a restored backup. It is a
+> bootstrap mirror of the SQLite chain — not a second source of truth — and it
+> records the canonical revision in `alembic_version` so the chain and the app
+> never disagree. Both sides are guarded by tests
+> (`packages/storage/tests/test_migrations.py` and
+> `bootstrap_creates_every_object_the_desktop_requires` in `lib.rs`).
+
 ### Central PostgreSQL Migrations (`infra/migrations/`)
 
 The central cloud API uses **Alembic** with async SQLAlchemy.
 
 | Path | Purpose |
 |------|---------|
-| `infra/migrations/alembic.ini` | Alembic config. Reads `DATABASE_URL` from env. |
-| `infra/migrations/env.py` | Async migration environment (imports `app.db.Base.metadata`). |
-| `infra/migrations/versions/` | Migration files (numbered sequentially). |
+| `infra/migrations/alembic.ini` | Alembic config. URL from `ALEMBIC_DB_URL`, then `DATABASE_URL`. |
+| `infra/migrations/env.py` | Async migration environment (imports every `app.models.*` so autogenerate sees the full metadata). |
+| `infra/migrations/versions/` | Migration files (single linear chain, one head). |
 
-**Current migration files:**
-| # | File | What it does |
-|---|------|--------------|
-| 0001 | `0001_initial_postgres_schema.py` | Core tables: users, stores, devices, products, stock_balances, inventory_transactions |
-| 0002 | `0002_ledger_tables.py` | Outbox/event-ledger infrastructure for sync |
-| 0003 | `0003_auth_consolidation.py` | Role + store assignment consolidation |
-| 0004 | `0004_fastapi_users_schema.py` | FastAPI-Users compatible columns (is_superuser, is_verified, etc.) |
-| 0005 | `0005_update_device_user_id_to_integer.py` | Device.user_id → Integer FK (alignment with int PKs) |
-
-**Common commands (run from `infra/migrations/` with `.venv` activated):**
+**Commands — run from the repository root:**
 
 ```bash
-# Apply all pending migrations
-alembic upgrade head
+export ALEMBIC_DB_URL="postgresql+asyncpg://user:pass@localhost:5432/inventory"
 
-# Apply one migration forward
-alembic upgrade +1
-
-# Roll back one migration
-alembic downgrade -1
-
-# Show current migration
-alembic current
-
-# Show migration history
-alembic history -v
-
-# Auto-generate a new migration (always review the output!)
-cd infra/migrations
-alembic revision --autogenerate -m "add_foo_bar_table"
-# Then inspect the generated file in versions/ before committing!
+alembic -c infra/migrations/alembic.ini upgrade head   # Apply all pending migrations
+alembic -c infra/migrations/alembic.ini upgrade +1    # Apply one migration forward
+alembic -c infra/migrations/alembic.ini downgrade -1  # Roll back one migration
+alembic -c infra/migrations/alembic.ini current       # Show the applied revision
+alembic -c infra/migrations/alembic.ini heads         # Show the head revision(s) — must be exactly one
+alembic -c infra/migrations/alembic.ini history       # Show the full revision chain
+alembic -c infra/migrations/alembic.ini revision --autogenerate -m "add_foo_bar_table"
+# Then inspect and edit the generated file in versions/ before committing!
 ```
+
+> **Never** use `alembic stamp` to reconcile a database. If a migration fails,
+> fix the migration. `stamp` marks revisions as applied without applying them
+> and silently leaves the schema wrong.
 
 > **Golden rule for schema changes:** Never modify existing quantity or balance columns directly. Always add **new transaction/event tables/columns** that append to the ledger. See `docs/architecture.md` for the event-ledger design principles.
 
@@ -470,36 +469,31 @@ The Tauri desktop app uses its own **separate Alembic** chain for the embedded S
 
 | Path | Purpose |
 |------|---------|
-| `packages/storage/storage/migrations/alembic.ini` | Alembic config for SQLite (set `sqlalchemy.url` here or pass via CLI/env). |
+| `packages/storage/storage/migrations/alembic.ini` | Alembic config. URL from `ALEMBIC_SQLITE_URL`, then `LOCAL_DATABASE_URL`. |
 | `packages/storage/storage/migrations/env.py` | Sync SQLite migration env (imports `storage.db.Base.metadata`). |
-| `packages/storage/storage/migrations/runner.py` | ★ Programmatic runner: `run_migrations(db_url)` — used by Genesis and desktop startup. |
+| `packages/storage/storage/migrations/runner.py` | Programmatic runner: `run_migrations(db_url)` — used by Genesis and the dev seeds. |
 | `packages/storage/storage/migrations/versions/` | Numbered SQLite-specific migration files. |
 
-**Current migration files:**
-| # | File | What it does |
-|---|------|--------------|
-| 0001 | `0001_initial_sqlite_schema.py` | Core tables mirroring PG (users, stores, products, transactions, devices) |
-| 0002 | `0002_drop_sqlite_password_column.py` | Removes obsolete password col; desktop uses pin_hash for bcrypt offline |
-| 0003 | `0003_change_user_id_to_integer.py` | Aligns user PK with central integer IDs |
-| 0004 | `0004_add_pin_hash_to_users.py` | Adds `pin_hash` bcrypt column for offline login |
-| 0005 | `0005_add_fts5_products.py` | SQLite FTS5 virtual table for full-text product search |
-
-**Common commands:**
+**Commands — run from the repository root:**
 
 ```bash
-# Option 1 — Programmatic runner (SAME as Genesis + app use — RECOMMENDED)
-python -c "from storage.migrations.runner import run_migrations; run_migrations('sqlite:///packages/storage/inven_tory_local.db')"
+export ALEMBIC_SQLITE_URL="sqlite:///packages/storage/inven_tory_local.db"
 
-# Option 2 — Alembic CLI
-cd packages/storage/storage/migrations
-alembic upgrade head          # Apply all
-alembic downgrade -1          # Rollback one
-alembic current               # Check status
-alembic revision --autogenerate -m "add_xxx"   # Generate new
-cd -
+alembic -c packages/storage/storage/migrations/alembic.ini upgrade head
+alembic -c packages/storage/storage/migrations/alembic.ini current
+alembic -c packages/storage/storage/migrations/alembic.ini history
+alembic -c packages/storage/storage/migrations/alembic.ini revision --autogenerate -m "add_xxx"
 ```
 
-> **Important:** When running Alembic CLI for SQLite, you must `cd` into the `packages/storage/storage/migrations/` directory first so the relative paths in `alembic.ini` resolve correctly. Alternatively, use the programmatic `run_migrations()` function which handles paths automatically.
+Programmatic equivalent, for callers that already depend on the storage package (Genesis, dev seeds, tests):
+
+```bash
+python -c "from storage.migrations.runner import run_migrations; run_migrations('sqlite:///packages/storage/inven_tory_local.db')"
+```
+
+> The `sqlalchemy.url` default in `alembic.ini` is relative to the working
+> directory, so always set `ALEMBIC_SQLITE_URL` (or `LOCAL_DATABASE_URL`) when
+> invoking from the repository root.
 
 ---
 
@@ -512,18 +506,20 @@ When you add/modify a model:
    - `packages/storage/storage/models/` (SQLite ORM)
    - Keep them structurally in sync (same columns, types, indexes — differences are intentional and documented, e.g. SQLite FTS5 vs. PG tsvector).
 
-2. **Generate and review BOTH migration chains:**
+2. **Generate and review BOTH migration chains**, from the repository root:
    ```bash
    # PostgreSQL
-   cd infra/migrations
-   alembic revision --autogenerate -m "describe_change_purpose"
+   alembic -c infra/migrations/alembic.ini revision --autogenerate -m "describe_change_purpose"
    # → Edit the generated file in versions/
 
    # SQLite
-   cd ../../packages/storage/storage/migrations
-   alembic revision --autogenerate -m "describe_change_purpose"
+   alembic -c packages/storage/storage/migrations/alembic.ini revision --autogenerate -m "describe_change_purpose"
    # → Edit the generated file
    ```
+
+   If you add a model class, add its import to `infra/migrations/env.py` too.
+   A model missing from that list is invisible to autogenerate, which will then
+   propose dropping the table its migration created.
 
 3. **Manually review** each auto-generated file. Alembic `--autogenerate` is a starting point, NOT a substitute for thought. Common issues it misses:
    - Renames (it sees DROP + ADD, not RENAME)
@@ -531,13 +527,10 @@ When you add/modify a model:
    - SQLite-specific restrictions (limited ALTER TABLE → use `batch_alter_table`)
    - FTS5 or other virtual-table statements
 
-4. **Apply and test both locally:**
+4. **Apply and test both locally**, from the repository root:
    ```bash
-   cd <repo root>
-   # PG
-   cd infra/migrations && alembic upgrade head && alembic current && cd -
-   # SQLite
-   python -c "from storage.migrations.runner import run_migrations; run_migrations('sqlite:///packages/storage/inven_tory_local.db')"
+   alembic -c infra/migrations/alembic.ini upgrade head && alembic -c infra/migrations/alembic.ini current
+   alembic -c packages/storage/storage/migrations/alembic.ini upgrade head && alembic -c packages/storage/storage/migrations/alembic.ini current
    ```
 
 5. **Run the test suite** to catch schema regressions.

@@ -9,7 +9,10 @@ before Alembic autogenerates or applies migrations.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from alembic import context
@@ -20,11 +23,25 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection
 
 # ---------------------------------------------------------------------------
-# Import every model so metadata is populated for autogenerate.
-# Add new model imports here as issues introduce new tables.
+# Make `alembic -c infra/migrations/alembic.ini ...` work from the repository
+# root, with or without the packages installed in editable mode.  The API
+# package lives at services/api, so it is put on sys.path explicitly instead of
+# relying on the caller's working directory.
 # ---------------------------------------------------------------------------
+_API_ROOT = Path(__file__).resolve().parents[2] / "services" / "api"
+if _API_ROOT.is_dir() and str(_API_ROOT) not in sys.path:
+    sys.path.insert(0, str(_API_ROOT))
+
+# ---------------------------------------------------------------------------
+# Import every model so metadata is populated for autogenerate.
+#
+# Every model MUST be imported. A model missing from this list is invisible to
+# autogenerate, which then proposes dropping the table its migration created.
+# ---------------------------------------------------------------------------
+# ruff: noqa: E402  — the sys.path bootstrap above must run before these imports
 from app.db import Base
 from app.models.audit_event import AuditEvent  # noqa: F401
+from app.models.day_book import DayBook, DayBookEntry  # noqa: F401
 from app.models.device import Device  # noqa: F401
 from app.models.inventory_transaction import InventoryTransaction  # noqa: F401
 from app.models.product import Product  # noqa: F401
@@ -47,8 +64,6 @@ target_metadata = Base.metadata
 
 def get_url() -> str:
     """Prefer ALEMBIC_DB_URL env var, fall back to alembic.ini value."""
-    import os
-
     return os.environ.get("ALEMBIC_DB_URL") or os.environ.get(
         "DATABASE_URL", config.get_main_option("sqlalchemy.url", "")
     )
