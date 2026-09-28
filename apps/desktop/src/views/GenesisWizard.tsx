@@ -734,7 +734,8 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                       style={{
                         display: 'flex',
                         gap: '6px',
-                        flexWrap: 'wrap',
+                        flexWrap: 'nowrap',
+                        whiteSpace: 'nowrap',
                       }}
                     >
                       {roles.map((r) => (
@@ -744,7 +745,8 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                           onClick={() => setRole(r.value)}
                           disabled={running}
                           style={{
-                            padding: '6px 12px',
+                            flex: '1 1 auto',
+                            padding: '6px 8px',
                             borderRadius: 'var(--it-r-sm)',
                             border: `1px solid ${role === r.value ? 'var(--amber)' : 'var(--it-border-strong)'}`,
                             background: role === r.value ? 'var(--amber-tint)' : 'var(--it-card)',
@@ -753,6 +755,7 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
                             fontSize: '12px',
                             fontWeight: 600,
                             cursor: running ? 'default' : 'pointer',
+                            whiteSpace: 'nowrap',
                           }}
                           data-testid={`genesis-role-${r.value}`}
                         >
