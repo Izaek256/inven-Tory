@@ -128,7 +128,7 @@ def _run_postgres_migrations(db_url: str) -> None:
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"],
         env=env,
-        cwd=str(REPO_ROOT / "services" / "api"),
+        cwd=str(REPO_ROOT),
     )
     if result.returncode != 0:
         raise RuntimeError("PostgreSQL migrations FAILED — see output above.")
