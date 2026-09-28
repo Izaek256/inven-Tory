@@ -219,11 +219,10 @@
   outline: none;
 }
 .store-tabs {
-  display: flex;
-  gap: 0;
+  display: inline-flex;
+  gap: 8px;
   overflow-x: auto;
-  border-bottom: 1px solid var(--it-border);
-  margin-bottom: 12px;
+  padding-bottom: 4px; /* space for scrollbar if needed */
   scrollbar-width: none;
 }
 .store-tabs::-webkit-scrollbar {
@@ -233,24 +232,33 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 16px;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--it-border);
+  border-radius: 10px;
+  background: var(--it-card);
   color: var(--it-text-secondary);
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
   flex-shrink: 0;
-  margin-bottom: -1px;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 .store-tab[aria-selected='true'],
 .store-tab--active {
-  color: var(--it-green-text);
-  border-bottom-color: var(--it-green);
+  background: var(--it-green);
+  border-color: var(--it-green);
+  color: #fff;
   font-weight: 600;
-  background: var(--it-green-surface);
+}
+.store-tab:not([aria-selected='true']):hover {
+  background: var(--it-surface);
+  border-color: var(--it-green-border);
+  color: var(--it-green-text);
 }
 /* Safety net for stores auto-provisioned by sync that are not yet registered. */
 .store-tab__pending {
@@ -264,6 +272,11 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
+}
+.store-tab[aria-selected='true'] .store-tab__pending {
+  border-color: rgba(255, 255, 255, 0.4);
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
 }
 /* Uniform tile row */
 .dash-tiles {

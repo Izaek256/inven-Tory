@@ -324,12 +324,15 @@ describe('DamageQuarantineView — Issue 10 Acceptance Criteria', (): void => {
       fireEvent.change(productCell, { target: { value: 'Sony' } });
     });
 
+    // 'Sony' matches the store-scoped list locally ("Sony 55 Inch TV" in the
+    // get_products_by_store fixture), so the local-hit fast path renders it
+    // without a backend round-trip (freeze fix: no IPC per keystroke).
     await waitFor((): void => {
-      expect(screen.getByTestId('search-result-PROD-001')).toBeInTheDocument();
+      expect(screen.getByTestId('search-result-PROD-TV-55')).toBeInTheDocument();
     });
 
     act((): void => {
-      fireEvent.click(screen.getByTestId('search-result-PROD-001'));
+      fireEvent.click(screen.getByTestId('search-result-PROD-TV-55'));
     });
 
     await waitFor((): void => {

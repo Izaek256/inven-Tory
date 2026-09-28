@@ -271,10 +271,21 @@ describe('SaleStockView — Issue 07 Acceptance Criteria (grid UI)', (): void =>
       expect(screen.getByTestId(`search-result-${MOCK_PRODUCT.id}`)).toBeInTheDocument();
     });
 
-    // Wait for the debounced backend search to fire (100ms debounce in SaleStockView.tsx)
+    // Local-hit fast path: the store-scoped list already contains the match,
+    // so no backend round-trip is scheduled (freeze fix — a fast typist never
+    // queues one IPC per keystroke).
+    expect(tauriProductService.searchProductsFts5).not.toHaveBeenCalled();
+
+    // A query the local list cannot match still reaches the backend.
+    act(() => {
+      fireEvent.change(productCell, { target: { value: 'Hisensezzz' } });
+    });
     await waitFor(
       () => {
-        expect(tauriProductService.searchProductsFts5).toHaveBeenCalledWith('His', 'STORE-A');
+        expect(tauriProductService.searchProductsFts5).toHaveBeenCalledWith(
+          'Hisensezzz',
+          'STORE-A',
+        );
       },
       { timeout: 1000 },
     );
