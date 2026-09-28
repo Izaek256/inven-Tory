@@ -4,6 +4,12 @@ All notable changes to invenTory are documented in this file. This project adher
 
 ## [Unreleased]
 
+## [1.3.4] — 2026-09-28
+
+### Fixed — Genesis First-Run Layout
+
+- **The first-run setup screen fills the window** — `.genesis-screen` now stretches (`flex: 1 1 auto`, `min-width: 0`, `width/height: 100%`) instead of being laid out against `min-height: 100vh`, which left the card off-centre and clipped on short windows; `.genesis-center` scrolls internally (`overflow-y: auto`, `min-height: 0`) and `.genesis-card` centres with `margin: auto`. The role-selector chips stay on one line (`flex-wrap: nowrap`, `flex: 1 1 auto`, tighter padding) so the wizard fits without horizontal overflow.
+
 ### Fixed — Database Migration System
 
 - **One source of truth per database** — `infra/migrations/` is the only migration system for the central PostgreSQL database and `packages/storage/storage/migrations/` the only one for local SQLite. `services/api/migrations/*.sql` (hand-applied `psql` scripts) is removed; the day-book tables it duplicated were already in the chain, and the tsvector column/indexes it created are now created by revision `0007_fts_and_composite_indexes`.
