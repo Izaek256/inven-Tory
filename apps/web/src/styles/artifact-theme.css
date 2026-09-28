@@ -859,9 +859,10 @@ select,
 }
 .store-tab[aria-selected='true'],
 .store-tab--active {
-  background: var(--it-amber-surface);
-  border-color: var(--amber);
-  color: var(--it-amber-text);
+  background: var(--it-card);
+  border: 1px solid var(--it-border);
+  border-bottom: 2px solid var(--amber);
+  color: var(--it-text-primary);
   font-weight: 600;
 }
 .store-tab:not([aria-selected='true']):hover {
@@ -869,23 +870,13 @@ select,
   border-color: var(--it-border-strong);
   color: var(--it-text-primary);
 }
-.store-tab__code {
-  width: 28px;
-  height: 28px;
-  border-radius: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--it-bg);
-  border: 1px solid var(--it-border);
-  font-weight: 700;
-  font-size: 11px;
-  font-family: var(--it-font-mono);
+.store-tab__icon {
+  flex-shrink: 0;
+  color: var(--it-text-secondary);
 }
-.store-tab[aria-selected='true'] .store-tab__code {
-  background: var(--amber);
-  border-color: var(--amber);
-  color: #241300;
+.store-tab[aria-selected='true'] .store-tab__icon,
+.store-tab--active .store-tab__icon {
+  color: var(--amber);
 }
 .store-tab__label {
   display: flex;

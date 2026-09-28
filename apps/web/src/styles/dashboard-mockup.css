@@ -252,21 +252,6 @@
   font-weight: 600;
   background: var(--it-green-surface);
 }
-.store-tab__code {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--it-gray-surface);
-  font-weight: 700;
-  font-size: 11px;
-}
-.store-tab[aria-selected='true'] .store-tab__code {
-  background: var(--it-green);
-  color: #fff;
-}
 /* Safety net for stores auto-provisioned by sync that are not yet registered. */
 .store-tab__pending {
   margin-left: 6px;
