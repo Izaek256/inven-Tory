@@ -650,35 +650,22 @@ fn ensure_day_books_tables(conn: &Connection) -> Result<(), String> {
     .map_err(|e| format!("Failed to create day_books tables: {}", e))
 }
 
-/// Ensure the kv_store table exists and has the updated_at column.
-/// This function should be called from any place that creates or uses kv_store.
-fn ensure_kv_store_table(conn: &Connection) -> Result<(), String> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS kv_store (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL,
-            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-        );",
-    )
-    .map_err(|e| format!("Failed to create kv_store table: {}", e))?;
-
-    // Migrate existing kv_store table if it doesn't have updated_at column
-    let has_updated_at: bool = conn
-        .query_row("SELECT COUNT(*) FROM pragma_table_info('kv_store') WHERE name='updated_at'", [], |row| row.get::<_, i32>(0).map(|c| c > 0))
-        .unwrap_or(false);
-    
-    if !has_updated_at {
-        eprintln!("[DB] Migrating kv_store table to add updated_at column");
-        let _ = conn.execute("ALTER TABLE kv_store ADD COLUMN updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP", []);
-    }
-    
-    Ok(())
-}
-
-
 pub mod commands {
     use super::*;
-// Genesis: ensure core schema tables exist (mirrors alembic 0001)
+
+/// Head revision of the canonical local-SQLite migration chain:
+/// `packages/storage/storage/migrations/versions/`.
+///
+/// That chain is the single source of truth for the local database schema.
+/// The functions below are the desktop app's bootstrap: a compiled Rust binary
+/// cannot run Alembic, so a fresh install (and a database restored from a
+/// backup) still has to materialise the schema here. They must stay in sync
+/// with the revisions named in CANONICAL_SCHEMA_REVISION; the tests at the
+/// bottom of this file and `packages/storage/tests/test_migrations.py` enforce
+/// it from both sides.
+pub(crate) const CANONICAL_SCHEMA_REVISION: &str = "0008_add_query_indexes";
+
+// Genesis: ensure core schema tables exist (mirrors alembic 0001 + 0007 + 0008)
 pub(crate) fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS stores (
@@ -710,7 +697,8 @@ pub(crate) fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), St
             full_name VARCHAR(255),
             role VARCHAR(50) NOT NULL DEFAULT 'STORE_CLERK',
             is_active BOOLEAN NOT NULL DEFAULT 1,
-            created_at DATETIME NOT NULL
+            created_at DATETIME NOT NULL,
+            assigned_store_id VARCHAR(36)
         );
         CREATE UNIQUE INDEX IF NOT EXISTS ix_users_username ON users (username);
 
@@ -739,6 +727,8 @@ pub(crate) fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), St
         CREATE INDEX IF NOT EXISTS ix_products_brand ON products (brand);
         CREATE INDEX IF NOT EXISTS ix_products_model ON products (model);
         CREATE INDEX IF NOT EXISTS ix_products_is_active ON products (is_active);
+        CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products (updated_at);
+        CREATE INDEX IF NOT EXISTS idx_stores_updated_at ON stores (updated_at);
 
         CREATE TABLE IF NOT EXISTS stock_balances (
             id VARCHAR(36) PRIMARY KEY,
@@ -851,32 +841,52 @@ pub(crate) fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), St
         CREATE INDEX IF NOT EXISTS idx_inv_tx_bucket_date ON inventory_transactions(stock_bucket, occurred_at);",
     ).map_err(|e| format!("Failed to create schema tables: {}", e))?;
 
-    // Migrate existing databases: add missing columns if they don't exist
-    let migrations: Vec<(&str, &str)> = vec![
-        ("inventory_transactions", "original_transaction_id VARCHAR(36)"),
-        ("outbox_events", "event_id VARCHAR(36)"),
-        ("outbox_events", "retry_count INTEGER NOT NULL DEFAULT 0"),
-        ("outbox_events", "next_attempt_at DATETIME"),
-        ("outbox_events", "last_error TEXT"),
-        ("kv_store", "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP"),
-    ];
-    for (table, col_def) in migrations {
-        let col_name = col_def.split_whitespace().next().unwrap_or("");
-        let check = format!("SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'", table, col_name);
-        let exists: bool = conn.query_row(&check, [], |row| row.get::<_, i32>(0)).map(|c| c > 0).unwrap_or(true);
-        if !exists {
-            let alter = format!("ALTER TABLE {} ADD COLUMN {}", table, col_def);
-            if let Err(e) = conn.execute_batch(&alter) {
-                eprintln!("[SCHEMA] migration warning for {}.{}: {}", table, col_name, e);
-            }
-        }
+    Ok(())
+}
+
+/// Record the canonical migration revision on a database this bootstrap built.
+///
+/// Without this the desktop app and the Alembic chain each believed they owned
+/// the schema: the app created the objects, and the chain still considered the
+/// database empty, so the next `alembic upgrade head` would have tried to run
+/// 0001 against tables that already existed. Stamping the revision the schema
+/// actually matches lets the canonical chain take over from the next revision
+/// on.
+///
+/// Safe to call repeatedly: the revision is written only when the version table
+/// is empty.
+///
+/// The stamp is sound because `ensure_schema_tables` has just created the full
+/// canonical schema, including the columns that 0001 added after the first
+/// release. The same guarded repairs are repeated in migration 0007 for
+/// legacy databases that were built by the Python side.
+pub(crate) fn stamp_canonical_revision(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS alembic_version (\
+            version_num VARCHAR(32) NOT NULL, \
+            CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))",
+    )
+    .map_err(|e| format!("Failed to create alembic_version: {}", e))?;
+
+    let already_stamped: bool = conn
+        .query_row("SELECT EXISTS(SELECT 1 FROM alembic_version)", [], |row| {
+            row.get::<_, i32>(0)
+        })
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if !already_stamped {
+        conn.execute(
+            "INSERT INTO alembic_version (version_num) VALUES (?1)",
+            [CANONICAL_SCHEMA_REVISION],
+        )
+        .map_err(|e| format!("Failed to stamp canonical revision: {}", e))?;
+        eprintln!(
+            "[DB] Stamped local schema at canonical revision {}",
+            CANONICAL_SCHEMA_REVISION
+        );
     }
-    // Remove completed_at if it exists (not in real schema)
-    let has_completed: bool = conn.query_row("SELECT COUNT(*) FROM pragma_table_info('outbox_events') WHERE name='completed_at'", [], |row| row.get::<_, i32>(0)).map(|c| c > 0).unwrap_or(false);
-    if has_completed {
-        // SQLite doesn't support DROP COLUMN in older versions, but we just ignore it
-        // The column won't be used by any queries
-    }
+
     Ok(())
 }
 
@@ -975,7 +985,8 @@ pub fn run_genesis(username: String, email: String, full_name: String, password:
     }
     // Clear any stale restore_completed flag from a previous restore
     let _ = conn.execute("DELETE FROM kv_store WHERE key = 'restore_completed'", []);
-    let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at); CREATE INDEX IF NOT EXISTS idx_inventory_tx_movement_date ON inventory_transactions(movement_type, occurred_at); CREATE INDEX IF NOT EXISTS idx_stock_balances_store_product ON stock_balances(store_id, product_id, stock_bucket); CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku); CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at); CREATE INDEX IF NOT EXISTS idx_stores_updated_at ON stores(updated_at);");
+    // Query indexes are created by ensure_schema_tables above (canonical
+    // revision 0008_add_query_indexes); no second, divergent copy here.
     let now = now_iso();
     let code_clean = store_code.trim().to_uppercase();
     let name_clean = store_name.trim().to_string();
@@ -1227,7 +1238,7 @@ fn do_restore(api_base_url: String, username: String, password: String, db_path:
 
     // Persist a flag so check_genesis_state knows restore completed successfully
     {
-        let _ = ensure_kv_store_table(&conn);
+        let _ = commands::ensure_schema_tables(&conn);
         let now = chrono::Utc::now().to_rfc3339();
         let _ = conn.execute(
             "INSERT OR REPLACE INTO kv_store (key, value, updated_at) VALUES ('restore_completed', 'true', ?1)",
@@ -4976,8 +4987,7 @@ pub fn apply_restore_background(
     pub fn get_last_sync_timestamp() -> Result<Option<String>, String> {
         let conn = get_conn()?;
 
-        // Ensure the kv_store table exists and has updated_at column
-        ensure_kv_store_table(&conn)?;
+        commands::ensure_schema_tables(&conn)?;
 
         let result: Option<String> = conn
             .query_row(
@@ -6481,7 +6491,7 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        ensure_kv_store_table(&conn)?;
+        commands::ensure_schema_tables(&conn)?;
 
         let today = chrono::Local::now().format("%Y-%m-%d").to_string();
 
@@ -6536,7 +6546,7 @@ pub fn apply_restore_background(
         let conn = Connection::open(&db_path)
             .map_err(|e| format!("Failed to open database: {}", e))?;
 
-        ensure_kv_store_table(&conn)?;
+        commands::ensure_schema_tables(&conn)?;
 
         let now = chrono::Utc::now().to_rfc3339();
         conn.execute(
@@ -6564,21 +6574,13 @@ pub fn run() {
             let _ = conn.pragma_update(None, "journal_mode", "WAL");
             let _ = conn.pragma_update(None, "busy_timeout", 5000);
 
-            // Idempotent hot-path indexes on the local ledger/catalogue tables
-            // so sync and day-book queries don't do full table scans.
-            let _ = conn.execute_batch(
-                "CREATE INDEX IF NOT EXISTS idx_outbox_status_created ON outbox_events(status, created_at); \
-                 CREATE INDEX IF NOT EXISTS idx_inventory_tx_movement_date ON inventory_transactions(movement_type, occurred_at); \
-                 CREATE INDEX IF NOT EXISTS idx_stock_balances_store_product ON stock_balances(store_id, product_id, stock_bucket); \
-                 CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku); \
-                 CREATE INDEX IF NOT EXISTS idx_products_name ON products(name); \
-                 CREATE INDEX IF NOT EXISTS idx_products_category ON products(category); \
-                 CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand); \
-                 CREATE INDEX IF NOT EXISTS idx_products_model ON products(model); \
-                 CREATE INDEX IF NOT EXISTS idx_products_is_active ON products(is_active); \
-                 CREATE INDEX IF NOT EXISTS idx_products_updated_at ON products(updated_at); \
-                 CREATE INDEX IF NOT EXISTS idx_stores_updated_at ON stores(updated_at);",
-            );
+            // Materialise the local schema on first launch. This used to be
+            // deferred to the first command that needed a table, which meant
+            // a fresh install started up against an empty database and logged
+            // failures for every other startup step below.
+            if let Err(e) = commands::ensure_schema_tables(&conn) {
+                eprintln!("[TAURI-LOG] Warning: Failed to initialize local schema: {}", e);
+            }
 
             if let Err(e) = ensure_day_books_tables(&conn) {
                 eprintln!("[TAURI-LOG] Warning: Failed to initialize day_books tables: {}", e);
@@ -6602,6 +6604,12 @@ pub fn run() {
                     "[SEARCH-TIMING] ensure_products_fts (startup) took {}ms",
                     t_fts.elapsed().as_millis()
                 );
+            }
+
+            // The schema now matches the canonical migration chain; record the
+            // revision so Alembic does not try to replay 0001-0008 over it.
+            if let Err(e) = commands::stamp_canonical_revision(&conn) {
+                eprintln!("[TAURI-LOG] Warning: Failed to stamp schema revision: {}", e);
             }
         }
     }
@@ -6691,7 +6699,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use crate::{commands, get_conn};
+    use crate::{commands, ensure_day_books_tables, get_conn};
     use rusqlite::params;
     use std::sync::mpsc;
     use std::thread;
@@ -6820,6 +6828,105 @@ mod tests {
             p95,
             NO_MATCH_P95_BUDGET_MS
         );
+    }
+
+    /// Every table the desktop app writes to but which no migration used to
+    /// declare, plus the column the cloud-restore path INSERTs into.
+    ///
+    /// This bootstrap is the desktop app's copy of
+    /// `0007_reconcile_desktop_schema`; the Python test
+    /// `test_migrations.py::test_local_schema_covers_desktop_runtime_objects`
+    /// asserts the same list against the canonical chain. Both must pass.
+    const DESKTOP_SCHEMA_OBJECTS: &[(&str, &str)] = &[
+        // (object name, object type)
+        ("kv_store", "table"),
+        ("day_books", "table"),
+        ("day_book_entries", "table"),
+        ("daily_stock_snapshot", "table"),
+        ("trg_daily_stock_snapshot_ins", "trigger"),
+        ("trg_daily_stock_snapshot_upd", "trigger"),
+    ];
+
+    #[test]
+    fn bootstrap_creates_every_object_the_desktop_requires() {
+        let dir = std::env::temp_dir().join(format!("inven_tory_schema_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = dir.join("schema_test.db");
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", db_path.display(), suffix));
+        }
+
+        let conn = rusqlite::Connection::open(&db_path).expect("open scratch db");
+        commands::ensure_schema_tables(&conn).expect("bootstrap schema");
+        ensure_day_books_tables(&conn).expect("day books");
+        commands::backfill_daily_stock_snapshot(&conn).expect("snapshot backfill");
+        commands::ensure_products_fts(&conn).expect("products fts");
+        commands::stamp_canonical_revision(&conn).expect("stamp revision");
+
+        for (name, kind) in DESKTOP_SCHEMA_OBJECTS {
+            let found: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE name = ?1 AND type = ?2)",
+                    params![name, kind],
+                    |row| row.get::<_, i32>(0),
+                )
+                .map(|c| c > 0)
+                .unwrap_or(false);
+            assert!(found, "bootstrap did not create {} {}", kind, name);
+        }
+
+        // users.assigned_store_id is written by apply_restore_critical; before
+        // the reconciliation that INSERT failed with "no such column" and the
+        // error was discarded, so restores silently dropped every user.
+        let has_column: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM pragma_table_info('users') WHERE name = 'assigned_store_id')",
+                [],
+                |row| row.get::<_, i32>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+        assert!(has_column, "users.assigned_store_id is missing");
+
+        // The snapshot triggers must actually fire, not merely exist.
+        conn.execute(
+            "INSERT INTO stores (id, code, name, is_active, created_at, updated_at)
+             VALUES ('S-SCHEMA', 'SCHEMA', 'Schema', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("seed store");
+        conn.execute(
+            "INSERT INTO products (id, sku, name, category, unit, is_active, created_at, updated_at)
+             VALUES ('P-SCHEMA', 'SKU-SCHEMA', 'Schema Widget', 'Cat', 'pcs', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("seed product");
+        conn.execute(
+            "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at)
+             VALUES ('B-SCHEMA', 'S-SCHEMA', 'P-SCHEMA', 'AVAILABLE', 11, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("seed balance");
+        let snapshot: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM daily_stock_snapshot WHERE product_id = 'P-SCHEMA'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        assert_eq!(snapshot, 1, "snapshot trigger did not maintain daily_stock_snapshot");
+
+        // The bootstrap must record the revision the canonical chain is at, so
+        // `alembic upgrade head` does not replay 0001-0008 over this database.
+        let stamped: String = conn
+            .query_row("SELECT version_num FROM alembic_version", [], |row| row.get(0))
+            .expect("alembic_version row");
+        assert_eq!(stamped, commands::CANONICAL_SCHEMA_REVISION);
+
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", db_path.display(), suffix));
+        }
+        let _ = std::fs::remove_dir(&dir);
     }
 }
 

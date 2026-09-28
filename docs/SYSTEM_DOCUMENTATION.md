@@ -802,12 +802,33 @@ erDiagram
 
 **Migrations and Versioning**
 
-| Database             | Migration Tool                       | Config Path                                                                    | Version Chain                                                                                                                                                                                    | Latest Known   |
-| -------------------- | ------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- |
-| PostgreSQL (central) | Alembic (async)                      | `infra/migrations/alembic.ini` + `env.py` + `infra/migrations/versions/` | 0001 initial schema → 0002 ledger tables → 0003 auth consolidation → 0004 fastapi-users schema → 0005 device user_id int → 0006 drop transfer FK →`20260917_2027_bdecea2c1d35` day books | 7 files listed |
-| SQLite (local)       | Alembic (sync) + programmatic runner | `packages/storage/storage/migrations/alembic.ini` + `runner.py`            | 0001 initial sqlite schema → 0002 drop password column → 0003 change user_id to integer → 0004 add pin_hash → 0005 add FTS5 products                                                         | 5 files listed |
+Each database has exactly one canonical migration chain. There is no parallel raw-SQL migration directory and no schema logic living in application code.
 
-Application of migrations is via `alembic upgrade head` or, for SQLite, the programmatic `run_migrations(db_url)` helper used by Genesis and desktop startup. Schema changes follow the non-negotiable rule: new behaviour is added as new tables/columns and new transaction events, not by rewriting quantity columns.
+| Database             | Migration Tool                       | Config Path                                                                    | Version Chain                                                                                                                                                                                                                                                                                                                                              | Head              |
+| -------------------- | ------------------------------------ | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| PostgreSQL (central) | Alembic (async)                      | `infra/migrations/alembic.ini` + `env.py` + `infra/migrations/versions/` | 0001 initial schema → 0002 ledger tables → 0003 auth consolidation → 0004 fastapi-users schema → 0005 device user_id int → 0006 drop transfer FK → `bdecea2c1d35` day books → 0007 fts + composite indexes                                                | `0007_fts_and_composite_indexes` |
+| SQLite (local)       | Alembic (sync) + programmatic runner | `packages/storage/storage/migrations/alembic.ini` + `runner.py`            | 0001 initial sqlite schema → 0002 drop password column → 0003 change user_id to integer → 0004 add pin_hash → 0005 add FTS5 products → 0006 fix FTS5 triggers → 0007 reconcile desktop schema → 0008 add query indexes | `0008_add_query_indexes` |
+
+Both chains are linear and have exactly one head. All commands run from the repository root:
+
+```bash
+# PostgreSQL (URL from ALEMBIC_DB_URL, then DATABASE_URL)
+alembic -c infra/migrations/alembic.ini upgrade head
+alembic -c infra/migrations/alembic.ini current
+alembic -c infra/migrations/alembic.ini heads
+alembic -c infra/migrations/alembic.ini history
+
+# Local SQLite (URL from ALEMBIC_SQLITE_URL, then LOCAL_DATABASE_URL)
+alembic -c packages/storage/storage/migrations/alembic.ini upgrade head
+alembic -c packages/storage/storage/migrations/alembic.ini current
+alembic -c packages/storage/storage/migrations/alembic.ini history
+```
+
+For SQLite there is also the programmatic `run_migrations(db_url)` helper used by Genesis and the dev seeds; it is the same chain, invoked in-process.
+
+The Tauri desktop app is a compiled Rust binary and cannot run Alembic, so `ensure_schema_tables()` in `apps/desktop/src-tauri/src/lib.rs` materialises the local schema at startup for a fresh install or a restored backup. It mirrors the SQLite chain rather than replacing it and records the canonical revision in `alembic_version`, so `alembic upgrade head` is a clean no-op on a desktop-bootstrapped database and picks up normally from the next revision. The two sides are kept in agreement by tests on both: `packages/storage/tests/test_migrations.py` and `bootstrap_creates_every_object_the_desktop_requires`.
+
+Schema changes follow the non-negotiable rule: new behaviour is added as new tables/columns and new transaction events, not by rewriting quantity columns. `alembic stamp` is never used to reconcile a database; a failing migration is fixed, not stamped over.
 
 **Retention**
 
@@ -1557,7 +1578,7 @@ inven-Tory/
 │   └── api/                  # FastAPI central API — app/api/v1/, app/auth/, app/core/, app/models/, app/services/, app/db.py, app/main.py
 ├── infra/
 │   ├── docker/               # docker-compose.yml, Dockerfile.api
-│   ├── migrations/           # Alembic PG migrations — versions/0001..0006 + day_books migration
+│   ├── migrations/           # Canonical Alembic PG migration chain — versions/0001..0007 (single head)
 │   └── seed/                 # genesis_single_user.py + dev_only/seed_central_postgres.py + seed_local_sqlite.py
 ├── docs/
 │   └── architecture.md       # Source-of-truth summary (SRS §7)

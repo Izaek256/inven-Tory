@@ -7,13 +7,19 @@ from pathlib import Path
 from alembic import command
 from alembic.config import Config
 
+#: Head of the canonical local-SQLite migration chain.
+HEAD = "head"
 
-def run_migrations(db_url: str = "sqlite:///inven_tory_local.db") -> None:
+
+def run_migrations(db_url: str = "sqlite:///inven_tory_local.db", revision: str = HEAD) -> None:
     """
     Run Alembic migrations programmatically against the specified database URL.
 
     This operation is idempotent: if the database is already migrated to head,
     Alembic will perform a no-op cleanly.
+
+    ``revision`` defaults to the chain head. Pass a specific revision id to stop
+    part-way (used by tests that assert a database can migrate forward later).
     """
     migrations_dir = Path(__file__).parent
     ini_path = migrations_dir / "alembic.ini"
@@ -22,4 +28,4 @@ def run_migrations(db_url: str = "sqlite:///inven_tory_local.db") -> None:
     config.set_main_option("script_location", str(migrations_dir))
     config.set_main_option("sqlalchemy.url", db_url)
 
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)

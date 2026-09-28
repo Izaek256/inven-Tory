@@ -122,7 +122,7 @@ def run_migrations(db_url: str) -> None:
     result = subprocess.run(
         [sys.executable, "-m", "alembic", "-c", str(alembic_ini), "upgrade", "head"],
         env=env,
-        cwd=str(repo_root / "services" / "api"),
+        cwd=str(repo_root),
     )
     if result.returncode != 0:
         raise RuntimeError("Alembic migrations failed — check the output above.")
