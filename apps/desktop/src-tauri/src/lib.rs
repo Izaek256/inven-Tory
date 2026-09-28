@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, OnceLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Utc};
 
 /// Process-wide shared SQLite connection used by hot read commands.
@@ -679,7 +679,7 @@ fn ensure_kv_store_table(conn: &Connection) -> Result<(), String> {
 pub mod commands {
     use super::*;
 // Genesis: ensure core schema tables exist (mirrors alembic 0001)
-fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
+pub(crate) fn ensure_schema_tables(conn: &rusqlite::Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS stores (
             id VARCHAR(36) PRIMARY KEY,
@@ -933,7 +933,7 @@ fn check_genesis_state_internal(db_path: &std::path::Path) -> GenesisState {
     GenesisState { ready, has_user_with_pin: has_user_with_pin || has_any_user, has_any_store, has_tables }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn check_genesis_state() -> GenesisState {
     let db_path = get_db_path();
     check_genesis_state_internal(&db_path)
@@ -1687,7 +1687,7 @@ pub fn apply_restore_background(
         })
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_stores() -> Result<Vec<Store>, String> {
         let conn = get_conn()?;
 
@@ -1917,7 +1917,7 @@ pub fn apply_restore_background(
     /// is computed ONLY from that store's AVAILABLE balances, so per-store
     /// quantities still reflect that store's own stock; a missing balance row
     /// simply reads as 0 and is created on demand by the first stock operation.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_products_by_store(store_id: String) -> Result<Vec<Product>, String> {
         let conn = get_conn()?;
 
@@ -1968,13 +1968,13 @@ pub fn apply_restore_background(
         Ok(products)
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_products() -> Result<Vec<Product>, String> {
         get_products_paginated(None, None, None)
     }
 
     /// Get products with optional pagination. If limit/offset are None, returns all products.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_products_paginated(
         limit: Option<i32>,
         offset: Option<i32>,
@@ -2034,7 +2034,7 @@ pub fn apply_restore_background(
         Ok(products)
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_products_count(category: Option<String>) -> Result<i32, String> {
         let conn = get_conn()?;
 
@@ -2050,7 +2050,7 @@ pub fn apply_restore_background(
     }
 
     /// Distinct product categories, for the products-view category filter.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_product_categories() -> Result<Vec<String>, String> {
         let conn = get_conn()?;
 
@@ -2074,13 +2074,16 @@ pub fn apply_restore_background(
         Ok(categories)
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn search_products(
         query: String,
         store_id: Option<String>,
         category: Option<String>,
     ) -> Result<Vec<Product>, String> {
+        let t_start = Instant::now();
+        let t_acq = Instant::now();
         let conn = get_conn()?;
+        let acq_ms = t_acq.elapsed().as_millis();
 
         let term = query.trim().to_lowercase();
         if term.is_empty() {
@@ -2088,6 +2091,7 @@ pub fn apply_restore_background(
         }
 
         // Try FTS5 first for better performance on large datasets
+        let t_fts = Instant::now();
         let fts_result = (|| -> Result<Vec<Product>, String> {
             // Check if FTS5 table exists
             let exists: bool = conn
@@ -2168,13 +2172,51 @@ pub fn apply_restore_background(
             Ok(products)
         })();
 
+        let fts_ms = t_fts.elapsed().as_millis();
         if let Ok(products) = fts_result {
             if !products.is_empty() {
+                eprintln!(
+                    "[SEARCH-TIMING] search_products query={:?} acquire={}ms fts={}ms like=0ms total={}ms",
+                    query,
+                    acq_ms,
+                    fts_ms,
+                    t_start.elapsed().as_millis()
+                );
                 return Ok(products);
             }
         }
 
-        // Fallback to LIKE query if FTS5 returned 0 results or encountered an issue
+        // Fallback to substring LIKE query if FTS5 returned 0 results or encountered an issue
+        let t_like = Instant::now();
+        let products = search_products_like(&conn, &query, store_id, category)?;
+        eprintln!(
+            "[SEARCH-TIMING] search_products query={:?} acquire={}ms fts={}ms like={}ms total={}ms",
+            query,
+            acq_ms,
+            fts_ms,
+            t_like.elapsed().as_millis(),
+            t_start.elapsed().as_millis()
+        );
+        Ok(products)
+    }
+
+    /// LIKE-only product search over an already-held connection.
+    ///
+    /// Extracted from `search_products` so the FTS5-miss fallback in
+    /// `search_products_fts5` can run the substring scan without releasing and
+    /// re-acquiring the process-wide DB mutex (std::sync::Mutex is not
+    /// reentrant — the original self-deadlock) and without repeating the FTS5
+    /// query + sqlite_master existence check on every keystroke.
+    pub(crate) fn search_products_like(
+        conn: &Connection,
+        query: &str,
+        store_id: Option<String>,
+        category: Option<String>,
+    ) -> Result<Vec<Product>, String> {
+        let term = query.trim().to_lowercase();
+        if term.is_empty() {
+            return Ok(Vec::new());
+        }
         let like_term = format!("%{}%", term);
         let mut stmt = conn
             .prepare(
@@ -2870,7 +2912,7 @@ pub fn apply_restore_background(
 
     /// Query current AVAILABLE balance for a product in a store (Section 9.4).
     /// Used by the UI to display and validate against real local stock before committing a sale.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_stock_balance(store_id: String, product_id: String) -> Result<i32, String> {
         let conn = get_conn()?;
 
@@ -3040,7 +3082,7 @@ pub fn apply_restore_background(
     }
 
     /// Query stock balance for a specific bucket (AVAILABLE, DAMAGED, QUARANTINE).
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_stock_balance_for_bucket(
         store_id: String,
         product_id: String,
@@ -3065,7 +3107,7 @@ pub fn apply_restore_background(
     /// authoritative stock_balances projection rather than replaying transaction deltas
     /// from zero — which would be wrong if stock was seeded via server sync pulls
     /// (upsert_stock_balance_from_server) without a corresponding local transaction row.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_stock_balances_for_store(
         store_id: String,
     ) -> Result<Vec<serde_json::Value>, String> {
@@ -3468,7 +3510,7 @@ pub fn apply_restore_background(
         ])
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_transfers() -> Result<Vec<Transfer>, String> {
         let conn = get_conn()?;
 
@@ -3502,7 +3544,7 @@ pub fn apply_restore_background(
         Ok(transfers)
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_local_transactions() -> Result<Vec<InventoryTransaction>, String> {
         let conn = get_conn()?;
 
@@ -4448,7 +4490,7 @@ pub fn apply_restore_background(
         Ok(path_str)
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_pending_outbox_count() -> Result<i32, String> {
         println!("[TAURI-SYNC] get_pending_outbox_count called");
         
@@ -4476,7 +4518,7 @@ pub fn apply_restore_background(
     /// with a past or null next_attempt_at), ordered by created_at ASC.
     /// The sync worker reads these, posts them to /api/v1/sync/push, then calls
     /// update_outbox_event_status to advance each event's state.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_pending_outbox_events(
         limit: Option<i32>,
         force: Option<bool>,
@@ -5427,7 +5469,8 @@ pub fn apply_restore_background(
     /// Ensure the products_fts FTS5 virtual table and its sync triggers exist.
     /// Lazily creates them on first search if the Python Alembic migration hasn't
     /// run in this database yet (Tauri/desktop context).
-    fn ensure_products_fts(conn: &Connection) -> Result<(), String> {
+    pub(crate) fn ensure_products_fts(conn: &Connection) -> Result<(), String> {
+        let t_start = Instant::now();
         // Check if the FTS5 table already exists
         let exists: bool = conn
             .query_row(
@@ -5455,11 +5498,26 @@ pub fn apply_restore_background(
                 )
                 .unwrap_or_default();
             if !ad_sql.contains("'delete'") {
-create_fts_triggers(conn)?;
+                create_fts_triggers(conn)?;
                 conn.execute_batch("INSERT INTO products_fts(products_fts) VALUES ('rebuild');")
                     .map_err(|e| format!("Failed to rebuild products_fts: {}", e))?;
+                eprintln!(
+                    "[SEARCH-TIMING] ensure_products_fts repaired triggers + REBUILD took {}ms",
+                    t_start.elapsed().as_millis()
+                );
             } else if fts_count == 0 && prod_count > 0 {
                 let _ = conn.execute_batch("INSERT INTO products_fts(products_fts) VALUES ('rebuild');");
+                eprintln!(
+                    "[SEARCH-TIMING] ensure_products_fts empty-index REBUILD took {}ms",
+                    t_start.elapsed().as_millis()
+                );
+            } else {
+                eprintln!(
+                    "[SEARCH-TIMING] ensure_products_fts exists-check (fts={} products={}) took {}ms",
+                    fts_count,
+                    prod_count,
+                    t_start.elapsed().as_millis()
+                );
             }
             return Ok(());
         }
@@ -5485,20 +5543,31 @@ create_fts_triggers(conn)?;
         conn.execute_batch("INSERT INTO products_fts(products_fts) VALUES ('rebuild');")
             .map_err(|e| format!("Failed to rebuild products_fts: {}", e))?;
 
+        eprintln!(
+            "[SEARCH-TIMING] ensure_products_fts CREATED + REBUILD took {}ms",
+            t_start.elapsed().as_millis()
+        );
         Ok(())
     }
 
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn search_products_fts5(query: String, store_id: Option<String>) -> Result<Vec<Product>, String> {
+        let t_start = Instant::now();
+        let t_acq = Instant::now();
         let conn = get_conn()?;
+        let acq_ms = t_acq.elapsed().as_millis();
 
         let term = query.trim();
         if term.is_empty() {
             return Ok(Vec::new());
         }
 
-        // Lazily create/verify the FTS5 table
-        let _ = ensure_products_fts(&conn);
+        // The FTS5 index is built/repaired ONCE at startup (see run()), never
+        // per search: the old per-keystroke ensure_products_fts ran a
+        // sqlite_master lookup + 2x count(*) (and, while triggers were broken,
+        // a full 'rebuild') under the global DB mutex on every keystroke.
+        // If products_fts is somehow missing mid-session, the LIKE fallback
+        // below still returns correct results until the next startup rebuilds it.
 
         // Build tokenized prefix query for FTS5 (e.g. "His"* "260"*)
         let tokens: Vec<String> = term
@@ -5509,6 +5578,7 @@ create_fts_triggers(conn)?;
 
         if !tokens.is_empty() {
             let fts_query = tokens.join(" ");
+            let t_fts = Instant::now();
             let fts_result = (|| -> Result<Vec<Product>, String> {
                 let mut stmt = conn
                     .prepare(
@@ -5564,18 +5634,36 @@ create_fts_triggers(conn)?;
                 Ok(products)
             })();
 
+            let fts_ms = t_fts.elapsed().as_millis();
             if let Ok(products) = fts_result {
                 if !products.is_empty() {
+                    eprintln!(
+                        "[SEARCH-TIMING] fts5 query={:?} acquire={}ms fts={}ms like=0ms total={}ms",
+                        query,
+                        acq_ms,
+                        fts_ms,
+                        t_start.elapsed().as_millis()
+                    );
                     return Ok(products);
                 }
             }
         }
 
-        // Fallback to substring LIKE query if FTS5 returned 0 results or encountered an issue
-        // Drop the connection guard before calling search_products to avoid self-deadlock
-        // (search_products also calls get_conn() and std::sync::Mutex is not reentrant)
-        drop(conn);
-        search_products(query, store_id, None)
+        // Fallback to substring LIKE query if FTS5 returned 0 results or
+        // encountered an issue. Uses the LIKE-only helper on the *already
+        // held* connection: no mutex re-acquire (std::sync::Mutex is not
+        // reentrant — PR #73's drop(conn) workaround), no second FTS5 attempt
+        // and no sqlite_master re-check per keystroke.
+        let t_fallback = Instant::now();
+        let products = search_products_like(&conn, &query, store_id, None)?;
+        eprintln!(
+            "[SEARCH-TIMING] fts5 query={:?} acquire={}ms fts=MISS like_fallback={}ms total={}ms",
+            query,
+            acq_ms,
+            t_fallback.elapsed().as_millis(),
+            t_start.elapsed().as_millis()
+        );
+        Ok(products)
     }
 
     // ============================================================================
@@ -5590,7 +5678,7 @@ create_fts_triggers(conn)?;
     /// round-trip, doing the aggregation in SQL. Store scope (the active store,
     /// when set) restricts every query with `store_id = ...` exactly like the
     /// old JS-side filtering did.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn get_dashboard_analytics(
         store_id: Option<String>,
         start_date: String,
@@ -6204,7 +6292,7 @@ create_fts_triggers(conn)?;
     }
 
     /// List all local backup files in the backup directory.
-    #[tauri::command]
+    #[tauri::command(async)]
     pub fn list_local_backups() -> Result<Vec<serde_json::Value>, String> {
         use std::fs;
 
@@ -6501,6 +6589,20 @@ pub fn run() {
             if let Err(e) = commands::backfill_daily_stock_snapshot(&conn) {
                 eprintln!("[TAURI-LOG] Warning: Failed to backfill daily stock snapshot: {}", e);
             }
+
+            // Build/repair the FTS5 product index ONCE here, at startup —
+            // never inside the per-keystroke search command. While triggers
+            // were broken this ran a full index REBUILD under the global DB
+            // mutex on every keystroke, freezing the window during fast typing.
+            let t_fts = Instant::now();
+            if let Err(e) = commands::ensure_products_fts(&conn) {
+                eprintln!("[TAURI-LOG] Warning: Failed to ensure products_fts: {}", e);
+            } else {
+                eprintln!(
+                    "[SEARCH-TIMING] ensure_products_fts (startup) took {}ms",
+                    t_fts.elapsed().as_millis()
+                );
+            }
         }
     }
 
@@ -6589,38 +6691,135 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use crate::commands::search_products_fts5;
+    use crate::{commands, get_conn};
+    use rusqlite::params;
+    use std::sync::mpsc;
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    /// Regression test for Issue #7: search_products_fts5 self-deadlock.
+    /// Seeded catalogue size for the search regression test.
+    const SEEDED_PRODUCTS: u32 = 5_000;
+    /// Agreed budget: p95 latency of a no-match (typo) search over the seeded
+    /// 5,000-product catalogue must stay under this bound. Measured after the
+    /// main-thread/ensure/FTS-retry fixes; CI machines get ~10x headroom over
+    /// the observed p95.
+    const NO_MATCH_P95_BUDGET_MS: u128 = 250;
+
+    /// Create a throwaway schema + 5k-product catalogue and build the FTS
+    /// index once, exactly the way the app does at startup.
+    fn seed_catalogue() {
+        let conn = get_conn().expect("open test db");
+        commands::ensure_schema_tables(&conn).expect("schema");
+        conn.execute(
+            "INSERT OR IGNORE INTO stores (id, code, name, is_active, created_at, updated_at)
+             VALUES ('STORE-TEST', 'ST01', 'Test Store', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .expect("seed store");
+        {
+            let tx = conn.unchecked_transaction().expect("seed transaction");
+            for i in 1..=SEEDED_PRODUCTS {
+                let id = format!("PROD-{:05}", i);
+                tx.execute(
+                    "INSERT INTO products (id, sku, name, category, unit, is_active, created_at, updated_at)
+                     VALUES (?1, ?2, ?3, ?4, 'pcs', 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                    params![
+                        id,
+                        format!("SKU-{:05}", i),
+                        format!("Widget Model Alpha {} Blue", i),
+                        format!("Category-{}", i % 50),
+                    ],
+                )
+                .expect("seed product");
+                tx.execute(
+                    "INSERT INTO stock_balances (id, store_id, product_id, stock_bucket, quantity, updated_at)
+                     VALUES (?1, 'STORE-TEST', ?2, 'AVAILABLE', 7, '2026-01-01T00:00:00Z')",
+                    params![format!("SB-{:05}", i), id],
+                )
+                .expect("seed stock");
+            }
+            tx.commit().expect("commit seed");
+        }
+        commands::ensure_products_fts(&conn).expect("build fts index");
+    }
+
+    /// One search, timed. Returns (query, returned-empty-as-expected, elapsed ms).
+    fn timed_search(query: &str) -> (String, bool, u128) {
+        let t = Instant::now();
+        let res = commands::search_products_fts5(query.to_string(), None);
+        let ms = t.elapsed().as_millis();
+        let ok = matches!(&res, Ok(v) if v.is_empty());
+        (query.to_string(), ok, ms)
+    }
+
+    /// Regression test for Issue #7: fast typing / typos must never freeze the
+    /// app — neither by self-deadlock (PR #73: `drop(conn)` before the LIKE
+    /// fallback) nor by exceeding the latency budget (this PR: search commands
+    /// moved off the main thread, `ensure_products_fts` runs once at startup,
+    /// LIKE fallback no longer re-locks / re-runs FTS).
     ///
-    /// When the query produces 0 FTS5 tokens (e.g. "/", "-", "." which the
-    /// tokenizer strips to nothing), search_products_fts5 would fall through
-    /// to search_products while still holding the DB mutex, causing a
-    /// permanent self-deadlock on the same thread (std::sync::Mutex is not
-    /// reentrant). This test calls search_products_fts5 with a no-token query
-    /// and asserts it returns Ok(...) within a timeout instead of hanging.
+    /// The queries run on a worker thread and are reported back over an
+    /// mpsc channel with `recv_timeout(5s)` so a hang FAILS the test instead
+    /// of blocking CI forever.
     #[test]
-    fn search_products_fts5_no_token_query_does_not_deadlock() {
-        // Use a timeout to catch deadlocks — if the test hangs, the join
-        // will time out and fail instead of blocking CI forever.
-        let handle = thread::spawn(|| {
-            // "/" produces no alphanumeric tokens → FTS5 returns 0 rows,
-            // triggering the fallback to search_products.
-            let result = search_products_fts5("/".to_string(), None);
-            assert!(result.is_ok(), "search_products_fts5 should return Ok, got: {:?}", result);
-            // Should return empty vec, not hang
-            let products = result.unwrap();
-            assert!(products.is_empty(), "expected empty product list for no-token query");
+    fn search_typo_burst_does_not_deadlock_and_p95_stays_in_budget() {
+        // Point the process-wide DB singleton at a throwaway file BEFORE the
+        // first get_conn() call so the test never touches a real user database.
+        let dir = std::env::temp_dir().join(format!("inven_tory_search_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let db_path = dir.join("search_test.db");
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{}", db_path.display(), suffix));
+        }
+        std::env::set_var("INVEN_TORY_DB_PATH", &db_path);
+
+        seed_catalogue();
+
+        // GUI repro sequence: "/" (0 FTS5 tokens), then a burst of typo
+        // queries that all miss, then a known-hit sanity query.
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            let mut rows = Vec::new();
+            rows.push(timed_search("/"));
+            for i in 0..20 {
+                rows.push(timed_search(&format!("qzxq{}", i)));
+            }
+            let t = Instant::now();
+            let hit = commands::search_products_fts5("Widget Model Alpha 42 Blue".to_string(), None)
+                .map(|v| !v.is_empty())
+                .unwrap_or(false);
+            rows.push(("__HIT__".to_string(), hit, t.elapsed().as_millis()));
+            tx.send(rows).expect("receiver dropped");
         });
 
-        let _timeout = Duration::from_secs(5);
-        let joined = handle.join();
-        assert!(joined.is_ok(), "test thread panicked: {:?}", joined.err());
-        // If we got here without timing out, the deadlock is fixed.
-        // The thread::spawn + join with a timeout is implicit in the test
-        // runner's default timeout, but we also verify the result is correct.
+        let rows = rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("DEADLOCK: search_products_fts5 did not answer within 5s");
+
+        let mut no_match_ms: Vec<u128> = Vec::new();
+        for (query, ok, ms) in &rows {
+            eprintln!("[REPRO] query={:?} ok={} {}ms", query, ok, ms);
+            assert!(ok, "query {:?} should return Ok(empty)", query);
+            if query != "__HIT__" {
+                no_match_ms.push(*ms);
+            }
+        }
+
+        no_match_ms.sort_unstable();
+        let p95_idx = ((no_match_ms.len() as f64 - 1.0) * 0.95).round() as usize;
+        let p95 = no_match_ms[p95_idx];
+        eprintln!(
+            "[REPRO] no-match p95={}ms (n={}) budget={}ms",
+            p95,
+            no_match_ms.len(),
+            NO_MATCH_P95_BUDGET_MS
+        );
+        assert!(
+            p95 <= NO_MATCH_P95_BUDGET_MS,
+            "no-match search p95 {}ms exceeds agreed budget {}ms",
+            p95,
+            NO_MATCH_P95_BUDGET_MS
+        );
     }
 }
 
