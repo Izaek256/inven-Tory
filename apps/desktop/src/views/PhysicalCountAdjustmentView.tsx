@@ -105,6 +105,10 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   // Live qty cache for the currently selected store (productId → qty)
   const [storeQtyCache, setStoreQtyCache] = useState<Map<string, number>>(new Map());
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Monotonic sequence for in-flight backend searches: responses that come
+  // back after a newer search started are stale and must be ignored, so a
+  // slow FTS5 round-trip can never overwrite fresher results.
+  const searchSeqRef = useRef(0);
 
   // Clear the success banner timer on unmount
   useEffect((): (() => void) => {
@@ -161,10 +165,22 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
     }
   }, [activeStoreId, loadProductsWithQty]);
 
+  // Cancel any pending debounced search on unmount so it cannot schedule a
+  // backend call after the view is gone.
+  useEffect(() => {
+    return () => {
+      if (searchTimerRef.current) {
+        clearTimeout(searchTimerRef.current);
+      }
+      searchSeqRef.current += 1;
+    };
+  }, []);
+
   // ── Search ────────────────────────────────────────────────────────────────
 
   const handleSearch = useCallback(
     (query: string, _rowIndex: number): void => {
+      const seq = ++searchSeqRef.current;
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
 
       const q = query.trim().toLowerCase();
@@ -180,11 +196,20 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
       );
       setSearchResults(localMatches);
 
-      // Debounced FTS5 backend search
+      // Skip the backend round-trip when the local filter already has hits —
+      // the pane is served from allProducts and backend results are
+      // re-filtered to those same ids anyway.
+      if (localMatches.length > 0) {
+        return;
+      }
+
+      // Debounced FTS5 backend search — only reached on a local miss.
       searchTimerRef.current = setTimeout((): void => {
         void (async (): Promise<void> => {
           try {
             const results = await searchProductsFts5(query);
+            // Out-of-order guard: a newer search already owns the pane.
+            if (seq !== searchSeqRef.current) return;
             // FTS5 spans the whole catalogue — keep only products in the store
             // being counted.
             const scopedIds = new Set(allProducts.map((p) => p.id));
@@ -219,9 +244,12 @@ export const PhysicalCountAdjustmentView: React.FC<PhysicalCountAdjustmentViewPr
   const handleBarcodeScan = useCallback(
     (barcode: string, _rowIndex: number): void => {
       if (!barcode.trim()) return;
+      const seq = ++searchSeqRef.current;
       void (async (): Promise<void> => {
         try {
           const results = await searchProductsFts5(barcode);
+          // Out-of-order guard: a newer search already owns the pane.
+          if (seq !== searchSeqRef.current) return;
           // FTS5 spans the whole catalogue — keep only products in the store
           // being counted.
           const scopedIds = new Set(allProducts.map((p) => p.id));

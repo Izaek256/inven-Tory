@@ -69,6 +69,10 @@ export const SaleStockView: React.FC = () => {
   const [sessionUserId, setSessionUserId] = useState<string>('');
   const [sessionDeviceId, setSessionDeviceId] = useState<string>('');
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Monotonic sequence for in-flight backend searches: responses that come
+  // back after a newer search started are stale and must be ignored, so a
+  // slow FTS5 round-trip can never overwrite fresher results.
+  const searchSeqRef = useRef(0);
 
   // Grid row ID → committed transaction_id (for edit/delete lookup)
   const [committedTxnIds, setCommittedTxnIds] = useState<Map<string, string>>(new Map());
@@ -163,14 +167,16 @@ export const SaleStockView: React.FC = () => {
   }, [loadAllProducts]);
 
   // Clean up the debounced search timer on unmount so it doesn't fire after
-  // the view is gone — this is the frontend contribution to the "can't delete /
-  // app hangs" bug (the Rust side still deadlocks, but the frontend no longer
-  // schedules backend calls on an unmounted component).
+  // the view is gone — part of the "can't delete / app hangs" fix (the Rust
+  // self-deadlock is fixed in lib.rs; the frontend no longer schedules
+  // backend calls on an unmounted component).
   useEffect(() => {
     return () => {
       if (searchTimerRef.current) {
         clearTimeout(searchTimerRef.current);
       }
+      // Invalidate any in-flight backend response after unmount.
+      searchSeqRef.current += 1;
     };
   }, []);
 
@@ -178,6 +184,7 @@ export const SaleStockView: React.FC = () => {
 
   const handleProductSearch = useCallback(
     (query: string, _rowIndex: number): void => {
+      const seq = ++searchSeqRef.current;
       if (searchTimerRef.current) {
         clearTimeout(searchTimerRef.current);
       }
@@ -197,10 +204,21 @@ export const SaleStockView: React.FC = () => {
       );
       setSearchResults(localMatches);
 
-      // 2. Debounced backend search for authoritative SQLite DB results
+      // 2. Skip the backend round-trip when the local (store-scoped) filter
+      //    already has hits: the pane is served from allProducts and backend
+      //    results are re-filtered to those same ids anyway. Keeps a fast
+      //    typist from queueing one IPC per keystroke.
+      if (localMatches.length > 0) {
+        return;
+      }
+
+      // 3. Debounced backend search — only reached on a local miss (typo /
+      //    no-match queries).
       searchTimerRef.current = setTimeout(async () => {
         try {
           const results = await searchProductsFts5(query, activeStoreId);
+          // Out-of-order guard: a newer search already owns the pane.
+          if (seq !== searchSeqRef.current) return;
           // FTS5 spans the whole catalogue — keep only products available in the
           // active store so the pane never surfaces items from another store.
           const scopedIds = new Set(allProducts.map((p) => p.id));
@@ -240,8 +258,10 @@ export const SaleStockView: React.FC = () => {
   const handleBarcodeScan = useCallback(
     async (barcode: string, _rowIndex: number): Promise<void> => {
       if (!barcode.trim()) return;
+      const seq = ++searchSeqRef.current;
       try {
         const results = await searchProductsFts5(barcode, activeStoreId);
+        if (seq !== searchSeqRef.current) return;
         const scopedIds = new Set(allProducts.map((p) => p.id));
         const scoped = results.filter((p) => scopedIds.has(p.id));
         const exact = scoped.find((p) => p.barcode === barcode || p.sku === barcode);

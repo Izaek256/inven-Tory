@@ -294,6 +294,31 @@ async def create_store(
             is_placeholder=existing_code_placeholder.name.startswith("Auto Store ("),
         )
 
+    # Idempotency: if a NON-placeholder store already exists with the same
+    # id AND code, return 200 with it (client may have timed out and retried).
+    existing_by_id = await db.get(Store, store_id)
+    if existing_by_id is not None and not existing_by_id.name.startswith("Auto Store ("):
+        if existing_by_id.code == request.code:
+            logger.info(
+                "Idempotent create_store: store %s (%s) already exists, returning 200",
+                store_id,
+                request.code,
+            )
+            response.status_code = status.HTTP_200_OK
+            return StoreListItem(
+                id=existing_by_id.id,
+                code=existing_by_id.code,
+                name=existing_by_id.name,
+                address=existing_by_id.address,
+                is_active=bool(existing_by_id.is_active),
+                is_placeholder=False,
+            )
+        # Same ID but different code — this is a conflict
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Store with id '{store_id}' already exists with different code",
+        )
+
     # Check for duplicate code (real store)
     existing = await db.execute(select(Store).where(Store.code == request.code))
     if existing.scalar_one_or_none():

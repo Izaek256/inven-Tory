@@ -9,7 +9,11 @@ export function isTauriEnvironment(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 }
 
-async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T | null> {
+async function _fetchApi<T>(
+  path: string,
+  options: RequestInit = {},
+  timeoutMs = 1000,
+): Promise<T | null> {
   try {
     const { getAccessToken } = await import('./tauriAuthService');
     const token = await getAccessToken();
@@ -28,7 +32,7 @@ async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T 
     }
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${apiBaseUrl}${path}`, {
         ...options,
@@ -38,13 +42,15 @@ async function _fetchApi<T>(path: string, options: RequestInit = {}): Promise<T 
       if (res.ok) {
         return (await res.json()) as T;
       }
+      // Non-2xx response - treat as failure
+      return null;
     } finally {
       clearTimeout(timer);
     }
   } catch {
-    // Network / API unreachable
+    // Network / API unreachable / timeout
+    return null;
   }
-  return null;
 }
 
 /**
@@ -82,27 +88,42 @@ const _pendingPushQueue: Array<{
 }> = [];
 
 let _isProcessingQueue = false;
+let _queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Process the pending push queue with retry logic.
+ * Items that fail are re-queued for the next cycle (via online event or timer),
+ * not retried in a tight loop.
  */
 async function _processPushQueue(): Promise<void> {
   if (_isProcessingQueue || _pendingPushQueue.length === 0) return;
   _isProcessingQueue = true;
 
-  while (_pendingPushQueue.length > 0) {
-    const item = _pendingPushQueue.shift();
-    if (!item) continue;
+  const items = [..._pendingPushQueue];
+  _pendingPushQueue.length = 0;
 
+  // Store creation on server does O(products) work to seed stock_balances.
+  // Use a generous timeout (30s) instead of the default 1s for this endpoint.
+  const STORE_PUSH_TIMEOUT_MS = 30_000;
+
+  for (const item of items) {
     let success = false;
     for (let attempt = 0; attempt <= item.retries; attempt++) {
       try {
-        await _fetchApi<Store>(item.path, {
-          method: item.method,
-          body: JSON.stringify(item.body),
-        });
-        success = true;
-        break;
+        const result = await _fetchApi<Store>(
+          item.path,
+          {
+            method: item.method,
+            body: JSON.stringify(item.body),
+          },
+          STORE_PUSH_TIMEOUT_MS,
+        );
+        if (result !== null) {
+          success = true;
+          break;
+        }
+        // _fetchApi returned null - treat as failure
+        throw new Error('Store push returned null (non-ok or network error)');
       } catch {
         if (attempt < item.retries) {
           const backoff = Math.pow(2, attempt) * 1000;
@@ -120,6 +141,22 @@ async function _processPushQueue(): Promise<void> {
   }
 
   _isProcessingQueue = false;
+
+  // If there are still items in the queue, schedule a retry
+  if (_pendingPushQueue.length > 0) {
+    _scheduleQueueRetry();
+  }
+}
+
+function _scheduleQueueRetry(): void {
+  if (_queueRetryTimer) {
+    clearTimeout(_queueRetryTimer);
+  }
+  // Retry after 30 seconds, or on next online event
+  _queueRetryTimer = setTimeout(() => {
+    _queueRetryTimer = null;
+    void _processPushQueue();
+  }, 30_000);
 }
 
 /**
@@ -138,10 +175,22 @@ async function _pushStoreToApi(
   body: unknown,
   retries = 3,
 ): Promise<void> {
+  // Store creation on server does O(products) work to seed stock_balances.
+  // Use a generous timeout (30s) instead of the default 1s for this endpoint.
+  const STORE_PUSH_TIMEOUT_MS = 30_000;
+
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
-      await _fetchApi<Store>(path, { method, body: JSON.stringify(body) });
-      return; // Success
+      const result = await _fetchApi<Store>(
+        path,
+        { method, body: JSON.stringify(body) },
+        STORE_PUSH_TIMEOUT_MS,
+      );
+      if (result !== null) {
+        return; // Success - got a valid response
+      }
+      // _fetchApi returned null (non-2xx or network error) - treat as failure
+      throw new Error('Store push returned null (non-ok or network error)');
     } catch {
       if (attempt === retries) {
         // eslint-disable-next-line no-console
@@ -195,10 +244,15 @@ export async function createStore(input: CreateStoreInput): Promise<Store> {
 
   // For web/browser fallback, we need to generate the deterministic ID
   const payload = { ...input, id: `STORE-${input.code.trim().toUpperCase()}` };
-  const created = await _fetchApi<Store>('/stores', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  // Use longer timeout for store creation (server does O(products) work)
+  const created = await _fetchApi<Store>(
+    '/stores',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    30_000,
+  );
   if (created) {
     _dispatchStoresUpdated();
     return created;
@@ -228,10 +282,15 @@ export async function updateStore(input: UpdateStoreInput): Promise<Store> {
     }
   }
 
-  const updated = await _fetchApi<Store>(`/stores/${input.id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(input),
-  });
+  // Use longer timeout for store update
+  const updated = await _fetchApi<Store>(
+    `/stores/${input.id}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    },
+    30_000,
+  );
   if (updated) {
     _dispatchStoresUpdated();
     return updated;
@@ -261,10 +320,15 @@ export async function toggleStoreActive(id: string, is_active: boolean): Promise
     }
   }
 
-  const toggled = await _fetchApi<Store>(`/stores/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify({ is_active }),
-  });
+  // Use longer timeout for store update
+  const toggled = await _fetchApi<Store>(
+    `/stores/${id}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({ is_active }),
+    },
+    30_000,
+  );
   if (toggled) {
     _dispatchStoresUpdated();
     return toggled;

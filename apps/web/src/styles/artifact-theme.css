@@ -825,23 +825,82 @@ select,
   padding: 2px 7px;
 }
 
-/* ══ Store tabs → artifact amber underline ══ */
+/* ══ Store tabs → artifact amber cards ══ */
 .store-tabs {
-  gap: 2px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
   margin-bottom: 20px;
+  scrollbar-width: none;
+}
+.store-tabs::-webkit-scrollbar {
+  display: none;
 }
 .store-tab {
-  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   height: 40px;
-  border-bottom: 2px solid transparent;
+  padding: 0 14px;
+  border: 1px solid var(--it-border);
+  border-radius: 0;
+  background: var(--it-card);
+  color: var(--it-text-secondary);
   font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease;
 }
 .store-tab[aria-selected='true'],
 .store-tab--active {
+  background: var(--it-card);
+  border: 1px solid var(--it-border);
+  border-bottom: 2px solid var(--amber);
   color: var(--it-text-primary);
-  border-bottom-color: var(--amber);
-  background: none;
   font-weight: 600;
+}
+.store-tab:not([aria-selected='true']):hover {
+  background: var(--it-bg);
+  border-color: var(--it-border-strong);
+  color: var(--it-text-primary);
+}
+.store-tab__icon {
+  flex-shrink: 0;
+  color: var(--it-text-secondary);
+}
+.store-tab[aria-selected='true'] .store-tab__icon,
+.store-tab--active .store-tab__icon {
+  color: var(--amber);
+}
+.store-tab__label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.store-tab__pending {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: var(--it-amber-surface);
+  border-left: 2px solid var(--amber);
+  border-radius: 0;
+  color: var(--it-amber-text);
+  font-family: var(--it-font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.store-tab[aria-selected='true'] .store-tab__pending {
+  background: var(--it-amber-surface);
+  border-left-color: var(--amber);
+  color: var(--it-amber-text);
 }
 
 /* ══ Summary tiles (products/stores) → same KPI language ══ */

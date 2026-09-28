@@ -311,6 +311,127 @@ function _withTimeout(timeoutMs: number, signal: AbortSignal | undefined): Abort
 }
 
 /**
+ * Reconcile local stores with the server.
+ * Runs BEFORE push loop to heal "Auto Store (...)" placeholders.
+ *
+ * 1. Reads local stores (source of truth) via 'get_stores' IPC.
+ * 2. Fetches server stores with include_placeholders=true.
+ * 4. For each local store missing on server OR with placeholder name,
+ *    POST /stores with {id, code, name, address}.
+ *
+ * State is derived from local DB each cycle — survives restarts.
+ */
+async function _reconcileStores(
+  apiBaseUrl: string,
+  accessToken: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!isTauriEnvironment()) {
+    return;
+  }
+
+  try {
+    // 1. Get local stores (source of truth)
+    const localStores =
+      await invoke<{ id: string; code: string; name: string; address: string | null }[]>(
+        'get_stores',
+      );
+    if (!localStores || localStores.length === 0) {
+      return;
+    }
+
+    // 2. Get server stores including placeholders
+    const timeoutSignal = _withTimeout(REQUEST_TIMEOUT_MS, signal);
+    const serverResponse = await fetch(`${apiBaseUrl}/stores?include_placeholders=true`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${accessToken}`,
+      },
+      signal: timeoutSignal,
+    });
+
+    if (!serverResponse.ok) {
+      // eslint-disable-next-line no-console
+      console.error(
+        '[SyncService] Store reconcile: failed to fetch server stores:',
+        serverResponse.status,
+      );
+      return;
+    }
+
+    const serverStores: Array<{
+      id: string;
+      code: string;
+      name: string;
+      address: string | null;
+      is_placeholder: boolean;
+    }> = await serverResponse.json();
+
+    // Build lookup maps
+    const serverById = new Map(serverStores.map((s) => [s.id, s]));
+    const serverByCode = new Map(serverStores.map((s) => [s.code, s]));
+
+    // 3. For each local store, check if it needs reconciliation
+    for (const local of localStores) {
+      const serverByIdMatch = serverById.get(local.id);
+      const serverByCodeMatch = serverByCode.get(local.code);
+
+      // Check if store is missing on server OR is a placeholder
+      const needsReconcile =
+        !serverByIdMatch ||
+        (serverByIdMatch && serverByIdMatch.is_placeholder) ||
+        (serverByCodeMatch &&
+          serverByCodeMatch.is_placeholder &&
+          serverByCodeMatch.id !== local.id);
+
+      if (needsReconcile) {
+        try {
+          // 4. POST /stores with deterministic ID to heal placeholder
+          const payload = {
+            id: local.id,
+            code: local.code,
+            name: local.name,
+            address: local.address,
+          };
+
+          const pushSignal = _withTimeout(REQUEST_TIMEOUT_MS, signal);
+          const pushResponse = await fetch(`${apiBaseUrl}/stores`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify(payload),
+            signal: pushSignal,
+          });
+
+          if (pushResponse.ok) {
+            // eslint-disable-next-line no-console
+            console.log('[SyncService] Store reconcile: healed', local.id, local.code, local.name);
+          } else {
+            const text = await pushResponse.text().catch(() => pushResponse.statusText);
+            // eslint-disable-next-line no-console
+            console.error(
+              '[SyncService] Store reconcile failed for',
+              local.id,
+              pushResponse.status,
+              text,
+            );
+          }
+        } catch (err) {
+          // eslint-disable-next-line no-console
+          console.error('[SyncService] Store reconcile error for', local.id, err);
+        }
+      }
+    }
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[SyncService] Store reconciliation failed:', err);
+  }
+}
+
+/**
  * POST a batch of events to /api/v1/sync/push with optional compression.
  * Returns the PushResponse, or throws on network/HTTP error
  */
@@ -1001,6 +1122,10 @@ export async function triggerSync(config: SyncConfig): Promise<ClientSyncState> 
   let lastErrorMsg: string | null = null;
   let pullResponse: PullResponse | null = null;
   let pushedAnything = false;
+
+  // ── Store reconciliation (heal Auto Store placeholders) ─────────────
+  // Runs before push loop so local store names survive the pull.
+  await _reconcileStores(config.apiBaseUrl, resolvedToken, config.signal);
 
   try {
     // ── Push loop ────────────────────────────────────────────────────

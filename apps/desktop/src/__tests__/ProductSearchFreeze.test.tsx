@@ -6,26 +6,23 @@
  * window hangs permanently (force-kill required). Same path on Receive Stock
  * and Physical Count (shared LinearGridEntry / useGridKeyboardFlow).
  *
- * The permanent hang itself is a Rust-side self-deadlock that cannot be
- * reproduced in jsdom:
- *   search_products_fts5 holds the process-wide DB mutex
- *   (apps/desktop/src-tauri/src/lib.rs:5437, static DB_CONN at :21) and, when
- *   FTS returns 0 rows (or the query has no tokens, e.g. "/"), falls through to
- *   its fallback `search_products(query, store_id, None)` (lib.rs:5519) — the
- *   sibling #[tauri::command], which calls get_conn() again (lib.rs:2083) and
- *   locks the same non-reentrant std::sync::Mutex from the same thread →
- *   permanent deadlock. Every later DB command then blocks forever.
+ * The permanent hang itself was a Rust-side self-deadlock (now fixed on this
+ * branch — search_products_fts5 fell through to search_products while still
+ * holding the process-wide DB mutex, which std::sync::Mutex does not allow
+ * from the same thread) plus the slow-keystroke path fixed alongside it:
+ * search commands off the main thread, ensure_products_fts once at startup,
+ * LIKE-only fallback that never re-locks or re-runs FTS. The Rust side is
+ * covered by the seeded mpsc::recv_timeout regression test in lib.rs; jsdom
+ * cannot reproduce the hang itself.
  *
  * These tests pin down the *frontend* contributions reported alongside the
- * hang, all of which existed at HEAD:
+ * hang:
  *   1. the product field must stay editable through a no-result search +
  *      Backspace (type → 0 results → Backspace → type again),
  *   2. a burst of keystrokes must not fan out into one backend IPC per
- *      keystroke (undebounced onBarcodeScan effect,
- *      packages/ui/src/hooks/useGridKeyboardFlow.ts:382-390 + the 100 ms
- *      debounced search in the view),
- *   3. the pending debounced search must be cancelled when the view unmounts
- *      (SaleStockView.tsx:167-224 had no timer cleanup),
+ *      keystroke (debounced search in useGridKeyboardFlow + the local-hit
+ *      fast path in the view that skips the backend entirely),
+ *   3. the pending debounced search must be cancelled when the view unmounts,
  *   4. backend calls must stay bounded while the field is being edited — an
  *      infinite render/effect loop would blow this (or time the test out).
  */
@@ -229,6 +226,57 @@ describe('Issue #7 — product search stays editable after a no-result search', 
       JSON.stringify(vi.mocked(tauriProductService.searchProductsFts5).mock.calls),
     );
     expect(searchCalls()).toBeLessThanOrEqual(2);
+  });
+
+  it('burst of bad characters + Backspace keeps the field editable with bounded backend calls', async (): Promise<void> => {
+    const { productCell } = await renderSale();
+
+    vi.useFakeTimers();
+
+    // A fast typist mashes characters that match nothing ("/zzz" — punctuation
+    // strips to 0 FTS5 tokens, the rest miss entirely), then corrects with
+    // Backspace and keeps typing. Every intermediate query is a local miss,
+    // so each burst is debounced to a single backend round-trip — never one
+    // IPC per keystroke.
+    act(() => {
+      fireEvent.focus(productCell);
+      fireEvent.change(productCell, { target: { value: '/' } });
+      fireEvent.change(productCell, { target: { value: '/z' } });
+      fireEvent.change(productCell, { target: { value: '/zz' } });
+      fireEvent.change(productCell, { target: { value: '/zzz' } });
+    });
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(productCell.value).toBe('/zzz');
+
+    // Backspace must delete characters (the reported "can't delete" symptom)
+    act(() => {
+      pressBackspace(productCell);
+    });
+    act(() => {
+      pressBackspace(productCell);
+    });
+    expect(productCell.value).toBe('/z');
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    // …and the field keeps accepting new input afterwards
+    act(() => {
+      fireEvent.change(productCell, { target: { value: '/zq' } });
+    });
+    expect(productCell.value).toBe('/zq');
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+
+    // Bounded: one debounced call per burst (3 bursts), not per keystroke.
+    // Before the fixes every keystroke fired an immediate IPC → 4 + 2 + 1 = 7.
+    expect(searchCalls()).toBeLessThanOrEqual(3);
+    expect(productCell.value).toBe('/zq');
+    expect(productCell).not.toBeDisabled();
   });
 
   it('cancels the pending debounced search when the view unmounts', async (): Promise<void> => {

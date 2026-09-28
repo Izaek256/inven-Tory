@@ -345,16 +345,7 @@ export function AnalyticsDashboardView({
                 data-testid={`store-tab-${s.id}`}
                 onClick={() => setActiveStoreId((prev) => (prev === s.id ? null : s.id))}
               >
-                <span
-                  className="store-tab__code"
-                  style={{ background: active ? 'rgba(255,255,255,0.24)' : undefined }}
-                >
-                  {active ? (
-                    <Store size={12} color="#fff" />
-                  ) : (
-                    <span style={{ fontSize: 11, fontWeight: 700 }}>{shortCode}</span>
-                  )}
-                </span>
+                <Store size={14} className="store-tab__icon" />
                 <span className="store-tab__label">
                   <span style={{ fontWeight: 700, marginRight: 4 }}>{s.code || shortCode}</span>
                   {s.name}

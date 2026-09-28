@@ -65,6 +65,11 @@ function isSearchField(field: GridFieldDef): boolean {
   return id.includes('product') || id.includes('search');
 }
 
+/** Hard cap for the barcode scan buffer so it cannot grow unbounded. */
+const MAX_BARCODE_BUFFER = 64;
+/** Two keystrokes closer than this are treated as one scanner burst. */
+const MAX_BARCODE_KEY_INTERVAL_MS = 250;
+
 function isLastField(fields: GridFieldDef[], fieldIndex: number): boolean {
   return fieldIndex >= fields.length - 1;
 }
@@ -104,6 +109,7 @@ export function useGridKeyboardFlow({
   const fieldRefs = useRef<Record<string, HTMLInputElement | HTMLSelectElement | null>>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [barcodeBuffer, setBarcodeBuffer] = useState('');
+  const lastBarcodeKeyAtRef = useRef<number | null>(null);
 
   const activeCellId = getCellId(activeRowIndex, fields[activeFieldIndex]?.id ?? '');
 
@@ -163,16 +169,16 @@ export function useGridKeyboardFlow({
       setActiveFieldIndex(fieldIndex);
       const field = fields[fieldIndex];
       if (field && isSearchField(field)) {
-        setRows((prev) => {
-          const row = prev[rowIndex];
-          if (row) {
-            setSearchQuery(String(row.values[field.id] ?? ''));
-          }
-          return prev;
-        });
+        // Read the row from state directly. Calling setSearchQuery inside a
+        // setRows updater was a side effect in an updater (React may run
+        // updaters twice, e.g. StrictMode, causing double search queries).
+        const row = rows[rowIndex];
+        if (row) {
+          setSearchQuery(String(row.values[field.id] ?? ''));
+        }
       }
     },
-    [fields],
+    [fields, rows],
   );
 
   // ─── commitRow ────────────────────────────────────────────────────────────
@@ -347,9 +353,20 @@ export function useGridKeyboardFlow({
         return;
       }
 
-      // Barcode scanner: collect characters rapidly
+      // Barcode scanner: collect characters rapidly. The buffer is reset when
+      // keys arrive slower than a scanner burst (human typing cadence) and is
+      // hard-capped so it can never grow unbounded while a search field stays
+      // focused.
       if (e.key.length === 1 && isActiveSearchField) {
-        setBarcodeBuffer((prev) => prev + e.key);
+        const now = Date.now();
+        const previousKeyAt = lastBarcodeKeyAtRef.current;
+        lastBarcodeKeyAtRef.current = now;
+        const isScannerBurst =
+          previousKeyAt !== null && now - previousKeyAt <= MAX_BARCODE_KEY_INTERVAL_MS;
+        setBarcodeBuffer((current) => {
+          const base = isScannerBurst ? current : '';
+          return (base + e.key).slice(-MAX_BARCODE_BUFFER);
+        });
         // A barcode scan typically delivers Enter after the characters
         // We detect "fast input" by checking buffer length on Enter (handled above)
       }
@@ -376,6 +393,7 @@ export function useGridKeyboardFlow({
   // The barcodeBuffer is exposed so the view can implement its own logic.
   useEffect(() => {
     setBarcodeBuffer('');
+    lastBarcodeKeyAtRef.current = null;
   }, [activeRowIndex]);
 
   const barcodeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
