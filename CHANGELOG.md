@@ -2,6 +2,16 @@
 
 All notable changes to invenTory are documented in this file. This project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.3.3] — 2026-09-28
+
+### Fixed — Search Freeze, Store Sync & Dashboard Tabs
+
+- **Search keystrokes never block the UI** — all 18 search/list Tauri commands are now `async` (run off the main thread), the FTS index is ensured once at startup instead of on every search, and the FTS-miss fallback reuses the already-held DB connection via a LIKE-only helper (no mutex re-acquire, no second FTS pass). Seeded 5,000-product regression test reports through an mpsc channel with a 5s deadlock guard and asserts no-match p95 ≤ 250 ms (measured 60 ms, previously 117 ms under the global DB mutex).
+- **Stale results & IPC storms in Receive/Sale/PhysicalCount** — out-of-order search responses are dropped (`searchSeqRef`), the backend round-trip is skipped when the local store-scoped list already has the match, pending debounced searches are cancelled on unmount, and the barcode buffer in `useGridKeyboardFlow` is capped (64 chars / 250 ms burst). New vitest keeps the product field editable through bursts of bad characters with bounded backend calls.
+- **Store sync durability** — failed store pushes are re-queued after the processing loop with a 30s retry timer (no tight retry loop) and a 30s store-push timeout with null-result checking; `_reconcileStores` heals `Auto Store (...)` placeholders before the push loop; `create_store` is idempotent for matching id+code (returns the existing store instead of failing).
+- **Dashboard store tabs follow the system design** — letter avatar replaced by a lucide `Store` icon (amber when selected), sharp amber-card selected state with a 2px amber underline, unregistered-store badge preserved, dead `.store-tab__code` styling removed; stale app icons replaced.
+- **Tooling** — Prettier `endOfLine: "auto"` across all five workspaces so the pre-push hook passes on Windows (CRLF) checkouts; all workspace versions aligned at 1.3.3 (gate: `scripts/check_versions.js`).
+
 ## [1.3.0] — 2026-09-24
 
 ### Added — Desktop Performance & UX
