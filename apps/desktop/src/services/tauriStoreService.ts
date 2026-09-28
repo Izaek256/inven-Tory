@@ -82,18 +82,21 @@ const _pendingPushQueue: Array<{
 }> = [];
 
 let _isProcessingQueue = false;
+let _queueRetryTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Process the pending push queue with retry logic.
+ * Items that fail are re-queued for the next cycle (via online event or timer),
+ * not retried in a tight loop.
  */
 async function _processPushQueue(): Promise<void> {
   if (_isProcessingQueue || _pendingPushQueue.length === 0) return;
   _isProcessingQueue = true;
 
-  while (_pendingPushQueue.length > 0) {
-    const item = _pendingPushQueue.shift();
-    if (!item) continue;
+  const items = [..._pendingPushQueue];
+  _pendingPushQueue.length = 0;
 
+  for (const item of items) {
     let success = false;
     for (let attempt = 0; attempt <= item.retries; attempt++) {
       try {
@@ -120,6 +123,22 @@ async function _processPushQueue(): Promise<void> {
   }
 
   _isProcessingQueue = false;
+
+  // If there are still items in the queue, schedule a retry
+  if (_pendingPushQueue.length > 0) {
+    _scheduleQueueRetry();
+  }
+}
+
+function _scheduleQueueRetry(): void {
+  if (_queueRetryTimer) {
+    clearTimeout(_queueRetryTimer);
+  }
+  // Retry after 30 seconds, or on next online event
+  _queueRetryTimer = setTimeout(() => {
+    _queueRetryTimer = null;
+    void _processPushQueue();
+  }, 30_000);
 }
 
 /**
