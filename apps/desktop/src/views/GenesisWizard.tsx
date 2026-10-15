@@ -3,7 +3,7 @@ import { Sparkles, AlertCircle, Check, Loader2, Database, RefreshCw } from 'luci
 import { Button, TextInput, Card } from '@invenTory/ui';
 import type { GenesisState, RestorePreview, RestoreProgress } from '../hooks/useGenesisState';
 
-interface GenesisWizardProps {
+export interface GenesisWizardProps {
   state: GenesisState;
   onComplete: (username: string, storeCode: string) => void;
   onCancel: () => void;
@@ -57,6 +57,10 @@ interface GenesisWizardProps {
     canUseApp: boolean;
     totalComplete: boolean;
   } | null;
+  /** UI Lab preview only: open directly on this setup mode (defaults to 'selection'). */
+  initialMode?: 'selection' | 'fresh' | 'restore';
+  /** UI Lab preview only: open directly at this step index (defaults to 0). */
+  initialStep?: number;
 }
 
 const FRESH_SETUP_STEPS = [
@@ -84,10 +88,14 @@ export const GenesisWizard: React.FC<GenesisWizardProps> = ({
   onGetRestoreProgress,
   onRestoreStarted,
   restoreProgress: restoreProgressProp,
+  initialMode,
+  initialStep,
 }) => {
   void state;
-  const [setupMode, setSetupMode] = useState<'selection' | 'fresh' | 'restore'>('selection');
-  const [step, setStep] = useState(0);
+  const [setupMode, setSetupMode] = useState<'selection' | 'fresh' | 'restore'>(
+    initialMode ?? 'selection',
+  );
+  const [step, setStep] = useState(initialStep ?? 0);
   const [username, setUsername] = useState('admin');
   const [email, setEmail] = useState('');
   const [fullName, setFullName] = useState('');
