@@ -21,6 +21,7 @@
 
 import React, { useCallback, useEffect, useRef, useState, Suspense, lazy } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SplashScreen } from '@invenTory/ui';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { LoginView } from './views/LoginView';
@@ -31,6 +32,7 @@ import { getSession, isAuthenticated, logout } from './services/tauriAuthService
 import { startBackgroundSync, stopBackgroundSync, triggerSync } from './services/tauriSyncService';
 import { useAppState } from './hooks/useAppState';
 import { useGenesisState } from './hooks/useGenesisState';
+import { useUiLabOpen } from './uiLab/state';
 import { StoreProvider } from './context/StoreContext';
 import { Store as StoreIcon } from 'lucide-react';
 import { Store } from './types/store';
@@ -232,7 +234,16 @@ export function App(): React.ReactElement {
   // ---------------------------------------------------------------------------
   const genesis = useGenesisState();
 
+  // UI Lab (development only): while the lab is open the real bootstrap must
+  // not run — no genesis/auth checks, no store loads, no server sync. In
+  // production builds `import.meta.env.DEV` is false, so every guard below is
+  // dead code and `labOpen` is a constant false.
+  const uiLabOpen = useUiLabOpen();
+
   useEffect(() => {
+    if (import.meta.env.DEV && uiLabOpen) {
+      return;
+    }
     const bootstrap = async (): Promise<void> => {
       const deviceIdVal = await getOrCreateDeviceId();
       setDeviceId(deviceIdVal);
@@ -263,7 +274,7 @@ export function App(): React.ReactElement {
       setAuthState(s?.token_expired_offline ? 'expired_offline' : 'authenticated');
     };
     void bootstrap();
-  }, [genesis.loading, genesis.needsGenesis]);
+  }, [genesis.loading, genesis.needsGenesis, uiLabOpen]);
 
   // ---------------------------------------------------------------------------
   // Stores data
@@ -309,6 +320,11 @@ export function App(): React.ReactElement {
 
   // Background Sync Engine
   useEffect(() => {
+    // UI Lab (dev only): never start (and via cleanup, stop) background sync
+    // while the lab is open — previews must not talk to a real server.
+    if (import.meta.env.DEV && uiLabOpen) {
+      return;
+    }
     if (authState === 'authenticated') {
       const envBaseUrl =
         typeof import.meta !== 'undefined'
@@ -343,10 +359,14 @@ export function App(): React.ReactElement {
         void fetchStores();
       }
     }
-  }, [authState, fetchStores]);
+  }, [authState, fetchStores, uiLabOpen]);
 
   // Online reconnection listener: immediately attempt token upgrade and sync outbox
   useEffect(() => {
+    // UI Lab (dev only): don't trigger reconnect sync while the lab is open.
+    if (import.meta.env.DEV && uiLabOpen) {
+      return;
+    }
     const handleOnline = (): void => {
       if (authState === 'authenticated' || authState === 'expired_offline') {
         const envBaseUrl =
@@ -375,7 +395,7 @@ export function App(): React.ReactElement {
     return (): void => {
       window.removeEventListener('online', handleOnline);
     };
-  }, [authState, fetchStores]);
+  }, [authState, fetchStores, uiLabOpen]);
 
   // Performance instrumentation
   useEffect(() => {
@@ -589,19 +609,8 @@ export function App(): React.ReactElement {
   const renderView = (): React.ReactElement => {
     if (authState === 'loading') {
       return (
-        <div
-          style={{
-            minHeight: '60vh',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'var(--it-bg)',
-            color: 'var(--it-text-secondary)',
-            fontSize: '14px',
-          }}
-          data-testid="auth-loading"
-        >
-          Loading…
+        <div data-testid="auth-loading">
+          <SplashScreen />
         </div>
       );
     }

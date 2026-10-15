@@ -88,7 +88,9 @@ export function Tooltip({
         position: 'fixed',
         left: coords.x,
         top: coords.y,
-        zIndex: 9999,
+        // Topmost layer: portals to body, must also paint above overlays
+        // (store-switch 9999, dev UI Lab 99999).
+        zIndex: 999999,
         pointerEvents: 'none',
       }}
     >
