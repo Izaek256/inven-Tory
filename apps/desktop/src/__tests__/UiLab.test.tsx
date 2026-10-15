@@ -107,7 +107,11 @@ describe('UI Lab — mock invoke layer', () => {
 describe('UI Lab — gallery UI', () => {
   it('shows the dev entry button while closed and opens the gallery', () => {
     renderWithProviders(<UiLab />);
-    expect(screen.getByTestId('lab-entry-button')).toBeInTheDocument();
+    const entryButton = screen.getByTestId('lab-entry-button');
+    expect(entryButton).toBeInTheDocument();
+    expect(entryButton.style.left).toBe('50%');
+    expect(entryButton.style.top).toBe('50%');
+    expect(entryButton.style.transform).toBe('translate(-50%, -50%)');
     expect(screen.queryByTestId('lab-overlay')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('lab-entry-button'));
@@ -162,6 +166,39 @@ describe('UI Lab — gallery UI', () => {
     renderWithProviders(<UiLab />);
     fireEvent.change(screen.getByTestId('lab-profile-select'), { target: { value: 'empty' } });
     expect(getUiLabState().profile).toBe('empty');
+  });
+});
+
+describe('UI Lab — placement-accurate previews', () => {
+  it('renders the loading scenario with the real SplashScreen', () => {
+    act(() => openUiLab('loading'));
+    renderWithProviders(<UiLab />);
+    expect(screen.getByTestId('auth-loading')).toBeInTheDocument();
+    expect(screen.getByTestId('splash-screen')).toBeInTheDocument();
+  });
+
+  it('renders screens inside the real app shell with the matching sidebar highlight', () => {
+    act(() => openUiLab('screen-products'));
+    renderWithProviders(<UiLab />);
+    expect(screen.getByTestId('lab-shell')).toBeInTheDocument();
+    expect(screen.getByTestId('app-sidebar')).toBeInTheDocument();
+    expect(screen.getByTestId('nav-products')).toHaveClass('active');
+    expect(screen.getByTestId('nav-dashboard')).not.toHaveClass('active');
+  });
+
+  it('renders dialogs as overlays over their host screen', () => {
+    act(() => openUiLab('dialog-product-create'));
+    renderWithProviders(<UiLab />);
+    expect(screen.getByTestId('lab-shell')).toBeInTheDocument();
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  it('renders the expanded design-system kit', () => {
+    act(() => openUiLab('kit-design-system'));
+    renderWithProviders(<UiLab />);
+    expect(screen.getByTestId('kit-design-system')).toBeInTheDocument();
+    expect(screen.getByTestId('kit-table')).toBeInTheDocument();
+    expect(screen.getByTestId('kit-grid-entry')).toBeInTheDocument();
   });
 });
 

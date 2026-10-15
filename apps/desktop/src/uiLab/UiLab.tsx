@@ -37,6 +37,10 @@ const PROFILE_OPTIONS: { value: LabProfile; label: string }[] = [
 ];
 
 const barStyle: React.CSSProperties = {
+  position: 'relative',
+  // Above fixed preview layers so Back/Hide stay clickable: Modal backdrop is
+  // z-index 200, the splash is 100, the store-switch overlay is 9999.
+  zIndex: 300,
   display: 'flex',
   alignItems: 'center',
   gap: 8,
@@ -490,8 +494,9 @@ function LabButton(): React.ReactElement {
       onClick={() => openUiLab()}
       style={{
         position: 'fixed',
-        right: 14,
-        bottom: 14,
+        left: '50%',
+        top: '50%',
+        transform: 'translate(-50%, -50%)',
         zIndex: 99999,
         display: 'inline-flex',
         alignItems: 'center',

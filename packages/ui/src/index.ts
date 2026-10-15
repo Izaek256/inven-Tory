@@ -23,6 +23,7 @@ export * from './components/LinearEntryForm';
 export * from './components/LinearGridEntry';
 export * from './components/Tooltip';
 export * from './components/Skeleton';
+export * from './components/SplashScreen';
 
 // Utils
 export * from './utils/export';

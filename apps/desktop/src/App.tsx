@@ -21,6 +21,7 @@
 
 import React, { useCallback, useEffect, useRef, useState, Suspense, lazy } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { SplashScreen } from '@invenTory/ui';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { LoginView } from './views/LoginView';
@@ -608,19 +609,8 @@ export function App(): React.ReactElement {
   const renderView = (): React.ReactElement => {
     if (authState === 'loading') {
       return (
-        <div
-          style={{
-            minHeight: '60vh',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: 'var(--it-bg)',
-            color: 'var(--it-text-secondary)',
-            fontSize: '14px',
-          }}
-          data-testid="auth-loading"
-        >
-          Loading…
+        <div data-testid="auth-loading">
+          <SplashScreen />
         </div>
       );
     }
