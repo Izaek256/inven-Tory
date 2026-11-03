@@ -4,6 +4,25 @@ All notable changes to invenTory are documented in this file. This project adher
 
 ## [Unreleased]
 
+## [1.3.5] — 2026-11-03
+
+### Added — Development UI Lab & Boot Splash
+
+- **UI Lab component gallery (development only)** — `apps/desktop/src/uiLab/` mounts a searchable gallery of every screen, dialog, wizard and state, rendering the real application components through `LabShell` so each preview matches its true Sidebar + Header + content placement. It is loaded from `main.tsx` behind `import.meta.env.DEV`, which Vite replaces with `false` for production builds, so the lazy import and all lab code are dead-code eliminated from shipped bundles.
+- **Startup scenario previews** — any screen can be pinned as the next boot scenario (persisted in `localStorage`). While a scenario is active, `App.tsx` skips genesis/auth bootstrap, store loading, background sync and reconnect sync, so previews never touch a real database, auth record or server.
+- **Mock response profiles** — the lab intercepts Tauri commands and answers them from fixtures with `realistic`, `empty`, `slow` (1.2s) and `error` profiles, including a mock boot splash.
+- **Shared `SplashScreen` component** — new export in `packages/ui` used by the desktop auth-loading state (replacing the plain "Loading…" text), the web app while the session token hydrates (previously a blank page), and the UI Lab. Shows the brand mark, caption, spinner and status label full-screen.
+- **Genesis wizard preview hooks** — `GenesisWizardProps` is exported and accepts optional `initialMode` / `initialStep`, so the lab can open the first-run wizard directly on any setup mode or step without changing production defaults.
+- **Coverage guard** — `UiLabCoverage.test.ts` fails when a view/component file exists without a matching `LAB_ENTRIES` registration, keeping the gallery complete as new screens are added.
+
+### Changed — Layering
+
+- **Tooltips and toasts paint above every overlay** — both now use `z-index: 999999` (previously 9999 and 300), so they are no longer clipped behind the store-switch overlay (9999), modals (200) or the development UI Lab (99999).
+
+### Tooling
+
+- All workspace versions aligned at 1.3.5: `package.json` (root + desktop/web/mobile/ui/shared-types), `tauri.conf.json`, `Cargo.toml`, `package-lock.json`, the three `.env.example` files, the Sidebar rail badge, GenesisWizard footer and the LoginView version assertion. The `scripts/check_versions.js` gate passes (`Versions OK: 1.3.5`).
+
 ## [1.3.4] — 2026-09-28
 
 ### Fixed — Genesis First-Run Layout
