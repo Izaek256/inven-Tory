@@ -21,6 +21,7 @@ import {
   EmptyState,
   Spinner,
   StepIndicator,
+  SplashScreen,
 } from '../index';
 
 function ThemeConsumer(): React.ReactElement {
@@ -369,5 +370,21 @@ describe('VirtualizedDataTable (P2: virtual scrolling)', () => {
     expect(screen.getByText('ID')).toBeDefined();
     const container = document.querySelector('.it-table-wrap');
     expect(container).toBeDefined();
+  });
+});
+
+describe('SplashScreen (boot splash)', () => {
+  it('portals to document.body so it centres in the viewport', () => {
+    const { container } = render(<SplashScreen label="Loading…" />);
+    const splash = screen.getByTestId('splash-screen');
+
+    // Rendered outside the caller's tree: an animated/transformed ancestor
+    // must not become the containing block for the fixed splash.
+    expect(container.contains(splash)).toBe(false);
+    expect(document.body.contains(splash)).toBe(true);
+    expect(splash.style.position).toBe('fixed');
+    expect(splash.style.justifyContent).toBe('center');
+    expect(splash.style.alignItems).toBe('center');
+    expect(screen.getByText('Loading…')).toBeDefined();
   });
 });

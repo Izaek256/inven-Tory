@@ -4,6 +4,18 @@ All notable changes to invenTory are documented in this file. This project adher
 
 ## [Unreleased]
 
+## [1.3.6] — 2026-11-03
+
+### Fixed — Splash Centering & UI Lab Entry
+
+- **The boot splash is centred in the window** — `SplashScreen` now renders through a portal to `document.body`. `.it-view-enter` keeps `transform: translateY(0)` via `animation-fill-mode: both`, and a transformed ancestor becomes the containing block for `position: fixed` descendants, so the splash was laid out against the animated content wrapper (zero-height at the top of the content area) instead of the viewport. Desktop auth loading and web token hydration now show the splash in the middle of the window.
+- **The UI Lab no longer shows a button in the app** — removed the floating `UI LAB` button that appeared over the running application. The development-only gallery is still available with Ctrl/Cmd+Shift+L or the `?ui-lab=1` / `?ui-lab=<entry-id>` deep links, and remains compile-time gated behind `import.meta.env.DEV` so it is dead-code eliminated from production builds.
+
+### Tooling
+
+- All workspace versions aligned at 1.3.6: `package.json` (root + desktop/web/mobile/ui/shared-types), `tauri.conf.json`, `Cargo.toml`, `package-lock.json`, the three `.env.example` files, the Sidebar rail badge, GenesisWizard footer and the LoginView version assertion. The `scripts/check_versions.js` gate passes (`Versions OK: 1.3.6`).
+- Tests updated: `SplashScreen` asserts it portals outside the caller's tree, and the UI Lab test now verifies there is no visible entry button and that the keyboard shortcut opens the gallery.
+
 ## [1.3.5] — 2026-11-03
 
 ### Added — Development UI Lab & Boot Splash
