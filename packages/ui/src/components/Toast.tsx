@@ -81,7 +81,7 @@ const CSS = `
   position: fixed;
   bottom: var(--it-sp-6);
   right: var(--it-sp-6);
-  z-index: 300;
+  z-index: 999999;
   display: flex;
   flex-direction: column;
   gap: var(--it-sp-2);
