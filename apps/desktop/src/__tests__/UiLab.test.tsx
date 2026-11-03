@@ -105,16 +105,14 @@ describe('UI Lab — mock invoke layer', () => {
 });
 
 describe('UI Lab — gallery UI', () => {
-  it('shows the dev entry button while closed and opens the gallery', () => {
+  it('has no visible entry point while closed and opens via the dev shortcut', () => {
     renderWithProviders(<UiLab />);
-    const entryButton = screen.getByTestId('lab-entry-button');
-    expect(entryButton).toBeInTheDocument();
-    expect(entryButton.style.left).toBe('50%');
-    expect(entryButton.style.top).toBe('50%');
-    expect(entryButton.style.transform).toBe('translate(-50%, -50%)');
+    expect(screen.queryByTestId('lab-entry-button')).not.toBeInTheDocument();
+    expect(screen.queryByText('UI LAB')).not.toBeInTheDocument();
     expect(screen.queryByTestId('lab-overlay')).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByTestId('lab-entry-button'));
+    fireEvent.keyDown(window, { key: 'L', code: 'KeyL', ctrlKey: true, shiftKey: true });
+
     expect(screen.getByTestId('lab-overlay')).toBeInTheDocument();
     expect(screen.getByTestId('lab-search')).toBeInTheDocument();
     expect(screen.getByTestId('lab-card-login')).toBeInTheDocument();

@@ -9,6 +9,10 @@
  *     while the lab is open, so nothing real runs)
  *   - mock response profile switch (realistic / empty / slow / error)
  *
+ * The lab has no visible entry point in the app UI: press Ctrl/Cmd+Shift+L or
+ * open the app with `?ui-lab=1` (or `?ui-lab=<entry-id>`). That keeps the
+ * gallery strictly a development tool and out of the way of real screens.
+ *
  * While open, Tauri commands are answered from labMock fixtures — no SQLite,
  * no auth records, no server sync is touched.
  */
@@ -486,39 +490,6 @@ function Scenario({ state, entry }: { state: UiLabState; entry: LabEntry }): Rea
   );
 }
 
-function LabButton(): React.ReactElement {
-  return (
-    <button
-      type="button"
-      data-testid="lab-entry-button"
-      onClick={() => openUiLab()}
-      style={{
-        position: 'fixed',
-        left: '50%',
-        top: '50%',
-        transform: 'translate(-50%, -50%)',
-        zIndex: 99999,
-        display: 'inline-flex',
-        alignItems: 'center',
-        gap: 6,
-        fontSize: 11,
-        fontFamily: 'var(--it-font-mono)',
-        fontWeight: 700,
-        padding: '7px 11px',
-        border: '1px solid var(--amber)',
-        background: 'var(--amber-tint)',
-        color: 'var(--amber-ink)',
-        cursor: 'pointer',
-        boxShadow: 'var(--it-shadow-md, 0 4px 16px rgba(0,0,0,0.25))',
-      }}
-      title="Open the UI Lab (Ctrl+Shift+L)"
-    >
-      <FlaskConical size={13} />
-      UI LAB
-    </button>
-  );
-}
-
 export default function UiLab(): React.ReactElement | null {
   const state = useUiLabState();
   const autoOpened = useRef(false);
@@ -563,7 +534,9 @@ export default function UiLab(): React.ReactElement | null {
   }, []);
 
   if (!isUiLabEnabled()) return null;
-  if (!state.open) return <LabButton />;
+  // No floating entry button: the lab is deliberately invisible in the app.
+  // Open it with Ctrl/Cmd+Shift+L or the ?ui-lab deep link.
+  if (!state.open) return null;
 
   const entry =
     state.view === 'scenario' ? findLabEntry(state.startupScenario) : findLabEntry(state.entryId);

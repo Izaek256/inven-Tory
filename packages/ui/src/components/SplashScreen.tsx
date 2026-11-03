@@ -1,4 +1,5 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
 import { Spinner } from './Spinner';
 
 export interface SplashScreenProps {
@@ -12,12 +13,19 @@ export interface SplashScreenProps {
  * Full-screen boot splash shown while the app resolves its startup state
  * (genesis/auth bootstrap on desktop, token hydration on web). Shared by
  * apps/desktop, apps/web and the desktop UI Lab previews.
+ *
+ * It renders through a portal to <body> so `position: fixed` is always
+ * measured against the viewport. A transformed/filtered/animated ancestor
+ * (for example `.it-view-enter`, which keeps `transform: translateY(0)` via
+ * `animation-fill-mode: both`) becomes the containing block for fixed
+ * descendants, which pinned the splash to the top of the content area instead
+ * of centring it in the window.
  */
 export function SplashScreen({
   label = 'Starting…',
   caption,
 }: SplashScreenProps): React.ReactElement {
-  return (
+  return createPortal(
     <div
       data-testid="splash-screen"
       style={{
@@ -63,6 +71,7 @@ export function SplashScreen({
         <Spinner size="md" />
         <div style={{ fontSize: 13, color: 'var(--it-text-secondary)' }}>{label}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
